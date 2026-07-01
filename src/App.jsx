@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, forwardRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, forwardRef } from "react";
 
 /* ─────────────────────────────────────────────────────
    TRUE LIQUID GLASS
@@ -175,6 +175,16 @@ function GlobalStyles() {
         background: #121214;
       }
       body {
+        /*
+          position:fixed でページ自体を完全に固定する。
+          iOSのSafariは、地図をドラッグした際に地図だけでなく
+          ページ全体がわずかに弾性スクロール(ラバーバンド)してしまうことがあり、
+          その一瞬だけSafariのデフォルトのUI背景(白)が画面端に見えてしまう。
+          overscroll-behavior だけでは防ぎきれないため、position:fixedで
+          ページ自体をスクロール不可能な状態に固定して根本的に防ぐ。
+        */
+        position: fixed;
+        inset: 0;
         background: #121214;
         font-family: -apple-system, BlinkMacSystemFont,
                      "SF Pro Display", "Helvetica Neue",
@@ -182,7 +192,13 @@ function GlobalStyles() {
         -webkit-font-smoothing: antialiased;
         overflow: hidden;
         overscroll-behavior: none;
+        touch-action: none;
         color: #fff;
+      }
+      #root {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
       }
       button { font-family: inherit; background: none; border: none; cursor: pointer; }
 
@@ -360,7 +376,7 @@ function buildMapStyle({ world, prefectures }) {
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
-function MapCanvas({ onReady }) {
+function MapCanvas({ onReady, stationPoints }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -396,6 +412,25 @@ function MapCanvas({ onReady }) {
 
         map.on("load", () => {
           if (cancelled) return;
+
+          // 観測点(震度)マーカー用のソース・レイヤーをここで先に用意しておく。
+          // データ自体は stationPoints が変わるたびに別のeffectで更新する。
+          map.addSource("station-points", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "station-points-circle",
+            type: "circle",
+            source: "station-points",
+            paint: {
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 3, 10, 9],
+              "circle-color": ["get", "color"],
+              "circle-stroke-width": 1,
+              "circle-stroke-color": "rgba(0,0,0,0.55)",
+            },
+          });
+
           setStatus("ready");
           if (onReady) onReady(map);
         });
@@ -424,6 +459,29 @@ function MapCanvas({ onReady }) {
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 選択中の地震(stationPoints)が変わるたびに、観測点マーカーのGeoJSONを更新する。
+  // 緯度経度が引けなかった観測点(マスタに見つからなかったもの)は地図には出さない。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const source = map.getSource("station-points");
+    if (!source) return;
+
+    const features = (stationPoints || [])
+      .filter(p => p.latitude != null && p.longitude != null)
+      .map(p => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+        properties: {
+          addr: p.addr,
+          pref: p.pref,
+          color: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).bg,
+        },
+      }));
+
+    source.setData({ type: "FeatureCollection", features });
+  }, [stationPoints, status]);
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#121214" }}>
@@ -601,6 +659,11 @@ function toQuakeCard(item) {
     longPeriod: null, // P2P地震情報APIには長周期地震動階級は含まれないため常に非表示
     latitude: typeof hypo?.latitude === "number" ? hypo.latitude : null,
     longitude: typeof hypo?.longitude === "number" ? hypo.longitude : null,
+    // 観測点ごとの震度。{ pref, addr, scale, isArea }の配列(無ければ空配列)。
+    // 注意: pointsは`earthquake`オブジェクトの中ではなく、レコード直下(item.points)にある。
+    // scaleは10刻みのJMAコード(10=震度1 ... 70=震度7)のまま保持しておき、
+    // 表示側(観測点マッチング後)でINTENSITY_STYLEのキーに変換する。
+    points: Array.isArray(item?.points) ? item.points : [],
   };
 }
 
@@ -613,6 +676,62 @@ async function fetchRecentQuakes() {
   return data
     .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
     .map(toQuakeCard);
+}
+
+/* ─────────────────────────────────────────────────────
+   観測点マスタ (stations_with_amp_revised.json)
+   気象庁 観測点コード・地点名・緯度経度のマスタデータ。
+   ファイル構成:
+     public/
+     └─ map/
+        └─ stations_with_amp_revised.json
+   ───────────────────────────────────────────────────── */
+let stationsPromise = null;
+function loadStations() {
+  if (stationsPromise) return stationsPromise;
+  stationsPromise = cachedFetchJSON(
+    `${import.meta.env.BASE_URL}map/stations_with_amp_revised.json`,
+    `geo:${GEO_CACHE_VERSION}:stations`
+  );
+  return stationsPromise;
+}
+
+/* ─────────────────────────────────────────────────────
+   観測点マッチング
+   P2P地震情報APIの points[] (各要素は { pref, addr, scale, isArea }) を、
+   観測点マスタ(stations)の地点と突き合わせて緯度経度を割り当てる。
+   addr(地点名)とpref(都道府県名)の組み合わせだけが手がかりで、観測点コードが
+   直接返ってこないため、以下の2段階でマッチングする(参考にした既存実装と同じ方針):
+     1. 地点名が完全一致 かつ 都道府県名が一致
+     2. 見つからなければ、都道府県名が一致するものの中から、
+        地点名が部分一致(どちらかがどちらかを含む)するものを探す
+   複数ヒットした場合は先頭の1件を採用する。
+   ───────────────────────────────────────────────────── */
+function matchStation(stations, point) {
+  const exact = stations.find(s => s.name === point.addr && s.pref.name === point.pref);
+  if (exact) return exact;
+
+  const partial = stations.find(s =>
+    s.pref.name === point.pref &&
+    (s.name.includes(point.addr) || point.addr.includes(s.name) ||
+     (s.city && s.city.name && point.addr.includes(s.city.name)))
+  );
+  return partial || null;
+}
+
+// points[]と観測点マスタを突き合わせ、地図・一覧で使える形(緯度経度+震度キー付き)に変換する。
+// マスタに見つからなかった観測点は、地図には出せないが一覧には残すため latitude/longitude が null のまま返す。
+function resolveStationPoints(points, stations) {
+  return points.map(p => {
+    const station = matchStation(stations, p);
+    return {
+      pref: p.pref,
+      addr: p.addr,
+      intensityKey: maxScaleToIntensityKey(p.scale),
+      latitude: station ? parseFloat(station.lat) : null,
+      longitude: station ? parseFloat(station.lon) : null,
+    };
+  });
 }
 
 
@@ -691,6 +810,88 @@ function QuakeDetailCard({ quake }) {
           </span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   STATION POINTS LIST — 各地の震度
+   選択中の地震について、観測点ごとの震度を大きい順に並べて表示する。
+   件数が多い地震(数百観測点になることもある)を考慮し、既定では上位のみ表示し、
+   「すべて表示」で展開できるようにする。
+   ───────────────────────────────────────────────────── */
+function StationPointsList({ points }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // scale(10刻みのJMAコード)が大きい順 = 震度が大きい順
+  const sorted = useMemo(() => {
+    return [...points].sort((a, b) => {
+      const order = ["0","1","2","3","4","5-","5+","6-","6+","7"];
+      return order.indexOf(b.intensityKey) - order.indexOf(a.intensityKey);
+    });
+  }, [points]);
+
+  if (sorted.length === 0) return null;
+
+  const VISIBLE_COUNT = 10;
+  const visible = expanded ? sorted : sorted.slice(0, VISIBLE_COUNT);
+  const hasMore = sorted.length > VISIBLE_COUNT;
+
+  return (
+    <div style={{ margin: "2px 14px 8px" }}>
+      <div style={{
+        padding: "6px 2px",
+        fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)",
+      }}>
+        各地の震度
+      </div>
+
+      <div style={{
+        borderRadius: 12,
+        overflow: "hidden",
+        background: "rgba(255,255,255,0.04)",
+        boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
+      }}>
+        {visible.map((p, i) => {
+          const style = INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"];
+          return (
+            <div key={`${p.pref}-${p.addr}-${i}`}>
+              {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
+                <span style={{
+                  flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                  background: style.bg, color: style.fg,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 11, fontWeight: 800,
+                }}>
+                  {style.label}
+                </span>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                  {p.pref}
+                </span>
+                <span style={{
+                  flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {p.addr}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {hasMore && (
+        <button
+          onClick={() => setExpanded(v => !v)}
+          style={{
+            width: "100%", textAlign: "center", padding: "8px 0",
+            fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.55)",
+          }}
+        >
+          {expanded ? "閉じる" : `すべて表示 (${sorted.length}件)`}
+        </button>
+      )}
     </div>
   );
 }
@@ -890,7 +1091,7 @@ function useSnapDrag({ heights, index, onSnap }) {
    ───────────────────────────────────────────────────── */
 function BottomDock({
   active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
-  quakes, quakeStatus, selectedQuakeId, onSelectQuake,
+  quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const bodyRef = useRef(null);
@@ -1241,6 +1442,10 @@ function BottomDock({
                     <>
                       <QuakeDetailCard quake={selected}/>
 
+                      {selected.id === selectedQuakeId && stationPoints.length > 0 && (
+                        <StationPointsList points={stationPoints}/>
+                      )}
+
                       <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", margin: "2px 14px" }}/>
 
                       {quakes.map((q, i) => {
@@ -1439,8 +1644,27 @@ export default function App() {
   const [quakeStatus,     setQuakeStatus]     = useState("loading"); // loading | ready | error
   const [selectedQuakeId, setSelectedQuakeId] = useState(null);
 
+  // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
+  const [stations, setStations] = useState(null);
+
   const toggleLayer = id =>
     setLayers(prev => prev.map(l => l.id === id ? { ...l, on: !l.on } : l));
+
+  // 観測点マスタは全地震で共通なので、起動時に一度だけ取得する
+  useEffect(() => {
+    let cancelled = false;
+    loadStations()
+      .then(list => { if (!cancelled) setStations(list); })
+      .catch(err => console.error("観測点マスタの取得に失敗:", err));
+    return () => { cancelled = true; };
+  }, []);
+
+  // 選択中の地震 + 観測点マスタが揃ったら、観測点ごとの震度に緯度経度を割り当てる
+  const selectedQuake = quakes.find(q => q.id === selectedQuakeId) || null;
+  const selectedQuakePoints = useMemo(() => {
+    if (!selectedQuake || !stations) return [];
+    return resolveStationPoints(selectedQuake.points, stations);
+  }, [selectedQuake, stations]);
 
   // 起動時に取得し、以降は1分おきに自動更新する(P2P地震情報APIのレート制限: /history 60回/分)
   useEffect(() => {
@@ -1474,7 +1698,7 @@ export default function App() {
       <div style={{ height: "100dvh", position: "relative", overflow: "hidden", background: "#121214" }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
-        <MapCanvas onReady={setMap}/>
+        <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints}/>
 
         {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
@@ -1512,6 +1736,7 @@ export default function App() {
             quakeStatus={quakeStatus}
             selectedQuakeId={selectedQuakeId}
             onSelectQuake={setSelectedQuakeId}
+            stationPoints={selectedQuakePoints}
           />
         </div>
 
