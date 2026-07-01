@@ -1193,12 +1193,13 @@ function BottomDock({
     return () => ro.disconnect();
   }, []);
 
-  // タブ切り替えで表示中身が変わると、ブラウザのスクロールアンカリングにより
-  // scrollTopが勝手に動き、ヘッダーや先頭行が隠れて見えることがあるため、
-  // タブが変わるたびに明示的にスクロール位置を先頭へ戻す。
+  // タブ切り替え、または選択中の地震が変わった際に表示中身が変わると、
+  // ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
+  // カードやヘッダーが隠れて見えることがあるため、そのたびに明示的に
+  // スクロール位置を先頭へ戻す(=常にカードが先頭に見えるようにする)。
   useLayoutEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [active]);
+  }, [active, selectedQuakeId]);
 
   const naturalHeight = HANDLE_HEIGHT + bodyNaturalHeight; // ハンドル+本体の合計(=「高」スナップの高さ)
 
@@ -1461,8 +1462,28 @@ function BottomDock({
   // ドラッグ中はプレビューindex、そうでなければactiveをハイライト表示に使う
   const displayIdx = navDragging && previewIdx != null ? previewIdx : activeIndex;
 
+  // 戻るボタンの下端オフセット。パネル本体(currentHeight)+ナビ行(NAV_ROW_HEIGHT)+
+  // 少し余白、を常に足し上げているため、ドラッグ中も含めてパネルの高さに追従する。
+  const backButtonBottom = currentHeight + NAV_ROW_HEIGHT + 12;
+
   return (
-    <Glass
+    <>
+      {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
+          Glass(パネル本体)の兄弟として置くことで、currentHeightの変化(ドラッグ含む)に
+          そのまま追従できるようにしている。 */}
+      {active === "quake" && selectedQuakeId != null && (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <BackToListButton onClick={() => onSelectQuake(null)}/>
+        </div>
+      )}
+
+      <Glass
       filterSize={settled ? "normal" : "none"}
       blur={settled ? 14 : 8}
       style={{
@@ -1546,23 +1567,23 @@ function BottomDock({
 
                 {quakes.length > 0 && (() => {
                   const selected = quakes.find(q => q.id === selectedQuakeId) || null;
+
+                  // 選択中は「カード(+各地の震度)のみ」、未選択は「一覧のみ」の排他表示。
+                  if (selected) {
+                    return (
+                      <div key={selected.id}>
+                        <QuakeDetailCard quake={selected}/>
+                        {stationPoints.length > 0 && (
+                          <StationPointsList points={stationPoints}/>
+                        )}
+                      </div>
+                    );
+                  }
+
                   return (
                     <>
-                      {selected && (
-                        <>
-                          <QuakeDetailCard quake={selected}/>
-
-                          {stationPoints.length > 0 && (
-                            <StationPointsList points={stationPoints}/>
-                          )}
-
-                          <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", margin: "2px 14px" }}/>
-                        </>
-                      )}
-
                       {quakes.map((q, i) => {
                         const style = INTENSITY_STYLE[q.maxIntensity] || INTENSITY_STYLE["1"];
-                        const isActive = selected && q.id === selected.id;
                         return (
                           <div key={q.id}>
                             {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
@@ -1571,7 +1592,7 @@ function BottomDock({
                               style={{
                                 width: "100%", display: "flex", alignItems: "center", gap: 10,
                                 padding: "9px 14px",
-                                background: isActive ? "rgba(255,255,255,0.06)" : "transparent",
+                                background: "transparent",
                                 textAlign: "left",
                               }}
                             >
@@ -1724,7 +1745,8 @@ function BottomDock({
           );
         })}
       </div>
-    </Glass>
+      </Glass>
+    </>
   );
 }
 
@@ -1749,10 +1771,9 @@ function BackToListButton({ onClick }) {
           color: "rgba(200,220,255,0.95)",
         }}
       >
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
-             stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="19" y1="12" x2="5" y2="12"/>
-          <polyline points="12 19 5 12 12 5"/>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="15 6 9 12 15 18"/>
         </svg>
       </button>
     </Glass>
@@ -1864,20 +1885,6 @@ export default function App() {
           </div>
         </div>
         */}
-
-        {/* 戻るボタン — 地震を選択している間だけ、地図右下(パネルの少し上)に浮かぶ。
-            押すと選択を解除し、パネルは一覧表示の「中高」へ戻る。
-            オフセットは「中」の高さ(カード等115px)+ナビ行(66px)+少し余白、を目安にしている。 */}
-        {activeNav === "quake" && selectedQuakeId != null && (
-          <div style={{
-            position: "absolute",
-            right: 16,
-            bottom: "calc(16px + env(safe-area-inset-bottom) + 115px + 66px + 12px)",
-            zIndex: 40,
-          }}>
-            <BackToListButton onClick={() => setSelectedQuakeId(null)}/>
-          </div>
-        )}
 
         {/* ボトムドック — ナビバーと地図レイヤーパネルをひとつのGlassに統合。
             レイヤーを開くと、このガラス自体の高さ・角丸が滑らかに変化し、
