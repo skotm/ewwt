@@ -203,15 +203,9 @@ function GlobalStyles() {
       /* MapLibreの標準UIはLiquid Glassの自前コントロールに置き換えるため非表示 */
       .maplibregl-ctrl-top-right,
       .maplibregl-ctrl-top-left,
-      .maplibregl-ctrl-bottom-left { display: none; }
-      /* 出典(Attribution)は法的に必須のため左下に残すが控えめに */
-      .maplibregl-ctrl-bottom-right {
-        opacity: 0.35;
-        font-size: 10px;
-        filter: invert(1) hue-rotate(180deg);
-      }
-      .maplibregl-ctrl-attrib { background: transparent !important; }
-      .maplibregl-ctrl-attrib a { color: rgba(255,255,255,0.6) !important; }
+      .maplibregl-ctrl-bottom-left,
+      .maplibregl-ctrl-bottom-right,
+      .maplibregl-control-container { display: none; }
 
       .mono { font-variant-numeric: tabular-nums; }
 
@@ -233,23 +227,18 @@ function GlobalStyles() {
 const MAPLIBRE_JS  = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.js";
 const MAPLIBRE_CSS = "https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/4.7.1/maplibre-gl.css";
 
-// GSI地理院地図Vector 淡色スタイル（無料・APIキー不要・出典表示義務あり）
-const GSI_PALE_STYLE_URL = "https://gsi-cyberjapan.github.io/gsivectortile-mapbox-gl-js/pale.json";
-
 let maplibreLoadPromise = null;
 function loadMapLibre() {
   if (window.maplibregl) return Promise.resolve(window.maplibregl);
   if (maplibreLoadPromise) return maplibreLoadPromise;
 
   maplibreLoadPromise = new Promise((resolve, reject) => {
-    // CSS
     if (!document.querySelector(`link[href="${MAPLIBRE_CSS}"]`)) {
       const link = document.createElement("link");
       link.rel = "stylesheet";
       link.href = MAPLIBRE_CSS;
       document.head.appendChild(link);
     }
-    // JS
     const existing = document.querySelector(`script[src="${MAPLIBRE_JS}"]`);
     if (existing) {
       existing.addEventListener("load", () => resolve(window.maplibregl));
@@ -267,11 +256,104 @@ function loadMapLibre() {
 }
 
 /* ─────────────────────────────────────────────────────
-   MAP CANVAS — MapLibre GL JS + GSIベクトルタイル
-   
-   見た目はCSSフィルタで黒基調グレースケールに変換:
-   invert + hue-rotate + brightness + contrast の組み合わせで
-   GSI淡色地図（白ベース）をダークマップ化する。
+   GEO DATA LOADER
+   /map/world.json (GeometryCollection・国境) と
+   /map/prefectures.json (FeatureCollection・都道府県) を取得し、
+   ブラウザの localStorage にキャッシュする。
+   ファイル構成:
+     public/
+     └─ map/
+        ├─ world.json
+        └─ prefectures.json
+
+   注意: localStorage は容量上限が一般的に 5〜10MB 程度(ブラウザ依存)。
+   world.json は比較的大きいファイルのため、容量超過時は保存に失敗することがある。
+   その場合は例外を握りつぶしてキャッシュなしで動作を継続する
+   (=毎回ネットワークから取得するだけで、アプリ自体は問題なく動く)。
+   ───────────────────────────────────────────────────── */
+const GEO_CACHE_VERSION = "v1"; // データ更新時はここを上げるとキャッシュを無効化できる
+
+function readGeoCache(cacheKey) {
+  try {
+    const raw = localStorage.getItem(cacheKey);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null; // 壊れたキャッシュ/JSON.parse失敗時は無視してネットワークから再取得
+  }
+}
+
+function writeGeoCache(cacheKey, data) {
+  try {
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+  } catch {
+    // QuotaExceededError など。キャッシュできなくてもアプリの動作自体は継続する。
+    console.warn(`地図データのローカルキャッシュに失敗しました(${cacheKey})。容量超過の可能性があります。`);
+  }
+}
+
+function cachedFetchJSON(url, cacheKey) {
+  const cached = readGeoCache(cacheKey);
+  if (cached) return Promise.resolve(cached);
+
+  return fetch(url).then(r => {
+    if (!r.ok) throw new Error(`${url} の取得に失敗しました (${r.status})`);
+    return r.json();
+  }).then(data => {
+    writeGeoCache(cacheKey, data);
+    return data;
+  });
+}
+
+let geoDataPromise = null;
+function loadGeoData() {
+  if (geoDataPromise) return geoDataPromise;
+  geoDataPromise = Promise.all([
+    cachedFetchJSON("/map/world.json", `geo:${GEO_CACHE_VERSION}:world`),
+    cachedFetchJSON("/map/prefectures.json", `geo:${GEO_CACHE_VERSION}:prefectures`),
+  ]).then(([world, prefectures]) => ({ world, prefectures }));
+  return geoDataPromise;
+}
+
+/* ─────────────────────────────────────────────────────
+   MAPLIBREスタイル生成
+   ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
+   そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
+   外部タイルサーバー・外部スタイルには一切依存しない。
+   ───────────────────────────────────────────────────── */
+function buildMapStyle({ world, prefectures }) {
+  return {
+    version: 8,
+    sources: {
+      world: { type: "geojson", data: world },
+      prefectures: { type: "geojson", data: prefectures },
+    },
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#1c1c1e" } },
+      {
+        id: "world-fill", type: "fill", source: "world",
+        paint: { "fill-color": "#2c2c2e" },
+      },
+      {
+        id: "world-line", type: "line", source: "world",
+        paint: { "line-color": "rgba(255,255,255,0.08)", "line-width": 0.5 },
+      },
+      {
+        id: "prefectures-fill", type: "fill", source: "prefectures",
+        paint: { "fill-color": "#3a3a3c" },
+      },
+      {
+        id: "prefectures-line", type: "line", source: "prefectures",
+        paint: { "line-color": "rgba(255,255,255,0.18)", "line-width": 0.6 },
+      },
+    ],
+  };
+}
+
+/* ─────────────────────────────────────────────────────
+   MAP CANVAS — MapLibre GL JS(描画エンジン) + ローカルGeoJSON(データ)
+   世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
+   外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
 function MapCanvas({ onReady }) {
   const containerRef = useRef(null);
@@ -281,33 +363,20 @@ function MapCanvas({ onReady }) {
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId = null;
 
-    // 10秒経って load イベントが来ない場合は「失敗」とみなして表示を切り替える
-    timeoutId = setTimeout(() => {
-      if (cancelled) return;
-      setStatus(prev => {
-        if (prev === "loading") {
-          setErrorMsg("地図タイルの読み込みがタイムアウトしました（サンドボックスのネットワーク制限の可能性があります）");
-          return "error";
-        }
-        return prev;
-      });
-    }, 10000);
-
-    loadMapLibre()
-      .then((maplibregl) => {
+    Promise.all([loadMapLibre(), loadGeoData()])
+      .then(([maplibregl, geo]) => {
         if (cancelled || !containerRef.current) return;
 
         let map;
         try {
           map = new maplibregl.Map({
             container: containerRef.current,
-            style: GSI_PALE_STYLE_URL,
-            center: [139.767144, 35.680621], // 東京駅付近
-            zoom: 10,
+            style: buildMapStyle(geo),
+            center: [138.0, 38.0], // 日本全体が収まる中心付近
+            zoom: 4.5,
             pitch: 0,
-            attributionControl: true,
+            attributionControl: false,
             // ナビゲーション操作はLiquid Glassの自前ボタンで行うため
             // 標準コントロールはあえて追加しない
           });
@@ -322,7 +391,6 @@ function MapCanvas({ onReady }) {
 
         map.on("load", () => {
           if (cancelled) return;
-          clearTimeout(timeoutId);
           setStatus("ready");
           if (onReady) onReady(map);
         });
@@ -330,25 +398,21 @@ function MapCanvas({ onReady }) {
         map.on("error", (e) => {
           console.error("MapLibre error event:", e?.error || e);
           if (cancelled) return;
-          clearTimeout(timeoutId);
           setStatus("error");
-          const detail = e?.error?.message || e?.error?.status || "スタイル/タイルの取得に失敗しました";
-          setErrorMsg(String(detail));
+          setErrorMsg(e?.error?.message || "地図の描画中にエラーが発生しました");
         });
 
         mapRef.current = map;
       })
       .catch((err) => {
-        console.error("MapLibre GL JS load failed:", err);
+        console.error("地図の読み込みに失敗:", err);
         if (cancelled) return;
-        clearTimeout(timeoutId);
         setStatus("error");
-        setErrorMsg(err.message || "MapLibre GL JS 本体の読み込みに失敗しました（CDNへのアクセスが制限されている可能性があります）");
+        setErrorMsg(err.message || "地図データまたはMapLibre GL JS本体の読み込みに失敗しました");
       });
 
     return () => {
       cancelled = true;
-      clearTimeout(timeoutId);
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -358,7 +422,6 @@ function MapCanvas({ onReady }) {
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#1c1c1e" }}>
-      {/* 地図本体: CSSフィルタで黒基調グレースケールに変換 */}
       <div
         ref={containerRef}
         style={{
@@ -366,15 +429,6 @@ function MapCanvas({ onReady }) {
           inset: 0,
           width: "100%",
           height: "100%",
-          /*
-            GSI淡色地図（白ベース）→ ダークマップ変換:
-            1. invert(1)        白黒反転 → 黒ベースになる
-            2. hue-rotate(180deg) 反転で生じる色相のズレを補正
-            3. brightness(0.85)  反転後の眩しさを落とす
-            4. contrast(0.9)     線を少し弱め、薄い線に近づける
-            5. saturate(0.6)     彩度を落として落ち着かせる
-          */
-          filter: "invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6)",
           opacity: status === "ready" ? 1 : 0,
           transition: "opacity 0.4s ease",
         }}
@@ -409,8 +463,8 @@ function MapCanvas({ onReady }) {
           <span style={{ fontSize: 14, fontWeight: 600 }}>地図を表示できませんでした</span>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", maxWidth: 280 }}>{errorMsg}</span>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", maxWidth: 280, marginTop: 4 }}>
-            Claudeのアーティファクト実行環境では、外部CDNやタイルサーバーへのアクセスが
-            ネットワーク制限により失敗する場合があります。
+            public/map/world.json と public/map/prefectures.json が正しい場所に
+            配置されているか、CDNへのアクセスが制限されていないか確認してください。
           </span>
         </div>
       )}
@@ -785,10 +839,9 @@ function useSnapDrag({ heights, index, onSnap }) {
      歪な円形になるのを防ぐため)。
    ───────────────────────────────────────────────────── */
 function BottomDock({ active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange }) {
-  const HANDLE_HEIGHT = 26; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
-  // 上の角丸(最大26px)より低くすると、角の丸みが本文の1行目に
-  // 食い込んでテキストが欠けて見えるため、角丸の半径以上を確保する。
+  const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const bodyRef = useRef(null);
+  const scrollRef = useRef(null);
   const [bodyNaturalHeight, setBodyNaturalHeight] = useState(0);
 
   // パネル本体(ヘッダー+レイヤー一覧。ハンドルは含まない)の
@@ -801,6 +854,13 @@ function BottomDock({ active, onNav, layerOpen, layers, onToggleLayer, onLayerOp
     ro.observe(bodyRef.current);
     return () => ro.disconnect();
   }, []);
+
+  // タブ切り替えで表示中身が変わると、ブラウザのスクロールアンカリングにより
+  // scrollTopが勝手に動き、ヘッダーや先頭行が隠れて見えることがあるため、
+  // タブが変わるたびに明示的にスクロール位置を先頭へ戻す。
+  useLayoutEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+  }, [active]);
 
   const naturalHeight = HANDLE_HEIGHT + bodyNaturalHeight; // ハンドル+本体の合計(=「高」スナップの高さ)
 
@@ -893,6 +953,14 @@ function BottomDock({ active, onNav, layerOpen, layers, onToggleLayer, onLayerOp
   useEffect(() => {
     if (isDragging) { setSettled(false); clearTimeout(settleTimer.current); }
   }, [isDragging]);
+
+  // タブ切り替え(active変化)でも中身の自然な高さが変わり、パネルの高さが
+  // アニメーションで追従する。この高さ変化中も、スナップ切り替え時と同様に
+  // 重い屈折フィルタを一時的に外して軽量モードにする。
+  useEffect(() => {
+    setSettled(false);
+    scheduleSettle(460);
+  }, [active]);
 
   // 角丸は「現在のガラス全体の実際の高さ」と「開き具合」から直接算出する。
   // 999pxのような巨大な値をそのままトランジションさせると、中間状態で
@@ -1080,8 +1148,14 @@ function BottomDock({ active, onNav, layerOpen, layers, onToggleLayer, onLayerOp
           }}/>
         </div>
 
-        {/* スクロール可能な本体 — ヘッダー・レイヤー一覧だけがここでスクロールする */}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+        {/* スクロール可能な本体 — ヘッダー・レイヤー一覧だけがここでスクロールする。
+            overflowAnchor: "none" は、タブ切り替えで中身の高さが変わった際に
+            ブラウザのスクロールアンカリングがスクロール位置を勝手にずらし、
+            ヘッダーや先頭行が隠れて見える不具合を防ぐため。 */}
+        <div
+          ref={scrollRef}
+          style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none" }}
+        >
           <div ref={bodyRef}>
             {active === "quake" ? (
               <>
