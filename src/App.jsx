@@ -1227,8 +1227,15 @@ function BottomDock({
   // → 「高」は「中身の実測高さ」と「地図レイヤー一覧(6項目)相当の基準高さ」の
   //    大きい方を採用し、どのタブでも同じ位置まで開けるようにする。
   //    中身がそれより短い場合は、単に空きスペースとして下に余る。
+  //
+  // ただし地震タブは「各地の震度」一覧を展開すると中身がかなり長くなることがあり、
+  // 実測高さをそのまま採用すると「中高」からの伸び幅が大きくなりすぎて、
+  // 跳ねるイージングと相まって「ビョーン」と誇張されたアニメーションに見えてしまう。
+  // そのため「高」には上限(HIGH_HEIGHT_CAP)を設け、それを超える分は
+  // パネル内部のスクロールに任せる(中身自体は隠れず、スクロールで見られる)。
   const REFERENCE_HIGH_HEIGHT = 350; // 地図レイヤー一覧(6項目)を開いたときの目安高さ
-  const highHeight = Math.max(naturalHeight, REFERENCE_HIGH_HEIGHT);
+  const HIGH_HEIGHT_CAP = 460;       // 「高」の最大高さ。これ以上は内部スクロールに任せる
+  const highHeight = Math.min(Math.max(naturalHeight, REFERENCE_HIGH_HEIGHT), HIGH_HEIGHT_CAP);
 
   // 「中」「中高」はタブによらず常に同じ高さになるよう固定pxで持つ
   // (地図レイヤー一覧で調整済みだった見た目の高さをそのまま定数化している)。
@@ -1265,6 +1272,16 @@ function BottomDock({
       setSnapIndex(layerOpen ? (active === "quake" ? 2 : 3) : 0);
     }
   }, [layerOpen, active]);
+
+  // 地震の選択が「あり→なし」に変わった(=戻るボタンで選択解除された)ら、
+  // 詳細カード表示の「中」から一覧表示の「中高」へ戻す。
+  const lastSelectedQuakeId = useRef(selectedQuakeId);
+  useEffect(() => {
+    if (lastSelectedQuakeId.current != null && selectedQuakeId == null) {
+      setSnapIndex(2);
+    }
+    lastSelectedQuakeId.current = selectedQuakeId;
+  }, [selectedQuakeId]);
 
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
@@ -1528,20 +1545,24 @@ function BottomDock({
                 )}
 
                 {quakes.length > 0 && (() => {
-                  const selected = quakes.find(q => q.id === selectedQuakeId) || quakes[0];
+                  const selected = quakes.find(q => q.id === selectedQuakeId) || null;
                   return (
                     <>
-                      <QuakeDetailCard quake={selected}/>
+                      {selected && (
+                        <>
+                          <QuakeDetailCard quake={selected}/>
 
-                      {selected.id === selectedQuakeId && stationPoints.length > 0 && (
-                        <StationPointsList points={stationPoints}/>
+                          {stationPoints.length > 0 && (
+                            <StationPointsList points={stationPoints}/>
+                          )}
+
+                          <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", margin: "2px 14px" }}/>
+                        </>
                       )}
-
-                      <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", margin: "2px 14px" }}/>
 
                       {quakes.map((q, i) => {
                         const style = INTENSITY_STYLE[q.maxIntensity] || INTENSITY_STYLE["1"];
-                        const isActive = q.id === selected.id;
+                        const isActive = selected && q.id === selected.id;
                         return (
                           <div key={q.id}>
                             {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
@@ -1708,6 +1729,37 @@ function BottomDock({
 }
 
 /* ─────────────────────────────────────────────────────
+   BACK TO LIST BUTTON
+   地震を選択中に地図上へ浮かぶ丸い「戻る」ボタン。
+   押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
+   ───────────────────────────────────────────────────── */
+function BackToListButton({ onClick }) {
+  return (
+    <Glass
+      radius={999}
+      style={{ width: 44, height: 44 }}
+    >
+      <button
+        onClick={onClick}
+        aria-label="地震一覧に戻る"
+        style={{
+          position: "relative", zIndex: 1,
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: "rgba(200,220,255,0.95)",
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="19" y1="12" x2="5" y2="12"/>
+          <polyline points="12 19 5 12 12 5"/>
+        </svg>
+      </button>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    LAYERS TOGGLE ICON
    ───────────────────────────────────────────────────── */
 function LayersIcon() {
@@ -1773,8 +1825,9 @@ export default function App() {
         if (cancelled) return;
         setQuakes(list);
         setQuakeStatus("ready");
-        // 選択中の地震がまだ無ければ、最新(先頭)を自動選択する
-        setSelectedQuakeId(prev => (prev && list.some(q => q.id === prev)) ? prev : (list[0]?.id ?? null));
+        // 選択中の地震が更新後の一覧に無くなっていたら(削除・入れ替わり)選択解除する。
+        // 何も選んでいない状態(未選択=一覧のみ表示)は、自動選択せずそのまま保つ。
+        setSelectedQuakeId(prev => (prev && list.some(q => q.id === prev)) ? prev : null);
       } catch (err) {
         console.error("地震情報の取得に失敗:", err);
         if (cancelled) return;
@@ -1811,6 +1864,20 @@ export default function App() {
           </div>
         </div>
         */}
+
+        {/* 戻るボタン — 地震を選択している間だけ、地図右下(パネルの少し上)に浮かぶ。
+            押すと選択を解除し、パネルは一覧表示の「中高」へ戻る。
+            オフセットは「中」の高さ(カード等115px)+ナビ行(66px)+少し余白、を目安にしている。 */}
+        {activeNav === "quake" && selectedQuakeId != null && (
+          <div style={{
+            position: "absolute",
+            right: 16,
+            bottom: "calc(16px + env(safe-area-inset-bottom) + 115px + 66px + 12px)",
+            zIndex: 40,
+          }}>
+            <BackToListButton onClick={() => setSelectedQuakeId(null)}/>
+          </div>
+        )}
 
         {/* ボトムドック — ナビバーと地図レイヤーパネルをひとつのGlassに統合。
             レイヤーを開くと、このガラス自体の高さ・角丸が滑らかに変化し、
