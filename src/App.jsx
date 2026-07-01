@@ -561,15 +561,60 @@ function splitIntensityLabel(label) {
   return { num: m[1], suffix: m[2] || null };
 }
 
-// デザイン確認用のモックデータ(実装後は選択された地震情報に置き換える)
-const MOCK_QUAKE = {
-  time: "2022/03/16 23:36:32",
-  place: "福島県沖",
-  maxIntensity: "6+",
-  magnitude: 7.4,
-  depth: 57,
-  longPeriod: null, // 例: "2"（長周期地震動階級）。無ければ非表示
-};
+/* ─────────────────────────────────────────────────────
+   P2P地震情報 JSON API (v2)
+   https://api.p2pquake.net/v2/history?codes=551
+   地震情報(code:551)を取得し、アプリ内で使う形に変換する。
+   maxScale は 10刻みの震度コード(10=震度1 ... 70=震度7)で返ってくるため、
+   INTENSITY_STYLE のキー("1"〜"7","5-","5+","6-","6+")に変換する。
+   ───────────────────────────────────────────────────── */
+const P2PQUAKE_HISTORY_URL = "https://api.p2pquake.net/v2/history?codes=551&limit=30";
+
+function maxScaleToIntensityKey(maxScale) {
+  const map = {
+    "-1": "0", "0": "0",
+    "10": "1", "20": "2", "30": "3", "40": "4",
+    "45": "5-", "50": "5+",
+    "55": "6-", "60": "6+",
+    "70": "7",
+  };
+  return map[String(maxScale)] ?? "0";
+}
+
+// API由来のISO風文字列("2024/01/01 12:34:56.789")を "YYYY/MM/DD HH:mm:ss" 表示用に整える
+function formatQuakeTime(raw) {
+  if (!raw) return "";
+  return raw.split(".")[0]; // ミリ秒以下を切り捨てるだけで日本時間表記のまま使える
+}
+
+// P2P地震情報APIの1レコードを、QuakeDetailCardが使う形に変換する
+function toQuakeCard(item) {
+  const eq = item.earthquake;
+  const hypo = eq?.hypocenter;
+  return {
+    id: item.id,
+    time: formatQuakeTime(eq?.time),
+    place: hypo?.name || "震源地不明",
+    maxIntensity: maxScaleToIntensityKey(eq?.maxScale),
+    magnitude: typeof hypo?.magnitude === "number" && hypo.magnitude > 0 ? hypo.magnitude : null,
+    depth: typeof hypo?.depth === "number" && hypo.depth >= 0 ? hypo.depth : null,
+    longPeriod: null, // P2P地震情報APIには長周期地震動階級は含まれないため常に非表示
+    latitude: typeof hypo?.latitude === "number" ? hypo.latitude : null,
+    longitude: typeof hypo?.longitude === "number" ? hypo.longitude : null,
+  };
+}
+
+// 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
+async function fetchRecentQuakes() {
+  const res = await fetch(P2PQUAKE_HISTORY_URL);
+  if (!res.ok) throw new Error(`地震情報の取得に失敗しました (${res.status})`);
+  const data = await res.json();
+  // 「震度速報のみ」等、震源情報が欠けているレコードを除外
+  return data
+    .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
+    .map(toQuakeCard);
+}
+
 
 /* ─────────────────────────────────────────────────────
    QUAKE DETAIL CARD
@@ -619,12 +664,12 @@ function QuakeDetailCard({ quake }) {
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
             M<span className="mono" style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginLeft: 3 }}>
-              {quake.magnitude}
+              {quake.magnitude != null ? quake.magnitude.toFixed(1) : "-"}
             </span>
           </span>
           <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
             深さ<span className="mono" style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginLeft: 3 }}>
-              {quake.depth}km
+              {quake.depth != null ? `${quake.depth}km` : "-"}
             </span>
           </span>
         </div>
@@ -843,7 +888,10 @@ function useSnapDrag({ heights, index, onSnap }) {
      999pxのような巨大な値は使わない(箱のサイズを超えてクランプされ、
      歪な円形になるのを防ぐため)。
    ───────────────────────────────────────────────────── */
-function BottomDock({ active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange }) {
+function BottomDock({
+  active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
+  quakes, quakeStatus, selectedQuakeId, onSelectQuake,
+}) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const bodyRef = useRef(null);
   const scrollRef = useRef(null);
@@ -1164,9 +1212,78 @@ function BottomDock({ active, onNav, layerOpen, layers, onToggleLayer, onLayerOp
           <div ref={bodyRef}>
             {active === "quake" ? (
               <>
-                <QuakeDetailCard quake={MOCK_QUAKE}/>
+                {quakeStatus === "loading" && quakes.length === 0 && (
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    gap: 8, padding: "18px 0", color: "rgba(255,255,255,0.45)",
+                  }}>
+                    <div style={{
+                      width: 16, height: 16, borderRadius: "50%",
+                      border: "2px solid rgba(255,255,255,0.15)",
+                      borderTopColor: "rgba(255,255,255,0.6)",
+                      animation: "spin 0.8s linear infinite",
+                    }}/>
+                    <span style={{ fontSize: 12 }}>地震情報を取得中…</span>
+                  </div>
+                )}
 
-                {/* フローティング部分(地震カード)とボタン類(ナビ行)の境界線 */}
+                {quakeStatus === "error" && quakes.length === 0 && (
+                  <div style={{ padding: "18px 16px", textAlign: "center" }}>
+                    <span style={{ fontSize: 12, color: "rgba(255,140,140,0.9)" }}>
+                      地震情報の取得に失敗しました
+                    </span>
+                  </div>
+                )}
+
+                {quakes.length > 0 && (() => {
+                  const selected = quakes.find(q => q.id === selectedQuakeId) || quakes[0];
+                  return (
+                    <>
+                      <QuakeDetailCard quake={selected}/>
+
+                      <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", margin: "2px 14px" }}/>
+
+                      {quakes.map((q, i) => {
+                        const style = INTENSITY_STYLE[q.maxIntensity] || INTENSITY_STYLE["1"];
+                        const isActive = q.id === selected.id;
+                        return (
+                          <div key={q.id}>
+                            {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
+                            <button
+                              onClick={() => onSelectQuake(q.id)}
+                              style={{
+                                width: "100%", display: "flex", alignItems: "center", gap: 10,
+                                padding: "9px 14px",
+                                background: isActive ? "rgba(255,255,255,0.06)" : "transparent",
+                                textAlign: "left",
+                              }}
+                            >
+                              <span style={{
+                                flexShrink: 0, width: 28, height: 22, borderRadius: 6,
+                                background: style.bg, color: style.fg,
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                fontSize: 11, fontWeight: 800,
+                              }}>
+                                {style.label}
+                              </span>
+                              <span style={{
+                                flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
+                                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                              }}>
+                                {q.place}
+                              </span>
+                              <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                                {q.time?.slice(5, 16)}
+                              </span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </>
+                  );
+                })()}
+
+                {/* フローティング部分(地震一覧)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: "rgba(255,255,255,0.22)", margin: "2px 0 0" }}/>
               </>
             ) : (
@@ -1317,8 +1434,37 @@ export default function App() {
   const [layerOpen, setLayerOpen] = useState(false);
   const [map,       setMap]       = useState(null);
 
+  // 地震情報(P2P地震情報API)
+  const [quakes,          setQuakes]          = useState([]);
+  const [quakeStatus,     setQuakeStatus]     = useState("loading"); // loading | ready | error
+  const [selectedQuakeId, setSelectedQuakeId] = useState(null);
+
   const toggleLayer = id =>
     setLayers(prev => prev.map(l => l.id === id ? { ...l, on: !l.on } : l));
+
+  // 起動時に取得し、以降は1分おきに自動更新する(P2P地震情報APIのレート制限: /history 60回/分)
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const list = await fetchRecentQuakes();
+        if (cancelled) return;
+        setQuakes(list);
+        setQuakeStatus("ready");
+        // 選択中の地震がまだ無ければ、最新(先頭)を自動選択する
+        setSelectedQuakeId(prev => (prev && list.some(q => q.id === prev)) ? prev : (list[0]?.id ?? null));
+      } catch (err) {
+        console.error("地震情報の取得に失敗:", err);
+        if (cancelled) return;
+        setQuakeStatus("error");
+      }
+    }
+
+    load();
+    const timer = setInterval(load, 60 * 1000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
 
   return (
     <>
@@ -1362,6 +1508,10 @@ export default function App() {
             layers={layers}
             onToggleLayer={toggleLayer}
             onLayerOpenChange={setLayerOpen}
+            quakes={quakes}
+            quakeStatus={quakeStatus}
+            selectedQuakeId={selectedQuakeId}
+            onSelectQuake={setSelectedQuakeId}
           />
         </div>
 
