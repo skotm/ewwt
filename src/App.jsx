@@ -376,7 +376,7 @@ function buildMapStyle({ world, prefectures }) {
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
-function MapCanvas({ onReady, stationPoints }) {
+function MapCanvas({ onReady, stationPoints, hypocenter }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -413,6 +413,22 @@ function MapCanvas({ onReady, stationPoints }) {
         map.on("load", () => {
           if (cancelled) return;
 
+          // 震源(バツ印)アイコンを生成してMapLibreへ登録しておく。
+          // canvasで太めの赤いバツ印を描き、addImageでシンボル画像として使う。
+          const size = 28;
+          const canvas = document.createElement("canvas");
+          canvas.width = size; canvas.height = size;
+          const c = canvas.getContext("2d");
+          c.strokeStyle = "#FF453A";
+          c.lineWidth = 4;
+          c.lineCap = "round";
+          const pad = 6;
+          c.beginPath();
+          c.moveTo(pad, pad); c.lineTo(size - pad, size - pad);
+          c.moveTo(size - pad, pad); c.lineTo(pad, size - pad);
+          c.stroke();
+          map.addImage("hypocenter-cross", c.getImageData(0, 0, size, size));
+
           // 観測点(震度)マーカー用のソース・レイヤーをここで先に用意しておく。
           // データ自体は stationPoints が変わるたびに別のeffectで更新する。
           map.addSource("station-points", {
@@ -428,6 +444,23 @@ function MapCanvas({ onReady, stationPoints }) {
               "circle-color": ["get", "color"],
               "circle-stroke-width": 1,
               "circle-stroke-color": "rgba(0,0,0,0.55)",
+            },
+          });
+
+          // 震源マーカー用のソース・レイヤー(観測点の上に重なるよう最後に追加)
+          map.addSource("hypocenter-point", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "hypocenter-point-symbol",
+            type: "symbol",
+            source: "hypocenter-point",
+            layout: {
+              "icon-image": "hypocenter-cross",
+              "icon-size": 1,
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
             },
           });
 
@@ -462,26 +495,77 @@ function MapCanvas({ onReady, stationPoints }) {
 
   // 選択中の地震(stationPoints)が変わるたびに、観測点マーカーのGeoJSONを更新する。
   // 緯度経度が引けなかった観測点(マスタに見つからなかったもの)は地図には出さない。
+  // 震度が大きい観測点ほど後(=前面)に描画されるよう、震度の小さい順に並べてからfeature化する
+  // (MapLibreのcircleレイヤーは、GeoJSON内でのfeatureの並び順どおりに下から重ねて描画するため)。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     const source = map.getSource("station-points");
     if (!source) return;
 
-    const features = (stationPoints || [])
+    const INTENSITY_ORDER = ["0","1","2","3","4","5-","5+","6-","6+","7"];
+    const sorted = (stationPoints || [])
       .filter(p => p.latitude != null && p.longitude != null)
-      .map(p => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
-        properties: {
-          addr: p.addr,
-          pref: p.pref,
-          color: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).bg,
-        },
-      }));
+      .slice()
+      .sort((a, b) => INTENSITY_ORDER.indexOf(a.intensityKey) - INTENSITY_ORDER.indexOf(b.intensityKey));
+
+    const features = sorted.map(p => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+      properties: {
+        addr: p.addr,
+        pref: p.pref,
+        color: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).bg,
+      },
+    }));
 
     source.setData({ type: "FeatureCollection", features });
   }, [stationPoints, status]);
+
+  // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカーを更新し、
+  // 震源+周辺の観測点がちょうど収まる範囲へズームする。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const source = map.getSource("hypocenter-point");
+    if (!source) return;
+
+    if (!hypocenter || hypocenter.latitude == null || hypocenter.longitude == null) {
+      source.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+
+    source.setData({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [hypocenter.longitude, hypocenter.latitude] },
+        properties: {},
+      }],
+    });
+
+    // 震源 + 観測点(緯度経度が引けたもの)が全部収まるbounding boxを作ってfitBoundsする。
+    // 観測点が1件も無い(マッチできなかった)場合は、震源を中心にほどよいズームへ寄せる。
+    const coords = [[hypocenter.longitude, hypocenter.latitude]];
+    (stationPoints || []).forEach(p => {
+      if (p.latitude != null && p.longitude != null) coords.push([p.longitude, p.latitude]);
+    });
+
+    if (coords.length > 1) {
+      let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+      coords.forEach(([lon, lat]) => {
+        minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon);
+        minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
+      });
+      map.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
+        padding: { top: 80, bottom: 220, left: 40, right: 40 },
+        maxZoom: 9,
+        duration: 800,
+      });
+    } else {
+      map.flyTo({ center: [hypocenter.longitude, hypocenter.latitude], zoom: 7, duration: 800 });
+    }
+  }, [hypocenter, stationPoints, status]);
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#121214" }}>
@@ -1156,6 +1240,13 @@ function BottomDock({
     Math.min(MIDHIGH_FIXED, highHeight - GAP),
     midHeight + GAP
   );
+
+  // 地震を選択した直後にスナップする「低(カードのみ)」の高さ。
+  // 完全に閉じる(0)ではなく、QuakeDetailCard 1枚(+ハンドル)がちょうど収まる
+  // 高さにして、地図の震源付近が広く見えつつカードも確認できるようにする。
+  const CARD_ONLY_HEIGHT = 96; // QuakeDetailCard 1枚の実測目安(margin込み)
+  const quakeLowHeight = Math.min(CARD_ONLY_HEIGHT, midHeight - GAP);
+
   const SNAP_HEIGHTS = [
     0,
     midHeight,
@@ -1171,7 +1262,7 @@ function BottomDock({
   useEffect(() => {
     if (layerOpen !== lastLayerOpen.current) {
       lastLayerOpen.current = layerOpen;
-      setSnapIndex(layerOpen ? (active === "quake" ? 1 : 3) : 0);
+      setSnapIndex(layerOpen ? (active === "quake" ? 2 : 3) : 0);
     }
   }, [layerOpen, active]);
 
@@ -1455,7 +1546,7 @@ function BottomDock({
                           <div key={q.id}>
                             {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
                             <button
-                              onClick={() => onSelectQuake(q.id)}
+                              onClick={() => { onSelectQuake(q.id); setSnapIndex(1); }}
                               style={{
                                 width: "100%", display: "flex", alignItems: "center", gap: 10,
                                 padding: "9px 14px",
@@ -1666,6 +1757,12 @@ export default function App() {
     return resolveStationPoints(selectedQuake.points, stations);
   }, [selectedQuake, stations]);
 
+  // 震源(バツ印表示・ズーム用)。緯度経度が無い地震(震源不明)ではnullのまま。
+  const selectedHypocenter = useMemo(() => {
+    if (!selectedQuake || selectedQuake.latitude == null || selectedQuake.longitude == null) return null;
+    return { latitude: selectedQuake.latitude, longitude: selectedQuake.longitude };
+  }, [selectedQuake]);
+
   // 起動時に取得し、以降は1分おきに自動更新する(P2P地震情報APIのレート制限: /history 60回/分)
   useEffect(() => {
     let cancelled = false;
@@ -1698,7 +1795,7 @@ export default function App() {
       <div style={{ height: "100dvh", position: "relative", overflow: "hidden", background: "#121214" }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
-        <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints}/>
+        <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints} hypocenter={selectedHypocenter}/>
 
         {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
