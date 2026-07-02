@@ -155,7 +155,7 @@ const Glass = forwardRef(function Glass({
         }}
       />
       {/* コンテンツ層: 歪みフィルタの影響を一切受けない */}
-      <div style={{ position: "relative", zIndex: 2 }}>
+      <div style={{ position: "relative", zIndex: 2, width: "100%", height: "100%" }}>
         {children}
       </div>
     </div>
@@ -748,7 +748,36 @@ function toQuakeCard(item) {
     // scaleは10刻みのJMAコード(10=震度1 ... 70=震度7)のまま保持しておき、
     // 表示側(観測点マッチング後)でINTENSITY_STYLEのキーに変換する。
     points: Array.isArray(item?.points) ? item.points : [],
+    // 国内津波の有無・程度。"None"(心配なし) / "Unknown" / "Checking"(調査中) /
+    // "NonEffective"(若干の海面変動) / "Watch"(注意報) / "Warning"(警報) / "MajorWarning"(大津波警報)
+    domesticTsunami: eq?.domesticTsunami || "None",
+    // 気象庁が付加する自由記述コメント(あれば)
+    freeFormComment: item?.comments?.freeFormComment || null,
   };
+}
+
+/* ─────────────────────────────────────────────────────
+   電文(付加コメント)テキストの組み立て
+   domesticTsunami(津波の有無)を基本の文言にし、freeFormComment(付加文)が
+   あれば続けて表示する。津波の危険がある場合は色も変える。
+   ───────────────────────────────────────────────────── */
+const TSUNAMI_TEXT = {
+  None:         { text: "この地震による津波の心配はありません。",                 color: "rgba(255,255,255,0.5)" },
+  Unknown:      { text: "津波の有無について、現在調査中です。",                   color: "#FFD60A" },
+  Checking:     { text: "津波の有無について、現在調査中です。",                   color: "#FFD60A" },
+  NonEffective: { text: "若干の海面変動が予想されますが、被害の心配はありません。", color: "#FFD60A" },
+  Watch:        { text: "この地震により、津波注意報が発表されています。",         color: "#FF9F0A" },
+  Warning:      { text: "この地震により、津波警報が発表されています。",           color: "#FF453A" },
+  MajorWarning: { text: "この地震により、大津波警報が発表されています。",         color: "#FF453A" },
+};
+
+function buildQuakeMessage(quake) {
+  const tsunami = TSUNAMI_TEXT[quake.domesticTsunami] || TSUNAMI_TEXT.None;
+  const lines = [{ label: "津波情報", text: tsunami.text, color: tsunami.color }];
+  if (quake.freeFormComment) {
+    lines.push({ label: "付加文", text: quake.freeFormComment, color: "rgba(255,255,255,0.75)" });
+  }
+  return lines;
 }
 
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
@@ -893,6 +922,37 @@ function QuakeDetailCard({ quake }) {
             {quake.time}
           </span>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   QUAKE MESSAGE CARD — 電文(津波情報・付加文)
+   選択中の地震について、津波の心配の有無や気象庁の付加コメントを表示する。
+   ───────────────────────────────────────────────────── */
+function QuakeMessageCard({ quake }) {
+  const lines = buildQuakeMessage(quake);
+
+  return (
+    <div style={{ margin: "2px 14px 8px" }}>
+      <div style={{
+        borderRadius: 12,
+        padding: "10px 12px",
+        display: "flex", flexDirection: "column", gap: 8,
+        background: "rgba(255,255,255,0.04)",
+        boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
+      }}>
+        {lines.map((line, i) => (
+          <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: line.color }}>
+              【{line.label}】
+            </span>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.85)", lineHeight: 1.5 }}>
+              {line.text}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -1573,6 +1633,7 @@ function BottomDock({
                     return (
                       <div key={selected.id}>
                         <QuakeDetailCard quake={selected}/>
+                        <QuakeMessageCard quake={selected}/>
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints}/>
                         )}
