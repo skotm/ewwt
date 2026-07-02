@@ -765,7 +765,7 @@ function splitIntensityLabel(label) {
    maxScale は 10刻みの震度コード(10=震度1 ... 70=震度7)で返ってくるため、
    INTENSITY_STYLE のキー("1"〜"7","5-","5+","6-","6+")に変換する。
    ───────────────────────────────────────────────────── */
-const P2PQUAKE_HISTORY_URL = "https://api.p2pquake.net/v2/history?codes=551&limit=30";
+const P2PQUAKE_HISTORY_URL = "https://api.p2pquake.net/v2/history?codes=551&limit=100";
 
 function maxScaleToIntensityKey(maxScale) {
   const map = {
@@ -846,14 +846,47 @@ function buildQuakeMessage(quake) {
 }
 
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
+/* ─────────────────────────────────────────────────────
+   重複レコードの除外
+   同じ地震について、気象庁から複数の電文(震度・観測点を含むものと、
+   震源(位置・M・深さ)だけを伝えるもの)が別レコードとして配信されることがある。
+   その場合、同じ発生時刻+同じ震源地なのに「震度4」と「震度0」が別々に
+   一覧に並んでしまい、後者はあたかも別の(無感)地震のように見えて紛らわしい。
+   → 発生時刻+震源地が一致するグループの中に、実際に震度情報(points)を
+     持つレコードが1件でもあれば、震度情報を持たない(points空 かつ 震度0)
+     レコードは「同じ地震の随伴電文」とみなして除外する。
+   ───────────────────────────────────────────────────── */
+function dedupeQuakeList(list) {
+  // 発生時刻+震源地に加えて、M・深さも一致条件に含める。
+  // 同じ地震の随伴電文どうしはこれらも完全に一致するはずなので、
+  // 万一まったくの別地震が同時刻・同地名で起きた場合の誤結合リスクを下げる。
+  const groupKey = q => `${q.time}|${q.place}|${q.magnitude}|${q.depth}`;
+
+  const hasSubstanceInGroup = new Map(); // groupKey -> 震度情報を持つレコードがあるか
+  for (const q of list) {
+    const key = groupKey(q);
+    const substantial = q.points.length > 0 || (q.maxIntensity !== "0" && q.maxIntensity !== "?");
+    if (substantial) hasSubstanceInGroup.set(key, true);
+  }
+
+  return list.filter(q => {
+    const key = groupKey(q);
+    const groupHasSubstance = hasSubstanceInGroup.get(key);
+    const thisIsEmpty = q.points.length === 0 && q.maxIntensity === "0";
+    // 同じグループ内に震度情報を持つレコードが他にあり、かつ自分は空の随伴レコード → 除外
+    return !(groupHasSubstance && thisIsEmpty);
+  });
+}
+
 async function fetchRecentQuakes() {
   const res = await fetch(P2PQUAKE_HISTORY_URL);
   if (!res.ok) throw new Error(`地震情報の取得に失敗しました (${res.status})`);
   const data = await res.json();
   // 「震度速報のみ」等、震源情報が欠けているレコードを除外
-  return data
+  const list = data
     .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
     .map(toQuakeCard);
+  return dedupeQuakeList(list);
 }
 
 /* ─────────────────────────────────────────────────────
@@ -1962,6 +1995,59 @@ function BottomDock({
 }
 
 /* ─────────────────────────────────────────────────────
+   QUAKE INTENSITY LEGEND
+   選択中の地震の「震度1〜最大震度」までを横並びで表示する凡例。
+   最大震度のバッジだけ枠線で強調する。画面右上に浮かべて使う想定。
+   ───────────────────────────────────────────────────── */
+const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
+
+function QuakeIntensityLegend({ maxIntensity }) {
+  const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(maxIntensity);
+  if (maxIdx < 0) return null; // 震度0や不明("?")の場合は凡例を出さない
+
+  const levels = INTENSITY_LEGEND_ORDER.slice(0, maxIdx + 1);
+
+  return (
+    <Glass
+      radius={12}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: 6,
+        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
+      }}
+    >
+      {levels.map(key => {
+        const style = INTENSITY_STYLE[key];
+        const isMax = key === maxIntensity;
+        const { num, suffix } = splitIntensityLabel(style.label);
+        return (
+          <div
+            key={key}
+            style={{
+              width: 34, height: 34, borderRadius: 8,
+              background: style.bg, color: style.fg,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
+              flexShrink: 0,
+            }}
+          >
+            <span className="mono" style={{ fontSize: suffix ? 15 : 17, fontWeight: 800, lineHeight: 1 }}>
+              {num}
+            </span>
+            {suffix && (
+              <span style={{ fontSize: 8, fontWeight: 700, lineHeight: 1.1 }}>{suffix}</span>
+            )}
+          </div>
+        );
+      })}
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    BACK TO LIST BUTTON
    地震を選択中に地図上へ浮かぶ丸い「戻る」ボタン。
    押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
@@ -2018,6 +2104,10 @@ export default function App() {
   const [quakes,          setQuakes]          = useState([]);
   const [quakeStatus,     setQuakeStatus]     = useState("loading"); // loading | ready | error
   const [selectedQuakeId, setSelectedQuakeId] = useState(null);
+  // WebSocketのイベントハンドラ(古いクロージャのまま生き続ける)から常に最新の
+  // selectedQuakeIdを参照できるようにするためのref。
+  const selectedQuakeIdRef = useRef(null);
+  useEffect(() => { selectedQuakeIdRef.current = selectedQuakeId; }, [selectedQuakeId]);
 
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
@@ -2055,9 +2145,31 @@ export default function App() {
     fetchRecentQuakes()
       .then(list => {
         if (cancelled) return;
-        setQuakes(list);
+        setQuakes(prev => {
+          // /historyの完了より先にWebSocketで新着が届いていた場合、
+          // ここで単純に上書き(setQuakes(list))してしまうと、
+          // 「WebSocketで先に届いて選択していた地震」が/historyの
+          // レスポンスにまだ反映されていない(配信の遅延)ことがあり、
+          // 選択中の地震ごと一覧から消えてしまうことがあった。
+          // → prev(それまでの一覧、WebSocket分を含む)とlist(/history)を
+          //   idで統合し、どちらか一方にしか無い分もすべて残す。
+          const byId = new Map();
+          for (const q of list) byId.set(q.id, q);
+          for (const q of prev) if (!byId.has(q.id)) byId.set(q.id, q);
+          const merged = Array.from(byId.values())
+            .sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
+            .slice(0, 100);
+          const result = dedupeQuakeList(merged);
+
+          // 選択中の地震が、統合後もなお一覧に存在しない場合だけ選択解除する。
+          const selId = selectedQuakeIdRef.current;
+          if (selId != null && !result.some(q => q.id === selId)) {
+            setSelectedQuakeId(null);
+          }
+
+          return result;
+        });
         setQuakeStatus("ready");
-        setSelectedQuakeId(prev => (prev && list.some(q => q.id === prev)) ? prev : null);
       })
       .catch(err => {
         console.error("地震情報の取得に失敗:", err);
@@ -2069,10 +2181,35 @@ export default function App() {
       (newQuake) => {
         if (cancelled) return;
         setQuakes(prev => {
+          // 選択中の地震(あれば)を、差し替え前に控えておく。
+          // dedupeQuakeList等で「同じ地震の新しいレコード」に統合された場合、
+          // 選択状態をそちらへ引き継ぐために使う。
+          const prevSelected = prev.find(q => q.id === selectedQuakeIdRef.current) || null;
+
           // 同一idの重複配信を除外しつつ、新着を先頭に追加する。
-          // 件数は/historyの初期取得と揃えて30件までに抑える。
+          // 件数は/historyの初期取得と揃えて100件までに抑える。
           const deduped = prev.filter(q => q.id !== newQuake.id);
-          return [newQuake, ...deduped].slice(0, 30);
+          const merged = [newQuake, ...deduped].slice(0, 100);
+          // 同じ地震の「震度を持つレコード」と「震源だけの空レコード」が
+          // 別々に届くことがあるため、都度まとめて重複排除しておく。
+          const result = dedupeQuakeList(merged);
+
+          // 選択中だった地震が、上記の処理で一覧から消えていないか確認する。
+          // 消えていて、かつ「同じ発生時刻+震源地+M+深さ」の後継レコードが
+          // 残っている場合は、そちらに選択状態を引き継ぐ(カード表示が
+          // 突然一覧表示に戻ってしまう・戻るボタンだけ残る、といった
+          // ズレを防ぐため)。完全に消えた(後継も無い)場合は選択解除する。
+          if (prevSelected && !result.some(q => q.id === prevSelected.id)) {
+            const successor = result.find(q =>
+              q.time === prevSelected.time &&
+              q.place === prevSelected.place &&
+              q.magnitude === prevSelected.magnitude &&
+              q.depth === prevSelected.depth
+            );
+            setSelectedQuakeId(successor ? successor.id : null);
+          }
+
+          return result;
         });
         setQuakeStatus("ready");
       },
@@ -2091,6 +2228,18 @@ export default function App() {
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints} hypocenter={selectedHypocenter}/>
+
+        {/* 震度凡例 — 地震を選択している間だけ、画面右上に浮かぶ */}
+        {activeNav === "quake" && selectedQuake && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity}/>
+          </div>
+        )}
 
         {/* ── Layer 2: Glass UI（透明ガラスが地図に浮かぶ） ── */}
 
