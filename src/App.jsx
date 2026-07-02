@@ -4,7 +4,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, forwardRef } fro
    TRUE LIQUID GLASS
    
    Apple iOS 26 の物理モデル:
-   - ガラス面 = ほぼ透明（tint なし）
+   - ガラス面 = ほぼ透明（tint なし） 
    - 縁 = 光が屈折・集光 → feDisplacementMap で歪み
    - ハイライト = 縁の外側だけに細い白線（rim light）
    - 内部コンテンツは読みやすいよう最低限のblurのみ
