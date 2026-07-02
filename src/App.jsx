@@ -2009,8 +2009,8 @@ function BottomDock({
 
 /* ─────────────────────────────────────────────────────
    QUAKE INTENSITY LEGEND
-   選択中の地震の「震度1〜最大震度」までを横並びで表示する凡例。
-   最大震度のバッジだけ枠線で強調する。画面右上に浮かべて使う想定。
+   選択中の地震の「震度1〜最大震度」までを縦並びで表示する凡例。
+   最大震度のバッジだけ枠線で強調する。画面左上に浮かべて使う想定。
    ───────────────────────────────────────────────────── */
 const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
@@ -2022,10 +2022,10 @@ function QuakeIntensityLegend({ maxIntensity }) {
 
   return (
     <Glass
-      radius={12}
+      radius={16}
       style={{
-        display: "inline-flex",
-        alignItems: "center",
+        display: "flex",
+        flexDirection: "row",
         gap: 6,
         padding: 6,
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
@@ -2039,7 +2039,7 @@ function QuakeIntensityLegend({ maxIntensity }) {
           <div
             key={key}
             style={{
-              width: 34, height: 34, borderRadius: 8,
+              width: 40, height: 40, borderRadius: 10,
               background: style.bg, color: style.fg,
               display: "flex", flexDirection: "column",
               alignItems: "center", justifyContent: "center",
@@ -2047,11 +2047,11 @@ function QuakeIntensityLegend({ maxIntensity }) {
               flexShrink: 0,
             }}
           >
-            <span className="mono" style={{ fontSize: suffix ? 15 : 17, fontWeight: 800, lineHeight: 1 }}>
+            <span className="mono" style={{ fontSize: suffix ? 17 : 19, fontWeight: 800, lineHeight: 1 }}>
               {num}
             </span>
             {suffix && (
-              <span style={{ fontSize: 8, fontWeight: 700, lineHeight: 1.1 }}>{suffix}</span>
+              <span style={{ fontSize: 9, fontWeight: 700, lineHeight: 1.1 }}>{suffix}</span>
             )}
           </div>
         );
@@ -2242,15 +2242,13 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints} hypocenter={selectedHypocenter}/>
 
-        {/* 震度凡例 — 地震を選択している間だけ、画面上部に横長に浮かぶ */}
+        {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
         {activeNav === "quake" && selectedQuake && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
-            left: 16, right: 16,
+            right: 16,
             zIndex: 30,
-            display: "flex",
-            overflowX: "auto",
           }}>
             <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity}/>
           </div>
