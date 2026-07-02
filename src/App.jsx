@@ -784,15 +784,16 @@ function formatQuakeTime(raw) {
   return raw.split(".")[0]; // ミリ秒以下を切り捨てるだけで日本時間表記のまま使える
 }
 
-// 発生時刻を「HH:mm頃」の短い表示用に整形する(QuakeDetailCard用)。
+// 発生時刻を「YYYY/MM/DD HH:mm頃」の表示用に整形する(QuakeDetailCard用)。
 // formatQuakeTime()済みの "YYYY/MM/DD HH:mm:ss" (または元のISO風文字列)どちらを渡しても動くよう、
-// 空白/コロンで緩く分割してHH:mmだけ取り出す。
+// 空白で日付部分と時刻部分に分け、時刻はHH:mmだけ取り出して秒は切り捨てる。
 function formatQuakeTimeShort(raw) {
   if (!raw) return "";
-  const datePart = raw.split(" ")[1] || raw.split("T")[1] || raw;
-  const [hh, mm] = datePart.split(":");
+  const [datePart, timePart] = raw.split(" ");
+  if (!timePart) return raw;
+  const [hh, mm] = timePart.split(":");
   if (hh == null || mm == null) return raw;
-  return `${hh}:${mm}頃`;
+  return `${datePart} ${hh}:${mm}頃`;
 }
 
 // P2P地震情報APIの1レコードを、QuakeDetailCardが使う形に変換する
@@ -1063,7 +1064,7 @@ function QuakeDetailCard({ quake }) {
       style={{
         margin: "3px 14px 6px",
         borderRadius: 16,
-        padding: "12px 16px",
+        padding: "10px 16px",
         display: "flex",
         alignItems: "center",
         gap: 16,
@@ -1079,7 +1080,7 @@ function QuakeDetailCard({ quake }) {
         </span>
         <div
           style={{
-            width: 76, padding: "8px 0",
+            width: 72, height: 72,
             borderRadius: 14,
             background: style.bg, color: style.fg,
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -1089,17 +1090,27 @@ function QuakeDetailCard({ quake }) {
             <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
           ) : (
             <>
-              <span className="mono" style={{ fontSize: 36, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+              <span className="mono" style={{ fontSize: 34, fontWeight: 800, lineHeight: 1 }}>{num}</span>
               {suffix && (
-                <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.15 }}>{suffix}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.15 }}>{suffix}</span>
               )}
             </>
           )}
         </div>
       </div>
 
-      {/* M・深さ / 震源地 / 発生時刻 — 中央寄せで大きめに表示する */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+      {/* 震源地 / M・深さ / 発生時刻 — 中央寄せで大きめに表示する */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, maxWidth: "100%" }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>震源地</span>
+          <span style={{
+            fontSize: 30, fontWeight: 800, color: "#fff",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {quake.place}
+          </span>
+        </div>
+
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
           <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
             M<span className="mono" style={{ fontSize: 32, fontWeight: 800, color: "#fff", marginLeft: 4 }}>
@@ -1116,19 +1127,9 @@ function QuakeDetailCard({ quake }) {
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, maxWidth: "100%" }}>
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>震源地</span>
-          <span style={{
-            fontSize: 30, fontWeight: 800, color: "#fff",
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
-            {quake.place}
-          </span>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 1 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>発生時刻</span>
-          <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>
+          <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>
             {formatQuakeTimeShort(quake.time)}
           </span>
         </div>
