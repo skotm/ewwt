@@ -154,10 +154,8 @@ const Glass = forwardRef(function Glass({
           zIndex: 1,
         }}
       />
-      {/* コンテンツ層: 歪みフィルタの影響を一切受けない。
-          display:contents でレイアウトに介在せず、親(Glassルート)に指定した
-          display:flex 等のスタイルが直接子要素(children)に効くようにする。 */}
-      <div style={{ display: "contents" }}>
+      {/* コンテンツ層: 歪みフィルタの影響を一切受けない */}
+      <div style={{ position: "relative", zIndex: 2, width: "100%", height: "100%" }}>
         {children}
       </div>
     </div>
@@ -2041,7 +2039,6 @@ function QuakeIntensityLegend({ maxIntensity }) {
           <div
             key={key}
             style={{
-              position: "relative",
               width: 40, height: 40, borderRadius: 10,
               background: style.bg, color: style.fg,
               display: "flex", flexDirection: "column",
