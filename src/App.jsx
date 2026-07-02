@@ -1091,14 +1091,11 @@ function QuakeDetailCard({ quake }) {
             <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
           ) : suffix ? (
             <>
-              {/* 弱/強付き(5弱・5強・6弱・6強) — 数字を左半分、弱/強を右半分のやや下に配置 */}
-              <span className="mono" style={{
-                position: "absolute", left: 6, top: "50%", transform: "translateY(-50%)",
-                fontSize: 34, fontWeight: 800, lineHeight: 1,
-              }}>{num}</span>
+              {/* 弱/強付き(5弱・5強・6弱・6強) — 数字と弱/強を近づけ、正方形の中央にまとめて配置 */}
+              <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
               <span style={{
-                position: "absolute", right: 7, bottom: 11,
-                fontSize: 16, fontWeight: 700, lineHeight: 1,
+                fontSize: 15, fontWeight: 700, lineHeight: 1,
+                marginLeft: 2, alignSelf: "flex-end", marginBottom: 3,
               }}>{suffix}</span>
             </>
           ) : (
