@@ -413,6 +413,12 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
   const mapRef = useRef(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [errorMsg, setErrorMsg] = useState("");
+  // 震度番号を描く2D Canvasオーバーレイ関連のref。
+  // stationPointsは頻繁に変わらないが、mapのrender毎に読む値なのでrefで持ち回す。
+  const overlayCanvasRef = useRef(null);
+  const overlayResizeObserverRef = useRef(null);
+  const stationLabelDataRef = useRef([]);
+  const drawStationLabelsRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -472,12 +478,92 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             type: "circle",
             source: "station-points",
             paint: {
-              "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 3, 10, 9],
+              // ズームインするほど円を大きくする。震度番号が読めるサイズまで育つよう
+              // 高ズーム側のステップを広めに取っている。
+              "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 3, 8, 9, 11, 16, 14, 26],
               "circle-color": ["get", "color"],
               "circle-stroke-width": 1,
               "circle-stroke-color": "rgba(0,0,0,0.55)",
             },
           });
+          // 円の上に震度番号を重ねる部分は、このスタイルにフォント(glyphs)を
+          // 用意していないためMapLibre標準のsymbolレイヤーでは文字が出せない。
+          // そのため文字はこの後で追加する2D Canvasオーバーレイ(drawStationLabels)側で描く。
+
+          // 観測点の円の上に震度番号を描く2D Canvasオーバーレイ。
+          // MapLibreのスタイルにglyphs(フォント)を用意していないためsymbolレイヤーの
+          // text-fieldが使えず、代わりにmapのcontainerへ重ねた素のcanvasへ自前で描画する。
+          // 過去のLeaflet版(L.StationCanvasLayer)と同じ考え方: render毎に観測点の
+          // 画面座標を計算し直し、円の大きさに合わせて文字サイズも一緒にスケールさせる。
+          const overlay = document.createElement("canvas");
+          overlay.style.position = "absolute";
+          overlay.style.top = "0";
+          overlay.style.left = "0";
+          overlay.style.width = "100%";
+          overlay.style.height = "100%";
+          overlay.style.pointerEvents = "none";
+          containerRef.current.appendChild(overlay);
+          overlayCanvasRef.current = overlay;
+          const octx = overlay.getContext("2d");
+
+          function resizeOverlay() {
+            const dpr = window.devicePixelRatio || 1;
+            const w = map.getContainer().clientWidth;
+            const h = map.getContainer().clientHeight;
+            overlay.width = w * dpr;
+            overlay.height = h * dpr;
+            octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            drawStationLabels();
+          }
+
+          // 観測点マーカー(circle-radius)のズーム段階と完全に一致させるための半径計算。
+          // ["interpolate",["linear"],["zoom"], 4,3, 8,9, 11,16, 14,26] と同じ折れ線を再現する。
+          const RADIUS_STOPS = [[4, 3], [8, 9], [11, 16], [14, 26]];
+          function radiusForZoom(zoom) {
+            if (zoom <= RADIUS_STOPS[0][0]) return RADIUS_STOPS[0][1];
+            for (let i = 0; i < RADIUS_STOPS.length - 1; i++) {
+              const [z0, r0] = RADIUS_STOPS[i], [z1, r1] = RADIUS_STOPS[i + 1];
+              if (zoom >= z0 && zoom <= z1) return r0 + (r1 - r0) * ((zoom - z0) / (z1 - z0));
+            }
+            return RADIUS_STOPS[RADIUS_STOPS.length - 1][1];
+          }
+
+          function drawStationLabels() {
+            if (!octx) return;
+            const w = overlay.clientWidth, h = overlay.clientHeight;
+            octx.clearRect(0, 0, w, h);
+
+            const zoom = map.getZoom();
+            if (zoom < 8) return; // 円が小さいうちは文字を出さない(潰れて読めないため)
+
+            const radius = radiusForZoom(zoom);
+            const points = stationLabelDataRef.current;
+            for (let i = 0; i < points.length; i++) {
+              const p = points[i];
+              const pt = map.project([p.longitude, p.latitude]);
+              if (pt.x < -20 || pt.y < -20 || pt.x > w + 20 || pt.y > h + 20) continue;
+
+              // 文字数(「6」1文字 / 「5-」2文字)に応じてフォントサイズを調整し、円からはみ出さないようにする
+              const fontSize = p.label.length > 1 ? radius * 1.05 : radius * 1.3;
+              octx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
+              octx.textAlign = "center";
+              octx.textBaseline = "middle";
+              octx.fillStyle = "#ffffff";
+              octx.shadowColor = "rgba(0,0,0,0.85)";
+              octx.shadowBlur = 2;
+              octx.shadowOffsetY = 1;
+              octx.fillText(p.label, pt.x, pt.y + 1);
+              octx.shadowColor = "transparent";
+            }
+          }
+          drawStationLabelsRef.current = drawStationLabels;
+
+          resizeOverlay();
+          map.on("render", drawStationLabels);
+          map.on("resize", resizeOverlay);
+          const ro = new ResizeObserver(resizeOverlay);
+          ro.observe(containerRef.current);
+          overlayResizeObserverRef.current = ro;
 
           // 震源マーカー用のソース・レイヤー(観測点の上に重なるよう最後に追加)
           map.addSource("hypocenter-point", {
@@ -518,6 +604,14 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
     return () => {
       cancelled = true;
+      if (overlayResizeObserverRef.current) {
+        overlayResizeObserverRef.current.disconnect();
+        overlayResizeObserverRef.current = null;
+      }
+      if (overlayCanvasRef.current) {
+        overlayCanvasRef.current.remove();
+        overlayCanvasRef.current = null;
+      }
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -552,6 +646,14 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
     }));
 
     source.setData({ type: "FeatureCollection", features });
+
+    // Canvasオーバーレイ側(震度番号)にも同じ並び順・同じ点で最新データを渡す
+    stationLabelDataRef.current = sorted.map(p => ({
+      latitude: p.latitude,
+      longitude: p.longitude,
+      label: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).label,
+    }));
+    if (drawStationLabelsRef.current) drawStationLabelsRef.current();
   }, [stationPoints, status]);
 
   // 震度分布(細分区域ごとの塗り分け)を更新する。
