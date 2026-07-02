@@ -1095,7 +1095,7 @@ function QuakeDetailCard({ quake }) {
               <span className="mono" style={{ fontSize: 32, fontWeight: 800, lineHeight: 1 }}>{num}</span>
               <span style={{
                 fontSize: 15, fontWeight: 700, lineHeight: 1,
-                marginLeft: 2, alignSelf: "flex-end", marginBottom: 3,
+                marginLeft: 2, alignSelf: "flex-end", marginBottom: 9,
               }}>{suffix}</span>
             </>
           ) : (
