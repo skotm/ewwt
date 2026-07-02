@@ -784,6 +784,17 @@ function formatQuakeTime(raw) {
   return raw.split(".")[0]; // ミリ秒以下を切り捨てるだけで日本時間表記のまま使える
 }
 
+// 発生時刻を「HH:mm頃」の短い表示用に整形する(QuakeDetailCard用)。
+// formatQuakeTime()済みの "YYYY/MM/DD HH:mm:ss" (または元のISO風文字列)どちらを渡しても動くよう、
+// 空白/コロンで緩く分割してHH:mmだけ取り出す。
+function formatQuakeTimeShort(raw) {
+  if (!raw) return "";
+  const datePart = raw.split(" ")[1] || raw.split("T")[1] || raw;
+  const [hh, mm] = datePart.split(":");
+  if (hh == null || mm == null) return raw;
+  return `${hh}:${mm}頃`;
+}
+
 // P2P地震情報APIの1レコードを、QuakeDetailCardが使う形に変換する
 function toQuakeCard(item) {
   const eq = item.earthquake;
@@ -1051,71 +1062,74 @@ function QuakeDetailCard({ quake }) {
     <div
       style={{
         margin: "3px 14px 6px",
-        borderRadius: 14,
-        padding: "7px 12px",
+        borderRadius: 16,
+        padding: "12px 16px",
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: 16,
         background: `linear-gradient(135deg, ${style.bg}2E, ${style.bg}14)`,
         boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.12)",
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
       {/* 最大震度バッジ — 遠地地震は震度が観測されないため「遠地」表示にする */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
-        <span style={{ fontSize: 9, fontWeight: 600, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
           {quake.isForeign ? "遠地地震" : "最大震度"}
         </span>
         <div
           style={{
-            width: 52, padding: "4px 0",
-            borderRadius: 10,
+            width: 76, padding: "8px 0",
+            borderRadius: 14,
             background: style.bg, color: style.fg,
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           }}
         >
           {quake.isForeign ? (
-            <span style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
+            <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
           ) : (
             <>
-              <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+              <span className="mono" style={{ fontSize: 36, fontWeight: 800, lineHeight: 1 }}>{num}</span>
               {suffix && (
-                <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.15 }}>{suffix}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.15 }}>{suffix}</span>
               )}
             </>
           )}
         </div>
       </div>
 
-      {/* M・深さ / 震源地 / 発生時刻 */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+      {/* M・深さ / 震源地 / 発生時刻 — 中央寄せで大きめに表示する */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
-            M<span className="mono" style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginLeft: 3 }}>
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
+            M<span className="mono" style={{ fontSize: 32, fontWeight: 800, color: "#fff", marginLeft: 4 }}>
               {quake.magnitude != null ? quake.magnitude.toFixed(1) : "-"}
             </span>
           </span>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)" }}>
-            深さ<span className="mono" style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginLeft: 3 }}>
-              {quake.depth != null ? `${quake.depth}km` : "-"}
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
+            深さ<span className="mono" style={{ fontSize: 32, fontWeight: 800, color: "#fff", marginLeft: 4 }}>
+              {quake.depth != null ? quake.depth : "-"}
             </span>
+            {quake.depth != null && (
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginLeft: 2 }}>km</span>
+            )}
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>震源地</span>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, maxWidth: "100%" }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>震源地</span>
           <span style={{
-            fontSize: 14, fontWeight: 700, color: "#fff",
+            fontSize: 30, fontWeight: 800, color: "#fff",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             {quake.place}
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>発生時刻</span>
-          <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.8)" }}>
-            {quake.time}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 1 }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>発生時刻</span>
+          <span className="mono" style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>
+            {formatQuakeTimeShort(quake.time)}
           </span>
         </div>
       </div>
