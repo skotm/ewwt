@@ -467,28 +467,11 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
           c.stroke();
           map.addImage("hypocenter-cross", c.getImageData(0, 0, size, size));
 
-          // 観測点(震度)マーカー用のソース・レイヤーをここで先に用意しておく。
-          // データ自体は stationPoints が変わるたびに別のeffectで更新する。
-          map.addSource("station-points", {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: [] },
-          });
-          map.addLayer({
-            id: "station-points-circle",
-            type: "circle",
-            source: "station-points",
-            paint: {
-              // ズームインするほど円を大きくする。震度番号が読めるサイズまで育つよう
-              // 高ズーム側のステップを広めに取っている。
-              "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 3, 8, 9, 11, 16, 14, 26],
-              "circle-color": ["get", "color"],
-              "circle-stroke-width": 1,
-              "circle-stroke-color": "rgba(0,0,0,0.55)",
-            },
-          });
-          // 円の上に震度番号を重ねる部分は、このスタイルにフォント(glyphs)を
-          // 用意していないためMapLibre標準のsymbolレイヤーでは文字が出せない。
-          // そのため文字はこの後で追加する2D Canvasオーバーレイ(drawStationLabels)側で描く。
+          // 観測点(震度)マーカーは、MapLibre標準のcircleレイヤーではなく
+          // 過去のLeaflet版(L.StationCanvasLayer)と全く同じ見た目になるよう、
+          // 円・文字とも下の2D Canvasオーバーレイ側でまとめて自前描画する
+          // (ドロップシャドウ+白いフチのリッチな見た目は、circleレイヤーの
+          //  ペイントプロパティだけでは再現できないため)。
 
           // 観測点の円の上に震度番号を描く2D Canvasオーバーレイ。
           // MapLibreのスタイルにglyphs(フォント)を用意していないためsymbolレイヤーの
@@ -534,26 +517,42 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             octx.clearRect(0, 0, w, h);
 
             const zoom = map.getZoom();
-            if (zoom < 8) return; // 円が小さいうちは文字を出さない(潰れて読めないため)
-
             const radius = radiusForZoom(zoom);
+            const showText = zoom >= 8; // 円が小さいうちは文字を出さない(潰れて読めないため)
             const points = stationLabelDataRef.current;
+
             for (let i = 0; i < points.length; i++) {
               const p = points[i];
               const pt = map.project([p.longitude, p.latitude]);
               if (pt.x < -20 || pt.y < -20 || pt.x > w + 20 || pt.y > h + 20) continue;
 
-              // 文字数(「6」1文字 / 「5-」2文字)に応じてフォントサイズを調整し、円からはみ出さないようにする
-              const fontSize = p.label.length > 1 ? radius * 1.05 : radius * 1.3;
-              octx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
-              octx.textAlign = "center";
-              octx.textBaseline = "middle";
-              octx.fillStyle = "#ffffff";
-              octx.shadowColor = "rgba(0,0,0,0.85)";
-              octx.shadowBlur = 2;
-              octx.shadowOffsetY = 1;
-              octx.fillText(p.label, pt.x, pt.y + 1);
+              // 円本体 — 過去のプログラム(L.StationCanvasLayer)と同じく、
+              // ドロップシャドウ付きで塗ってから白いフチをストロークするリッチな見た目にする
+              octx.beginPath();
+              octx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
+              octx.fillStyle = p.color;
+              octx.shadowColor = "rgba(0,0,0,0.6)";
+              octx.shadowBlur = 4;
+              octx.shadowOffsetY = 2;
+              octx.fill();
               octx.shadowColor = "transparent";
+              octx.lineWidth = 1.5;
+              octx.strokeStyle = "#ffffff";
+              octx.stroke();
+
+              if (showText) {
+                // 文字数(「6」1文字 / 「5-」2文字)に応じてフォントサイズを調整し、円からはみ出さないようにする
+                const fontSize = p.label.length > 1 ? radius * 1.05 : radius * 1.3;
+                octx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
+                octx.textAlign = "center";
+                octx.textBaseline = "middle";
+                octx.fillStyle = "#ffffff";
+                octx.shadowColor = "rgba(0,0,0,0.9)";
+                octx.shadowBlur = 2;
+                octx.shadowOffsetY = 1;
+                octx.fillText(p.label, pt.x, pt.y + 1);
+                octx.shadowColor = "transparent";
+              }
             }
           }
           drawStationLabelsRef.current = drawStationLabels;
@@ -621,13 +620,11 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
   // 選択中の地震(stationPoints)が変わるたびに、観測点マーカーのGeoJSONを更新する。
   // 緯度経度が引けなかった観測点(マスタに見つからなかったもの)は地図には出さない。
-  // 震度が大きい観測点ほど後(=前面)に描画されるよう、震度の小さい順に並べてからfeature化する
-  // (MapLibreのcircleレイヤーは、GeoJSON内でのfeatureの並び順どおりに下から重ねて描画するため)。
+  // 震度が大きい観測点ほど後(=前面)に描画されるよう、震度の小さい順に並べておく
+  // (Canvasは配列の順番どおりに下から重ねて描画するため)。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
-    const source = map.getSource("station-points");
-    if (!source) return;
 
     const INTENSITY_ORDER = ["0","1","2","3","4","5-","5+","6-","6+","7"];
     const sorted = (stationPoints || [])
@@ -635,23 +632,12 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
       .slice()
       .sort((a, b) => INTENSITY_ORDER.indexOf(a.intensityKey) - INTENSITY_ORDER.indexOf(b.intensityKey));
 
-    const features = sorted.map(p => ({
-      type: "Feature",
-      geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
-      properties: {
-        addr: p.addr,
-        pref: p.pref,
-        color: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).bg,
-      },
-    }));
-
-    source.setData({ type: "FeatureCollection", features });
-
-    // Canvasオーバーレイ側(震度番号)にも同じ並び順・同じ点で最新データを渡す
+    // Canvasオーバーレイ側(円+震度番号)に最新データを渡す
     stationLabelDataRef.current = sorted.map(p => ({
       latitude: p.latitude,
       longitude: p.longitude,
       label: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).label,
+      color: STATION_MARKER_COLOR[p.intensityKey] || STATION_MARKER_COLOR["0"],
     }));
     if (drawStationLabelsRef.current) drawStationLabelsRef.current();
   }, [stationPoints, status]);
@@ -839,6 +825,23 @@ const ALERT_COLOR = {
    震度スケール — JMA震度階(0〜7、10区分)を液体ガラスのダークUIに合わせて配色。
    明るい色(〜5強)は黒文字、暗く濃い色(6弱〜7)は白文字でコントラストを確保。
    ───────────────────────────────────────────────────── */
+// 地図上の観測点マーカー(円)専用の配色。過去のLeaflet版(getIntensityColor)と
+// 完全に同じパレットをそのまま使う — バッジ/凡例側のINTENSITY_STYLE.bgとは
+// あえて別パレットにしている(観測点の見た目だけを過去のプログラムに合わせるため)。
+const STATION_MARKER_COLOR = {
+  "0":  "#8E8E93",
+  "1":  "#64D2FF",
+  "2":  "#0A84FF",
+  "3":  "#30D158",
+  "4":  "#FFD60A",
+  "5-": "#FF9F0A",
+  "5+": "#FF453A",
+  "6-": "#FF2D55",
+  "6+": "#BF5AF2",
+  "7":  "#5E5CE6",
+  "?":  "#8E8E93",
+};
+
 const INTENSITY_STYLE = {
   "0":  { bg: "#3A3A3C", fg: "#fff",    label: "0"  },
   "1":  { bg: "#2F6690", fg: "#fff",    label: "1"  },
