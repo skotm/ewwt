@@ -1062,9 +1062,9 @@ function QuakeDetailCard({ quake }) {
   return (
     <div
       style={{
-        margin: "3px 14px 6px",
+        margin: "2px 14px 4px",
         borderRadius: 16,
-        padding: "10px 16px",
+        padding: "8px 16px",
         display: "flex",
         alignItems: "center",
         gap: 16,
@@ -1111,18 +1111,18 @@ function QuakeDetailCard({ quake }) {
           </span>
         </div>
 
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
-            M<span className="mono" style={{ fontSize: 32, fontWeight: 800, color: "#fff", marginLeft: 4 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+            M<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: "#fff", marginLeft: 3 }}>
               {quake.magnitude != null ? quake.magnitude.toFixed(1) : "-"}
             </span>
           </span>
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>
-            深さ<span className="mono" style={{ fontSize: 32, fontWeight: 800, color: "#fff", marginLeft: 4 }}>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)" }}>
+            深さ<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: "#fff", marginLeft: 3 }}>
               {quake.depth != null ? quake.depth : "-"}
             </span>
             {quake.depth != null && (
-              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", marginLeft: 2 }}>km</span>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginLeft: 2 }}>km</span>
             )}
           </span>
         </div>
