@@ -694,6 +694,7 @@ const INTENSITY_STYLE = {
   "6-": { bg: "#E0342C", fg: "#fff",    label: "6弱" },
   "6+": { bg: "#8A1518", fg: "#fff",    label: "6強" },
   "7":  { bg: "#5C0F1F", fg: "#fff",    label: "7"  },
+  "?":  { bg: "#3A3A3C", fg: "rgba(255,255,255,0.5)", label: "?"  }, // 震度が取得できなかった場合(「0」と区別する)
 };
 
 // 表示用ラベルを「数字」と「弱/強」に分割する(バッジ内で2段組みにするため)
@@ -720,7 +721,7 @@ function maxScaleToIntensityKey(maxScale) {
     "55": "6-", "60": "6+",
     "70": "7",
   };
-  return map[String(maxScale)] ?? "0";
+  return map[String(maxScale)] ?? "?";
 }
 
 // API由来のISO風文字列("2024/01/01 12:34:56.789")を "YYYY/MM/DD HH:mm:ss" 表示用に整える
@@ -733,11 +734,21 @@ function formatQuakeTime(raw) {
 function toQuakeCard(item) {
   const eq = item.earthquake;
   const hypo = eq?.hypocenter;
+  const points = Array.isArray(item?.points) ? item.points : [];
+
+  // earthquake.maxScaleが欠落/nullのレコードが稀に存在する
+  // (震度速報→詳細への更新過程などで一時的に未設定のことがある)。
+  // その場合はpoints[]の中の最大scaleから補完し、「震度0」の誤表示を防ぐ。
+  let maxScale = eq?.maxScale;
+  if (maxScale == null && points.length > 0) {
+    maxScale = points.reduce((max, p) => (typeof p.scale === "number" && p.scale > max ? p.scale : max), -1);
+  }
+
   return {
     id: item.id,
     time: formatQuakeTime(eq?.time),
     place: hypo?.name || "震源地不明",
-    maxIntensity: maxScaleToIntensityKey(eq?.maxScale),
+    maxIntensity: maxScaleToIntensityKey(maxScale),
     magnitude: typeof hypo?.magnitude === "number" && hypo.magnitude > 0 ? hypo.magnitude : null,
     depth: typeof hypo?.depth === "number" && hypo.depth >= 0 ? hypo.depth : null,
     longPeriod: null, // P2P地震情報APIには長周期地震動階級は含まれないため常に非表示
@@ -747,7 +758,7 @@ function toQuakeCard(item) {
     // 注意: pointsは`earthquake`オブジェクトの中ではなく、レコード直下(item.points)にある。
     // scaleは10刻みのJMAコード(10=震度1 ... 70=震度7)のまま保持しておき、
     // 表示側(観測点マッチング後)でINTENSITY_STYLEのキーに変換する。
-    points: Array.isArray(item?.points) ? item.points : [],
+    points,
     // 国内津波の有無・程度。"None"(心配なし) / "Unknown" / "Checking"(調査中) /
     // "NonEffective"(若干の海面変動) / "Watch"(注意報) / "Warning"(警報) / "MajorWarning"(大津波警報)
     domesticTsunami: eq?.domesticTsunami || "None",
@@ -789,6 +800,75 @@ async function fetchRecentQuakes() {
   return data
     .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
     .map(toQuakeCard);
+}
+
+/* ─────────────────────────────────────────────────────
+   P2P地震情報 WebSocket API (v2)
+   wss://api.p2pquake.net/v2/ws
+   地震情報(code:551)を含む全情報がリアルタイムでpushされてくる。
+   最新一覧は起動時に /history で1回だけ取得し(履歴はWebSocketでは
+   遡れないため)、以降はこのWebSocketで届いた新着分だけを一覧に追加していく。
+   ───────────────────────────────────────────────────── */
+const P2PQUAKE_WS_URL = "wss://api.p2pquake.net/v2/ws";
+
+// WebSocketで受信した1件を、地震情報(code:551)であれば変換して返す。
+// 対象外(津波予報や緊急地震速報など、まだこのアプリで扱っていない種別)はnullを返す。
+function wsMessageToQuakeCard(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (data.code !== 551) return null;
+  if (!data.earthquake || !data.earthquake.hypocenter || !data.earthquake.hypocenter.name) return null;
+  return toQuakeCard(data);
+}
+
+/**
+ * P2P地震情報のWebSocketに接続し、地震情報(code:551)を受信するたびにonQuakeを呼ぶ。
+ * 接続が切れた場合は一定間隔で自動的に再接続を試みる。
+ * 戻り値のclose()を呼ぶと再接続をやめて確実に切断する。
+ */
+function connectQuakeWebSocket(onQuake, onStatusChange) {
+  let ws = null;
+  let closedByCaller = false;
+  let reconnectTimer = null;
+
+  function connect() {
+    if (closedByCaller) return;
+    ws = new WebSocket(P2PQUAKE_WS_URL);
+
+    ws.onopen = () => {
+      onStatusChange?.("open");
+    };
+
+    ws.onmessage = (event) => {
+      const quake = wsMessageToQuakeCard(event.data);
+      if (quake) onQuake(quake);
+    };
+
+    ws.onerror = (e) => {
+      console.error("P2P地震情報WebSocketエラー:", e);
+    };
+
+    ws.onclose = () => {
+      onStatusChange?.("closed");
+      if (closedByCaller) return;
+      // 5秒後に再接続を試みる(サーバー再起動・回線切断などからの復帰用)
+      reconnectTimer = setTimeout(connect, 5000);
+    };
+  }
+
+  connect();
+
+  return {
+    close() {
+      closedByCaller = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (ws) ws.close();
+    },
+  };
 }
 
 /* ─────────────────────────────────────────────────────
@@ -1897,29 +1977,39 @@ export default function App() {
     return { latitude: selectedQuake.latitude, longitude: selectedQuake.longitude };
   }, [selectedQuake]);
 
-  // 起動時に取得し、以降は1分おきに自動更新する(P2P地震情報APIのレート制限: /history 60回/分)
+  // 起動時に /history で最新一覧を1回だけ取得し、以降はWebSocketで新着分を随時追加する。
+  const [wsStatus, setWsStatus] = useState("connecting"); // connecting | open | closed
   useEffect(() => {
     let cancelled = false;
 
-    async function load() {
-      try {
-        const list = await fetchRecentQuakes();
+    fetchRecentQuakes()
+      .then(list => {
         if (cancelled) return;
         setQuakes(list);
         setQuakeStatus("ready");
-        // 選択中の地震が更新後の一覧に無くなっていたら(削除・入れ替わり)選択解除する。
-        // 何も選んでいない状態(未選択=一覧のみ表示)は、自動選択せずそのまま保つ。
         setSelectedQuakeId(prev => (prev && list.some(q => q.id === prev)) ? prev : null);
-      } catch (err) {
+      })
+      .catch(err => {
         console.error("地震情報の取得に失敗:", err);
         if (cancelled) return;
         setQuakeStatus("error");
-      }
-    }
+      });
 
-    load();
-    const timer = setInterval(load, 60 * 1000);
-    return () => { cancelled = true; clearInterval(timer); };
+    const socket = connectQuakeWebSocket(
+      (newQuake) => {
+        if (cancelled) return;
+        setQuakes(prev => {
+          // 同一idの重複配信を除外しつつ、新着を先頭に追加する。
+          // 件数は/historyの初期取得と揃えて30件までに抑える。
+          const deduped = prev.filter(q => q.id !== newQuake.id);
+          return [newQuake, ...deduped].slice(0, 30);
+        });
+        setQuakeStatus("ready");
+      },
+      (status) => { if (!cancelled) setWsStatus(status); }
+    );
+
+    return () => { cancelled = true; socket.close(); };
   }, []);
 
   return (
