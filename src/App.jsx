@@ -1080,19 +1080,19 @@ function QuakeDetailCard({ quake }) {
         </span>
         <div
           style={{
-            width: 72, height: 72,
+            width: 64, height: 64,
             borderRadius: 14,
             background: style.bg, color: style.fg,
-            display: "flex", flexDirection: "row", alignItems: "baseline", justifyContent: "center",
+            display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center",
           }}
         >
           {quake.isForeign ? (
             <span style={{ fontSize: 14, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
           ) : (
             <>
-              <span className="mono" style={{ fontSize: 30, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+              <span className="mono" style={{ fontSize: 28, fontWeight: 800, lineHeight: 1 }}>{num}</span>
               {suffix && (
-                <span style={{ fontSize: 15, fontWeight: 700, lineHeight: 1, marginLeft: 1 }}>{suffix}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, lineHeight: 1, marginLeft: 1 }}>{suffix}</span>
               )}
             </>
           )}
