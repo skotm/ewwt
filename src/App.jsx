@@ -1051,6 +1051,56 @@ function aggregateByArea(resolvedPoints) {
 
 
 /* ─────────────────────────────────────────────────────
+   AUTO FIT TEXT
+   与えられたコンテナ幅に収まるよう、フォントサイズを自動的に縮小して1行で表示する。
+   QuakeDetailCardの震源地名(短い地名〜長い地名まで幅が大きく変わる)向け。
+   ResizeObserverでコンテナ幅の変化(画面回転・レイアウト変更)にも追従する。
+   ───────────────────────────────────────────────────── */
+function AutoFitText({ text, maxFontSize, minFontSize = 13, className, style }) {
+  const containerRef = useRef(null);
+  const textRef = useRef(null);
+  const [fontSize, setFontSize] = useState(maxFontSize);
+
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const textEl = textRef.current;
+    if (!container || !textEl) return;
+
+    function fit() {
+      const containerWidth = container.clientWidth;
+      if (containerWidth <= 0) return;
+
+      // 最大サイズから1pxずつ縮めて、テキストの実測幅(scrollWidth)が
+      // コンテナ幅に収まるところを探す。文字数が少なければ最大サイズのまま。
+      let size = maxFontSize;
+      textEl.style.fontSize = `${size}px`;
+      while (size > minFontSize && textEl.scrollWidth > containerWidth) {
+        size -= 1;
+        textEl.style.fontSize = `${size}px`;
+      }
+      setFontSize(size);
+    }
+
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [text, maxFontSize, minFontSize]);
+
+  return (
+    <div ref={containerRef} style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+      <span
+        ref={textRef}
+        className={className}
+        style={{ ...style, fontSize, whiteSpace: "nowrap", display: "inline-block" }}
+      >
+        {text}
+      </span>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    QUAKE DETAIL CARD
    地震リスト/地図で選択した地震の詳細を表示するカード。
    左に「最大震度」バッジ、右にM/深さ・震源地・発生時刻を積む構成。
@@ -1107,14 +1157,14 @@ function QuakeDetailCard({ quake }) {
 
       {/* 震源地 / M・深さ / 発生時刻 — 中央寄せで大きめに表示する */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, maxWidth: "100%", lineHeight: 1.1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0, lineHeight: 1.1 }}>震源地</span>
-          <span style={{
-            fontSize: 30, fontWeight: 800, color: "#fff", lineHeight: 1.1,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
-            {quake.place}
-          </span>
+          <AutoFitText
+            text={quake.place}
+            maxFontSize={30}
+            minFontSize={13}
+            style={{ fontWeight: 800, color: "#fff", lineHeight: 1.1 }}
+          />
         </div>
 
         <div style={{ display: "flex", alignItems: "baseline", gap: 12, lineHeight: 1.1 }}>
