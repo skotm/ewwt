@@ -291,48 +291,58 @@ function loadMapLibre() {
    world.json は比較的大きいファイルのため、容量超過時は保存に失敗することがある。
    その場合は例外を握りつぶしてキャッシュなしで動作を継続する
    (=毎回ネットワークから取得するだけで、アプリ自体は問題なく動く)。
+
+   localStorageではなく Cache API (caches.open) を使う理由:
+   - localStorageは5〜10MB程度(ブラウザ依存)しか使えず、world.jsonや
+     細分区域.json(いずれも10MB超)を保存しようとすると容量超過しやすい。
+   - Cache APIはResponseをそのまま保存できるため文字列化(JSON.stringify/parse)の
+     コストが無く、上限もブラウザの空きディスク容量に応じて大きく取れる。
+   - Service Worker無し(ページのJSから直接)でも caches.open() だけで利用できる。
    ───────────────────────────────────────────────────── */
 const GEO_CACHE_VERSION = "v1"; // データ更新時はここを上げるとキャッシュを無効化できる
+const GEO_CACHE_NAME = `bosai-geo-${GEO_CACHE_VERSION}`;
 
-function readGeoCache(cacheKey) {
-  try {
-    const raw = localStorage.getItem(cacheKey);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null; // 壊れたキャッシュ/JSON.parse失敗時は無視してネットワークから再取得
-  }
+// Cache APIが使えない環境(プライベートブラウジング等で無効化されている場合や
+// 古いブラウザ)でも、キャッシュを諦めるだけで動作は継続できるようにする。
+function isCacheApiAvailable() {
+  return typeof caches !== "undefined";
 }
 
-function writeGeoCache(cacheKey, data) {
-  try {
-    localStorage.setItem(cacheKey, JSON.stringify(data));
-  } catch {
-    // QuotaExceededError など。キャッシュできなくてもアプリの動作自体は継続する。
-    console.warn(`地図データのローカルキャッシュに失敗しました(${cacheKey})。容量超過の可能性があります。`);
+async function cachedFetchJSON(url) {
+  if (!isCacheApiAvailable()) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} の取得に失敗しました (${res.status})`);
+    return res.json();
   }
-}
 
-function cachedFetchJSON(url, cacheKey) {
-  const cached = readGeoCache(cacheKey);
-  if (cached) return Promise.resolve(cached);
+  try {
+    const cache = await caches.open(GEO_CACHE_NAME);
+    const cached = await cache.match(url);
+    if (cached) return cached.json();
 
-  return fetch(url).then(r => {
-    if (!r.ok) throw new Error(`${url} の取得に失敗しました (${r.status})`);
-    return r.json();
-  }).then(data => {
-    writeGeoCache(cacheKey, data);
-    return data;
-  });
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} の取得に失敗しました (${res.status})`);
+    // レスポンスはストリームなので、キャッシュ保存用と読み取り用で複製してから使う
+    await cache.put(url, res.clone());
+    return res.json();
+  } catch (err) {
+    // QuotaExceededError などでキャッシュの読み書きに失敗した場合は、
+    // キャッシュを諦めて素のfetchにフォールバックする(アプリ自体は動作を継続)。
+    console.warn(`地図データのキャッシュ(Cache API)に失敗しました(${url})。`, err);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} の取得に失敗しました (${res.status})`);
+    return res.json();
+  }
 }
 
 let geoDataPromise = null;
 function loadGeoData() {
   if (geoDataPromise) return geoDataPromise;
   geoDataPromise = Promise.all([
-    cachedFetchJSON(`${import.meta.env.BASE_URL}map/world.json`, `geo:${GEO_CACHE_VERSION}:world`),
-    cachedFetchJSON(`${import.meta.env.BASE_URL}map/prefectures.json`, `geo:${GEO_CACHE_VERSION}:prefectures`),
-  ]).then(([world, prefectures]) => ({ world, prefectures }));
+    cachedFetchJSON(`${import.meta.env.BASE_URL}map/world.json`),
+    cachedFetchJSON(`${import.meta.env.BASE_URL}map/prefectures.json`),
+    cachedFetchJSON(`${import.meta.env.BASE_URL}map/細分区域.json`),
+  ]).then(([world, prefectures, areas]) => ({ world, prefectures, areas }));
   return geoDataPromise;
 }
 
@@ -341,13 +351,20 @@ function loadGeoData() {
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
    そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
    外部タイルサーバー・外部スタイルには一切依存しない。
+
+   areas(細分区域.json)は、気象庁の細分区域ごとの震度分布を塗るためのソース。
+   実際の色は震度分布モードがONの間だけ、feature-state(setFeatureState)で
+   区域ごとに動的に設定する。ここでは初期値(無色・透明)のレイヤーだけ用意しておく。
    ───────────────────────────────────────────────────── */
-function buildMapStyle({ world, prefectures }) {
+function buildMapStyle({ world, prefectures, areas }) {
   return {
     version: 8,
     sources: {
       world: { type: "geojson", data: world },
       prefectures: { type: "geojson", data: prefectures },
+      // idをproperties.code(気象庁の細分区域コード)に昇格しておくことで、
+      // setFeatureState({ source: "areas", id: code }, ...) で個別に塗り分けできる。
+      areas: { type: "geojson", data: areas, promoteId: "code" },
     },
     layers: [
       { id: "bg", type: "background", paint: { "background-color": "#121214" } },
@@ -366,6 +383,21 @@ function buildMapStyle({ world, prefectures }) {
       {
         id: "prefectures-line", type: "line", source: "prefectures",
         paint: { "line-color": "rgba(255,255,255,0.18)", "line-width": 0.6 },
+      },
+      {
+        // 震度分布(細分区域ごとの塗り分け)。feature-stateが無い区域は透明のまま。
+        id: "areas-intensity-fill", type: "fill", source: "areas",
+        paint: {
+          "fill-color": ["coalesce", ["feature-state", "color"], "rgba(0,0,0,0)"],
+          "fill-opacity": 0.75,
+        },
+      },
+      {
+        id: "areas-intensity-line", type: "line", source: "areas",
+        paint: {
+          "line-color": "rgba(0,0,0,0.35)",
+          "line-width": ["coalesce", ["feature-state", "hasIntensity"], 0],
+        },
       },
     ],
   };
@@ -520,6 +552,28 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
     }));
 
     source.setData({ type: "FeatureCollection", features });
+  }, [stationPoints, status]);
+
+  // 震度分布(細分区域ごとの塗り分け)を更新する。
+  // 前回塗った区域は毎回リセットしてから、今回の集計結果を塗り直す
+  // (そうしないと、観測点が無くなった区域の色が古いまま残ってしまう)。
+  const paintedAreaCodesRef = useRef([]);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    for (const code of paintedAreaCodesRef.current) {
+      map.setFeatureState({ source: "areas", id: code }, { color: null, hasIntensity: 0 });
+    }
+
+    const maxByArea = aggregateByArea(stationPoints || []);
+    const codes = [];
+    maxByArea.forEach((intensityKey, code) => {
+      const color = (INTENSITY_STYLE[intensityKey] || INTENSITY_STYLE["0"]).bg;
+      map.setFeatureState({ source: "areas", id: code }, { color, hasIntensity: 1 });
+      codes.push(code);
+    });
+    paintedAreaCodesRef.current = codes;
   }, [stationPoints, status]);
 
   // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカーを更新し、
@@ -882,10 +936,7 @@ function connectQuakeWebSocket(onQuake, onStatusChange) {
 let stationsPromise = null;
 function loadStations() {
   if (stationsPromise) return stationsPromise;
-  stationsPromise = cachedFetchJSON(
-    `${import.meta.env.BASE_URL}map/stations_with_amp_revised.json`,
-    `geo:${GEO_CACHE_VERSION}:stations`
-  );
+  stationsPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/stations_with_amp_revised.json`);
   return stationsPromise;
 }
 
@@ -914,6 +965,7 @@ function matchStation(stations, point) {
 
 // points[]と観測点マスタを突き合わせ、地図・一覧で使える形(緯度経度+震度キー付き)に変換する。
 // マスタに見つからなかった観測点は、地図には出せないが一覧には残すため latitude/longitude が null のまま返す。
+// areaCode(気象庁の細分区域コード)も一緒に引いておき、区域単位の震度分布の塗り分けに使う。
 function resolveStationPoints(points, stations) {
   return points.map(p => {
     const station = matchStation(stations, p);
@@ -923,8 +975,26 @@ function resolveStationPoints(points, stations) {
       intensityKey: maxScaleToIntensityKey(p.scale),
       latitude: station ? parseFloat(station.lat) : null,
       longitude: station ? parseFloat(station.lon) : null,
+      areaCode: station?.area?.code || null,
     };
   });
+}
+
+// 観測点(緯度経度+震度キー付き)の配列を、細分区域コードごとに集計する。
+// 各区域には、その区域内の観測点で観測された「最大震度」を割り当てる
+// (気象庁の震度分布図と同じ考え方: 区域内で一番揺れが大きかった地点の震度で塗る)。
+function aggregateByArea(resolvedPoints) {
+  const INTENSITY_ORDER = ["0","1","2","3","4","5-","5+","6-","6+","7"];
+  const maxByArea = new Map(); // areaCode -> intensityKey
+
+  for (const p of resolvedPoints) {
+    if (!p.areaCode) continue;
+    const current = maxByArea.get(p.areaCode);
+    if (!current || INTENSITY_ORDER.indexOf(p.intensityKey) > INTENSITY_ORDER.indexOf(current)) {
+      maxByArea.set(p.areaCode, p.intensityKey);
+    }
+  }
+  return maxByArea;
 }
 
 
