@@ -790,11 +790,17 @@ function toQuakeCard(item) {
   const hypo = eq?.hypocenter;
   const points = Array.isArray(item?.points) ? item.points : [];
 
+  // 遠地地震(海外で発生し、国内で震度が観測されない地震)に関する情報かどうか。
+  // issue.type === "Foreign" の場合、maxScaleは "-1"(観測なし)になる。
+  // これを国内の「震度0(揺れなし)」と同じ扱いにしてしまうと紛らわしいため、区別する。
+  const isForeign = item?.issue?.type === "Foreign";
+
   // earthquake.maxScaleが欠落/nullのレコードが稀に存在する
   // (震度速報→詳細への更新過程などで一時的に未設定のことがある)。
   // その場合はpoints[]の中の最大scaleから補完し、「震度0」の誤表示を防ぐ。
+  // ただし遠地地震はそもそも国内観測点のpointsを持たないため、補完の対象外とする。
   let maxScale = eq?.maxScale;
-  if (maxScale == null && points.length > 0) {
+  if (!isForeign && maxScale == null && points.length > 0) {
     maxScale = points.reduce((max, p) => (typeof p.scale === "number" && p.scale > max ? p.scale : max), -1);
   }
 
@@ -802,7 +808,8 @@ function toQuakeCard(item) {
     id: item.id,
     time: formatQuakeTime(eq?.time),
     place: hypo?.name || "震源地不明",
-    maxIntensity: maxScaleToIntensityKey(maxScale),
+    maxIntensity: isForeign ? "?" : maxScaleToIntensityKey(maxScale),
+    isForeign,
     magnitude: typeof hypo?.magnitude === "number" && hypo.magnitude > 0 ? hypo.magnitude : null,
     depth: typeof hypo?.depth === "number" && hypo.depth >= 0 ? hypo.depth : null,
     longPeriod: null, // P2P地震情報APIには長周期地震動階級は含まれないため常に非表示
@@ -1054,10 +1061,10 @@ function QuakeDetailCard({ quake }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* 最大震度バッジ */}
+      {/* 最大震度バッジ — 遠地地震は震度が観測されないため「遠地」表示にする */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, flexShrink: 0 }}>
         <span style={{ fontSize: 9, fontWeight: 600, color: "rgba(255,255,255,0.6)", whiteSpace: "nowrap" }}>
-          最大震度
+          {quake.isForeign ? "遠地地震" : "最大震度"}
         </span>
         <div
           style={{
@@ -1067,9 +1074,15 @@ function QuakeDetailCard({ quake }) {
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
           }}
         >
-          <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{num}</span>
-          {suffix && (
-            <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.15 }}>{suffix}</span>
+          {quake.isForeign ? (
+            <span style={{ fontSize: 12, fontWeight: 800, lineHeight: 1.2 }}>不明</span>
+          ) : (
+            <>
+              <span className="mono" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1 }}>{num}</span>
+              {suffix && (
+                <span style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.15 }}>{suffix}</span>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1844,9 +1857,9 @@ function BottomDock({
                                 flexShrink: 0, width: 28, height: 22, borderRadius: 6,
                                 background: style.bg, color: style.fg,
                                 display: "flex", alignItems: "center", justifyContent: "center",
-                                fontSize: 11, fontWeight: 800,
+                                fontSize: q.isForeign ? 9 : 11, fontWeight: 800,
                               }}>
-                                {style.label}
+                                {q.isForeign ? "遠地" : style.label}
                               </span>
                               <span style={{
                                 flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
@@ -2229,13 +2242,15 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints} hypocenter={selectedHypocenter}/>
 
-        {/* 震度凡例 — 地震を選択している間だけ、画面右上に浮かぶ */}
+        {/* 震度凡例 — 地震を選択している間だけ、画面上部に横長に浮かぶ */}
         {activeNav === "quake" && selectedQuake && (
           <div style={{
             position: "absolute",
             top: "calc(16px + env(safe-area-inset-top))",
-            right: 16,
+            left: 16, right: 16,
             zIndex: 30,
+            display: "flex",
+            overflowX: "auto",
           }}>
             <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity}/>
           </div>
