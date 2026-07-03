@@ -1805,14 +1805,20 @@ function BottomDock({
   }, [selectedQuakeId]);
 
   // 地震タブ専用設定を開いた瞬間、パネルが「低(0)」に畳まれたままだと
-  // 中身(震度配色の選択肢)が隠れて見えないため、開いた時だけ見える高さまで広げる。
+  // 中身(震度配色の選択肢)が隠れて見えないため、開いた時は「中高」の高さまで広げる。
+  // 逆に閉じて地震タブに戻った時は、元々表示していた内容に合わせた高さにする:
+  // 地震を選択中(詳細カード表示)なら「中」、未選択(一覧表示)なら「中高」。
   const lastQuakeSettingsOpen = useRef(quakeSettingsOpen);
   useEffect(() => {
-    if (!lastQuakeSettingsOpen.current && quakeSettingsOpen) {
-      setSnapIndex(2);
+    if (lastQuakeSettingsOpen.current !== quakeSettingsOpen) {
+      if (quakeSettingsOpen) {
+        setSnapIndex(2);
+      } else {
+        setSnapIndex(selectedQuakeId != null ? 1 : 2);
+      }
     }
     lastQuakeSettingsOpen.current = quakeSettingsOpen;
-  }, [quakeSettingsOpen]);
+  }, [quakeSettingsOpen, selectedQuakeId]);
 
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
