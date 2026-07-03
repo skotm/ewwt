@@ -1701,6 +1701,9 @@ function BottomDock({
   const [bodyNaturalHeight, setBodyNaturalHeight] = useState(0);
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
+  // 地震タブ⇄設定表示を切り替えた瞬間だけ、ナビのハイライトpillのアニメーションを
+  // 1フレーム止めるためのフラグ(パネルの高さ変化と同時に動いて重くなるのを防ぐ)。
+  const [suppressHighlightTransition, setSuppressHighlightTransition] = useState(false);
 
   // パネル本体(ヘッダー+レイヤー一覧。ハンドルは含まない)の
   // 「クリップされていない自然な高さ」を常に測定しておく。「高」スナップの基準になる。
@@ -1808,9 +1811,15 @@ function BottomDock({
   // 中身(震度配色の選択肢)が隠れて見えないため、開いた時は「中高」の高さまで広げる。
   // 逆に閉じて地震タブに戻った時は、元々表示していた内容に合わせた高さにする:
   // 地震を選択中(詳細カード表示)なら「中」、未選択(一覧表示)なら「中高」。
+  //
+  // また、この開閉ではハイライトpillも「地震」⇄「設定」アイコン間を大きく移動するため、
+  // パネルの高さ変化(blur再計算を伴う)とpillのleftアニメーション(レイアウトに影響する
+  // プロパティ)が同時に走ると体感が重くなる。そこでこの遷移の時だけpillのアニメーションを
+  // 1フレームだけ止めて瞬時に移動させ、同時に動くアニメーションの数を減らしている。
   const lastQuakeSettingsOpen = useRef(quakeSettingsOpen);
   useEffect(() => {
     if (lastQuakeSettingsOpen.current !== quakeSettingsOpen) {
+      setSuppressHighlightTransition(true);
       if (quakeSettingsOpen) {
         setSnapIndex(2);
       } else {
@@ -1819,6 +1828,15 @@ function BottomDock({
     }
     lastQuakeSettingsOpen.current = quakeSettingsOpen;
   }, [quakeSettingsOpen, selectedQuakeId]);
+
+  // suppressHighlightTransitionは1フレームだけ効けばよいので、
+  // pillが新しい位置に瞬時移動した直後(次のフレーム)に自動で解除し、
+  // 通常のタブ切替では今まで通りアニメーションするようにする。
+  useEffect(() => {
+    if (!suppressHighlightTransition) return undefined;
+    const id = requestAnimationFrame(() => setSuppressHighlightTransition(false));
+    return () => cancelAnimationFrame(id);
+  }, [suppressHighlightTransition]);
 
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
@@ -2250,9 +2268,11 @@ function BottomDock({
             // "押し込むとガラスが少し膨らむ" 触覚的な質感を再現する。
             transform: navPressed ? "scale(1.16)" : "scale(1)",
             transformOrigin: "center",
-            transition: navDragging
-              ? "transform 0.18s cubic-bezier(.22,1,.36,1)"
-              : "left 0.38s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
+            transition: suppressHighlightTransition
+              ? "none"
+              : navDragging
+                ? "transform 0.18s cubic-bezier(.22,1,.36,1)"
+                : "left 0.38s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
             pointerEvents: "none",
             zIndex: 0,
           }}
