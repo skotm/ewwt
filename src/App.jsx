@@ -841,7 +841,7 @@ const INTENSITY_LABEL = {
 const QUAKE_COLOR_SCHEMES = {
   // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。
   legacy: {
-    label: "eqs viewer配色",
+    label: "過去のプログラム",
     colors: {
       "0":  { bg: "#8E8E93", fg: "#fff" },
       "1":  { bg: "#64D2FF", fg: "#0B0B0C" },
@@ -878,7 +878,7 @@ const QUAKE_COLOR_SCHEMES = {
   },
   // このアプリで震度分布の塗りつぶし・バッジに元々使っていた配色。
   fill: {
-    label: " ",
+    label: "塗りつぶし配色",
     colors: {
       "0":  { bg: "#3A3A3C", fg: "#fff" },
       "1":  { bg: "#2F6690", fg: "#fff" },
@@ -1739,27 +1739,17 @@ function BottomDock({
   const NAV_ROW_HEIGHT  = 66; // ナビ行の固定高さ(58pxボタン + 上下4pxパディング)
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
   const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
-  const fullscreenContentHeight = Math.max(
-    naturalHeight,
-    viewportH - TOP_GAP - BOTTOM_OFFSET - NAV_ROW_HEIGHT
-  );
 
-  // 0:低(閉) 1:中 2:中高(新規追加) 3:高(従来の全開) 4:全画面
-  // 「高」はこれまで常に「そのタブの中身の実測高さ(naturalHeight)」そのものだったため、
-  // 地震カードのように中身が短いタブでは「高」自体が縮んでしまい、地図レイヤー一覧の
-  // 「高」「中高」と同じ位置まで開けなくなっていた。
-  // → 「高」は「中身の実測高さ」と「地図レイヤー一覧(6項目)相当の基準高さ」の
-  //    大きい方を採用し、どのタブでも同じ位置まで開けるようにする。
-  //    中身がそれより短い場合は、単に空きスペースとして下に余る。
-  //
-  // ただし地震タブは「各地の震度」一覧を展開すると中身がかなり長くなることがあり、
-  // 実測高さをそのまま採用すると「中高」からの伸び幅が大きくなりすぎて、
-  // 跳ねるイージングと相まって「ビョーン」と誇張されたアニメーションに見えてしまう。
-  // そのため「高」には上限(HIGH_HEIGHT_CAP)を設け、それを超える分は
-  // パネル内部のスクロールに任せる(中身自体は隠れず、スクロールで見られる)。
-  const REFERENCE_HIGH_HEIGHT = 350; // 地図レイヤー一覧(6項目)を開いたときの目安高さ
-  const HIGH_HEIGHT_CAP = 460;       // 「高」の最大高さ。これ以上は内部スクロールに任せる
-  const highHeight = Math.min(Math.max(naturalHeight, REFERENCE_HIGH_HEIGHT), HIGH_HEIGHT_CAP);
+  // 0:低(閉) 1:中 2:中高 3:高 4:全画面
+  // 「高」「全画面」は、以前は表示中のタブの中身の実測高さ(naturalHeight)を
+  // 元に計算していたが、これだと地震タブ(地震の件数や「各地の震度」展開で
+  // 中身の長さが大きく変動する)だけ、気象/津波/警報/設定タブ(常に同じ
+  // 「地図レイヤー」一覧を表示)と「高」「全画面」の高さがズレてしまっていた。
+  // → タブごとの中身の長さには一切依存させず、常に同じ固定値/画面基準の
+  //    値にすることで、どのタブでも「高」「全画面」が同じ高さになるようにする。
+  //    中身がその高さより長い場合は、パネル内部のスクロール(scrollRef)に任せる。
+  const highHeight = 350; // 「高」の固定高さ(px)。地図レイヤー一覧(6項目)相当の目安
+  const fullscreenContentHeight = viewportH - TOP_GAP - BOTTOM_OFFSET - NAV_ROW_HEIGHT;
 
   // 「中」「中高」はタブによらず常に同じ高さになるよう固定pxで持つ
   // (地図レイヤー一覧で調整済みだった見た目の高さをそのまま定数化している)。
