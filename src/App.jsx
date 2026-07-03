@@ -1809,25 +1809,27 @@ function BottomDock({
 
   // 地震タブ専用設定を開いた瞬間、パネルが「低(0)」に畳まれたままだと
   // 中身(震度配色の選択肢)が隠れて見えないため、開いた時は「中高」の高さまで広げる。
-  // 逆に閉じて地震タブに戻った時は、元々表示していた内容に合わせた高さにする:
-  // 地震を選択中(詳細カード表示)なら「中」、未選択(一覧表示)なら「中高」。
+  // 逆に閉じて地震タブに戻った時は、開く直前にいた高さ(ドラッグで調整していた場合も含む)
+  // にそのまま戻す。
   //
   // また、この開閉ではハイライトpillも「地震」⇄「設定」アイコン間を大きく移動するため、
   // パネルの高さ変化(blur再計算を伴う)とpillのleftアニメーション(レイアウトに影響する
   // プロパティ)が同時に走ると体感が重くなる。そこでこの遷移の時だけpillのアニメーションを
   // 1フレームだけ止めて瞬時に移動させ、同時に動くアニメーションの数を減らしている。
+  const preSettingsSnapIndexRef = useRef(snapIndex);
   const lastQuakeSettingsOpen = useRef(quakeSettingsOpen);
   useEffect(() => {
     if (lastQuakeSettingsOpen.current !== quakeSettingsOpen) {
       setSuppressHighlightTransition(true);
       if (quakeSettingsOpen) {
+        preSettingsSnapIndexRef.current = snapIndex; // 開く直前の高さを覚えておく
         setSnapIndex(2);
       } else {
-        setSnapIndex(selectedQuakeId != null ? 1 : 2);
+        setSnapIndex(preSettingsSnapIndexRef.current); // 覚えておいた元の高さに戻す
       }
     }
     lastQuakeSettingsOpen.current = quakeSettingsOpen;
-  }, [quakeSettingsOpen, selectedQuakeId]);
+  }, [quakeSettingsOpen]);
 
   // suppressHighlightTransitionは1フレームだけ効けばよいので、
   // pillが新しい位置に瞬時移動した直後(次のフレーム)に自動で解除し、
