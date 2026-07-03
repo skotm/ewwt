@@ -1,10 +1,10 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, forwardRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, createContext, forwardRef } from "react";
 
 /* ─────────────────────────────────────────────────────
    TRUE LIQUID GLASS
    
    Apple iOS 26 の物理モデル:
-   - ガラス面 = ほぼ透明（tint なし） 
+   - ガラス面 = ほぼ透明（tint なし）
    - 縁 = 光が屈折・集光 → feDisplacementMap で歪み
    - ハイライト = 縁の外側だけに細い白線（rim light）
    - 内部コンテンツは読みやすいよう最低限のblurのみ
@@ -419,6 +419,9 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
   const overlayResizeObserverRef = useRef(null);
   const stationLabelDataRef = useRef([]);
   const drawStationLabelsRef = useRef(null);
+  // 現在選択中の震度配色スキーム。観測点マーカー・震度分布の塗り分けの両方で使う。
+  const colorSchemeId = useContext(QuakeColorSchemeContext);
+  const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
 
   useEffect(() => {
     let cancelled = false;
@@ -636,11 +639,11 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
     stationLabelDataRef.current = sorted.map(p => ({
       latitude: p.latitude,
       longitude: p.longitude,
-      label: (INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"]).label,
-      color: STATION_MARKER_COLOR[p.intensityKey] || STATION_MARKER_COLOR["0"],
+      label: INTENSITY_LABEL[p.intensityKey] || INTENSITY_LABEL["0"],
+      color: (colorScheme.colors[p.intensityKey] || colorScheme.colors["0"]).bg,
     }));
     if (drawStationLabelsRef.current) drawStationLabelsRef.current();
-  }, [stationPoints, status]);
+  }, [stationPoints, status, colorScheme]);
 
   // 震度分布(細分区域ごとの塗り分け)を更新する。
   // 前回塗った区域は毎回リセットしてから、今回の集計結果を塗り直す
@@ -657,12 +660,12 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
     const maxByArea = aggregateByArea(stationPoints || []);
     const codes = [];
     maxByArea.forEach((intensityKey, code) => {
-      const color = (INTENSITY_STYLE[intensityKey] || INTENSITY_STYLE["0"]).bg;
+      const color = (colorScheme.colors[intensityKey] || colorScheme.colors["0"]).bg;
       map.setFeatureState({ source: "areas", id: code }, { color, hasIntensity: 1 });
       codes.push(code);
     });
     paintedAreaCodesRef.current = codes;
-  }, [stationPoints, status]);
+  }, [stationPoints, status, colorScheme]);
 
   // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源+周辺の観測点がちょうど収まる範囲へズームする。
@@ -824,37 +827,117 @@ const ALERT_COLOR = {
 /* ─────────────────────────────────────────────────────
    震度スケール — JMA震度階(0〜7、10区分)を液体ガラスのダークUIに合わせて配色。
    明るい色(〜5強)は黒文字、暗く濃い色(6弱〜7)は白文字でコントラストを確保。
+
+   ユーザーが「地震」タブの設定画面から配色スキームを切り替えられるよう、
+   色(bg/fg)だけを複数パレット化している。ラベル("6弱"等)はスキームに
+   依存しない共通の情報なのでINTENSITY_LABELに1本化した。
    ───────────────────────────────────────────────────── */
-// 地図上の観測点マーカー(円)専用の配色。過去のLeaflet版(getIntensityColor)と
-// 完全に同じパレットをそのまま使う — バッジ/凡例側のINTENSITY_STYLE.bgとは
-// あえて別パレットにしている(観測点の見た目だけを過去のプログラムに合わせるため)。
-const STATION_MARKER_COLOR = {
-  "0":  "#8E8E93",
-  "1":  "#64D2FF",
-  "2":  "#0A84FF",
-  "3":  "#30D158",
-  "4":  "#FFD60A",
-  "5-": "#FF9F0A",
-  "5+": "#FF453A",
-  "6-": "#FF2D55",
-  "6+": "#BF5AF2",
-  "7":  "#5E5CE6",
-  "?":  "#8E8E93",
+const INTENSITY_LABEL = {
+  "0": "0", "1": "1", "2": "2", "3": "3", "4": "4",
+  "5-": "5弱", "5+": "5強", "6-": "6弱", "6+": "6強", "7": "7",
+  "?": "?", // 震度が取得できなかった場合(「0」と区別する)
 };
 
-const INTENSITY_STYLE = {
-  "0":  { bg: "#3A3A3C", fg: "#fff",    label: "0"  },
-  "1":  { bg: "#2F6690", fg: "#fff",    label: "1"  },
-  "2":  { bg: "#3FA9E0", fg: "#0B0B0C", label: "2"  },
-  "3":  { bg: "#4FBF67", fg: "#0B0B0C", label: "3"  },
-  "4":  { bg: "#FFD60A", fg: "#0B0B0C", label: "4"  },
-  "5-": { bg: "#FF9F0A", fg: "#0B0B0C", label: "5弱" },
-  "5+": { bg: "#FF7A1A", fg: "#0B0B0C", label: "5強" },
-  "6-": { bg: "#E0342C", fg: "#fff",    label: "6弱" },
-  "6+": { bg: "#8A1518", fg: "#fff",    label: "6強" },
-  "7":  { bg: "#5C0F1F", fg: "#fff",    label: "7"  },
-  "?":  { bg: "#3A3A3C", fg: "rgba(255,255,255,0.5)", label: "?"  }, // 震度が取得できなかった場合(「0」と区別する)
+const QUAKE_COLOR_SCHEMES = {
+  // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。
+  legacy: {
+    label: "過去のプログラム",
+    colors: {
+      "0":  { bg: "#8E8E93", fg: "#fff" },
+      "1":  { bg: "#64D2FF", fg: "#0B0B0C" },
+      "2":  { bg: "#0A84FF", fg: "#fff" },
+      "3":  { bg: "#30D158", fg: "#0B0B0C" },
+      "4":  { bg: "#FFD60A", fg: "#0B0B0C" },
+      "5-": { bg: "#FF9F0A", fg: "#0B0B0C" },
+      "5+": { bg: "#FF453A", fg: "#fff" },
+      "6-": { bg: "#FF2D55", fg: "#fff" },
+      "6+": { bg: "#BF5AF2", fg: "#fff" },
+      "7":  { bg: "#5E5CE6", fg: "#fff" },
+      "?":  { bg: "#8E8E93", fg: "rgba(255,255,255,0.5)" },
+    },
+  },
+  // 気象庁「ホームページにおける気象情報の配色に関する設定指針」(表２－２ 震度)に
+  // 定められた公式のRGB値をそのまま使用。
+  // 震度7:(180,0,104) 6強:(165,0,33) 6弱:(255,40,0) 5強:(255,153,0) 5弱:(255,230,0)
+  // 4:(250,230,150) 3:(0,65,255) 2:(0,170,255) 1:(242,242,255)
+  jma: {
+    label: "気象庁配色",
+    colors: {
+      "0":  { bg: "#E5E5EA", fg: "#0B0B0C" }, // 震度0は指針に規定が無いため、背景に馴染む薄いグレーにしている
+      "1":  { bg: "#F2F2FF", fg: "#0B0B0C" },
+      "2":  { bg: "#00AAFF", fg: "#0B0B0C" },
+      "3":  { bg: "#0041FF", fg: "#fff" },
+      "4":  { bg: "#FAE696", fg: "#0B0B0C" },
+      "5-": { bg: "#FFE600", fg: "#0B0B0C" },
+      "5+": { bg: "#FF9900", fg: "#0B0B0C" },
+      "6-": { bg: "#FF2800", fg: "#fff" },
+      "6+": { bg: "#A50021", fg: "#fff" },
+      "7":  { bg: "#B40068", fg: "#fff" },
+      "?":  { bg: "#C7C7CC", fg: "rgba(11,11,12,0.5)" },
+    },
+  },
+  // このアプリで震度分布の塗りつぶし・バッジに元々使っていた配色。
+  fill: {
+    label: "塗りつぶし配色",
+    colors: {
+      "0":  { bg: "#3A3A3C", fg: "#fff" },
+      "1":  { bg: "#2F6690", fg: "#fff" },
+      "2":  { bg: "#3FA9E0", fg: "#0B0B0C" },
+      "3":  { bg: "#4FBF67", fg: "#0B0B0C" },
+      "4":  { bg: "#FFD60A", fg: "#0B0B0C" },
+      "5-": { bg: "#FF9F0A", fg: "#0B0B0C" },
+      "5+": { bg: "#FF7A1A", fg: "#0B0B0C" },
+      "6-": { bg: "#E0342C", fg: "#fff" },
+      "6+": { bg: "#8A1518", fg: "#fff" },
+      "7":  { bg: "#5C0F1F", fg: "#fff" },
+      "?":  { bg: "#3A3A3C", fg: "rgba(255,255,255,0.5)" },
+    },
+  },
 };
+
+// 現在選択中の震度配色スキームID("legacy" | "jma" | "fill")を
+// アプリ全体に配るコンテキスト。地図・バッジ・凡例など離れた場所からでも
+// props バケツリレーせずに参照できるようにする。
+const QuakeColorSchemeContext = createContext("fill");
+
+// 震度配色スキームの選択はブラウザのlocalStorageに保存し、次回起動時も覚えておく。
+// (プライベートブラウジング等でlocalStorageが使えない環境でも落ちないようtry/catchで囲む)
+const QUAKE_COLOR_SCHEME_STORAGE_KEY = "quakeColorScheme";
+
+function loadStoredQuakeColorScheme() {
+  try {
+    const saved = localStorage.getItem(QUAKE_COLOR_SCHEME_STORAGE_KEY);
+    if (saved && QUAKE_COLOR_SCHEMES[saved]) return saved;
+  } catch (err) {
+    console.warn("震度配色の設定を読み込めませんでした:", err);
+  }
+  return "fill";
+}
+
+function saveQuakeColorScheme(schemeId) {
+  try {
+    localStorage.setItem(QUAKE_COLOR_SCHEME_STORAGE_KEY, schemeId);
+  } catch (err) {
+    console.warn("震度配色の設定を保存できませんでした:", err);
+  }
+}
+
+// 指定したスキームオブジェクトについて、震度キーに対応する{ bg, fg, label }を返す。
+// .map()のコールバック内などフックを呼べない場所からはこちらを直接使う
+// (スキーム自体はコンポーネント側で useContext(QuakeColorSchemeContext) して渡す)。
+function getIntensityStyleFromScheme(scheme, intensityKey) {
+  const c = scheme.colors[intensityKey] || scheme.colors["0"];
+  const label = INTENSITY_LABEL[intensityKey] || INTENSITY_LABEL["0"];
+  return { bg: c.bg, fg: c.fg, label };
+}
+
+// 指定した震度キー("1"〜"7","5-"などINTENSITY_LABELのキー)について、
+// 現在選択中のスキームに沿った{ bg, fg, label }を返す。
+function useIntensityStyle(intensityKey) {
+  const schemeId = useContext(QuakeColorSchemeContext);
+  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
+  return getIntensityStyleFromScheme(scheme, intensityKey);
+}
 
 // 表示用ラベルを「数字」と「弱/強」に分割する(バッジ内で2段組みにするため)
 function splitIntensityLabel(label) {
@@ -1211,7 +1294,7 @@ function AutoFitText({ text, maxFontSize, minFontSize = 13, className, style }) 
    左に「最大震度」バッジ、右にM/深さ・震源地・発生時刻を積む構成。
    ───────────────────────────────────────────────────── */
 function QuakeDetailCard({ quake }) {
-  const style = INTENSITY_STYLE[quake.maxIntensity] || INTENSITY_STYLE["1"];
+  const style = useIntensityStyle(quake.maxIntensity || "1");
   const { num, suffix } = splitIntensityLabel(style.label);
 
   return (
@@ -1338,6 +1421,8 @@ function QuakeMessageCard({ quake }) {
    ───────────────────────────────────────────────────── */
 function StationPointsList({ points }) {
   const [expanded, setExpanded] = useState(false);
+  const schemeId = useContext(QuakeColorSchemeContext);
+  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
 
   // scale(10刻みのJMAコード)が大きい順 = 震度が大きい順
   const sorted = useMemo(() => {
@@ -1369,7 +1454,7 @@ function StationPointsList({ points }) {
         boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
       }}>
         {visible.map((p, i) => {
-          const style = INTENSITY_STYLE[p.intensityKey] || INTENSITY_STYLE["0"];
+          const style = getIntensityStyleFromScheme(scheme, p.intensityKey);
           return (
             <div key={`${p.pref}-${p.addr}-${i}`}>
               {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>}
@@ -1613,6 +1698,8 @@ function BottomDock({
   const bodyRef = useRef(null);
   const scrollRef = useRef(null);
   const [bodyNaturalHeight, setBodyNaturalHeight] = useState(0);
+  const colorSchemeId = useContext(QuakeColorSchemeContext);
+  const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
 
   // パネル本体(ヘッダー+レイヤー一覧。ハンドルは含まない)の
   // 「クリップされていない自然な高さ」を常に測定しておく。「高」スナップの基準になる。
@@ -2016,7 +2103,7 @@ function BottomDock({
                   return (
                     <>
                       {quakes.map((q, i) => {
-                        const style = INTENSITY_STYLE[q.maxIntensity] || INTENSITY_STYLE["1"];
+                        const style = getIntensityStyleFromScheme(colorScheme, q.maxIntensity || "1");
                         return (
                           <div key={q.id}>
                             {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
@@ -2191,6 +2278,8 @@ function BottomDock({
 const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
 function QuakeIntensityLegend({ maxIntensity }) {
+  const schemeId = useContext(QuakeColorSchemeContext);
+  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
   const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(maxIntensity);
   if (maxIdx < 0) return null; // 震度0や不明("?")の場合は凡例を出さない
 
@@ -2208,7 +2297,7 @@ function QuakeIntensityLegend({ maxIntensity }) {
       }}
     >
       {levels.map(key => {
-        const style = INTENSITY_STYLE[key];
+        const style = getIntensityStyleFromScheme(scheme, key);
         const isMax = key === maxIntensity;
         const { num, suffix } = splitIntensityLabel(style.label);
         return (
@@ -2281,6 +2370,116 @@ function LayersIcon() {
 }
 
 /* ─────────────────────────────────────────────────────
+   QUAKE SETTINGS SHEET
+   「地震」タブを見ている間に設定ボタンを押すと開く、地震タブ専用の設定画面。
+   現状は「震度配色」の切り替えのみ。下からスライドインするGlassシート+
+   背後の半透明バックドロップ(タップで閉じる)という、他のモーダル無しアプリでも
+   よく見る構成。
+   ───────────────────────────────────────────────────── */
+function QuakeSettingsSheet({ open, onClose, colorScheme, onChangeColorScheme }) {
+  // 開閉アニメーションのため、閉じた直後も一瞬だけDOMを残しておく(mounted)。
+  const [mounted, setMounted] = useState(open);
+  useEffect(() => {
+    if (open) setMounted(true);
+    else {
+      const t = setTimeout(() => setMounted(false), 280);
+      return () => clearTimeout(t);
+    }
+  }, [open]);
+
+  if (!mounted) return null;
+
+  return (
+    <>
+      {/* バックドロップ — タップで閉じる */}
+      <div
+        onClick={onClose}
+        style={{
+          position: "absolute", inset: 0, zIndex: 60,
+          background: "rgba(0,0,0,0.45)",
+          opacity: open ? 1 : 0,
+          transition: "opacity 0.28s ease",
+        }}
+      />
+
+      {/* シート本体 */}
+      <div style={{
+        position: "absolute", left: 0, right: 0, bottom: 0, zIndex: 61,
+        display: "flex", justifyContent: "center",
+        padding: "0 16px calc(16px + env(safe-area-inset-bottom))",
+        transform: open ? "translateY(0)" : "translateY(100%)",
+        transition: "transform 0.32s cubic-bezier(.25,1,.5,1)",
+      }}>
+        <Glass radius={24} style={{ width: "100%", maxWidth: 480, padding: "14px 4px 18px" }}>
+          {/* つまみ */}
+          <div style={{ display: "flex", justifyContent: "center", paddingBottom: 10 }}>
+            <div style={{ width: 36, height: 5, borderRadius: 999, background: "rgba(255,255,255,0.25)" }}/>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px 12px" }}>
+            <span style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>地震タブの設定</span>
+            <button
+              onClick={onClose}
+              style={{
+                width: 28, height: 28, borderRadius: "50%", border: "none",
+                background: "rgba(255,255,255,0.12)", color: "rgba(255,255,255,0.8)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 15, cursor: "pointer",
+              }}
+              aria-label="閉じる"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div style={{ padding: "0 16px" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.5)", marginBottom: 8 }}>
+              震度配色
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {Object.entries(QUAKE_COLOR_SCHEMES).map(([id, scheme]) => {
+                const selected = colorScheme === id;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => onChangeColorScheme(id)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px 12px", borderRadius: 14,
+                      background: selected ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
+                      boxShadow: selected
+                        ? "inset 0 0 0 1.5px rgba(255,255,255,0.55)"
+                        : "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
+                      border: "none", cursor: "pointer", textAlign: "left",
+                    }}
+                  >
+                    {/* ミニプレビュー(震度1〜7の色見本を並べる) */}
+                    <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                      {["1","2","3","4","5-","5+","6-","6+","7"].map(key => (
+                        <div key={key} style={{
+                          width: 8, height: 16, borderRadius: 2,
+                          background: scheme.colors[key].bg,
+                        }}/>
+                      ))}
+                    </div>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>
+                      {scheme.label}
+                    </span>
+                    {selected && (
+                      <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </Glass>
+      </div>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    APP ROOT
    ───────────────────────────────────────────────────── */
 export default function App() {
@@ -2288,6 +2487,27 @@ export default function App() {
   const [layers,    setLayers]    = useState(LAYERS);
   const [layerOpen, setLayerOpen] = useState(false);
   const [map,       setMap]       = useState(null);
+
+  // 地震タブ専用の設定(震度配色)。「設定」ボタンは、地震タブを見ている間だけ
+  // 全体のタブ切替ではなくこのシートを開く特別な挙動になる。
+  // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
+  const [quakeColorScheme, setQuakeColorScheme] = useState(loadStoredQuakeColorScheme); // "legacy" | "jma" | "fill"
+  const [quakeSettingsOpen, setQuakeSettingsOpen] = useState(false);
+
+  function handleChangeQuakeColorScheme(schemeId) {
+    setQuakeColorScheme(schemeId);
+    saveQuakeColorScheme(schemeId);
+  }
+
+  // BottomDockからの「ナビタップ」を横取りする。地震タブを見ている時に
+  // 設定ボタンが押された場合だけ、タブ切替の代わりに地震タブ専用設定シートを開く。
+  function handleNav(id) {
+    if (id === "settings" && activeNav === "quake") {
+      setQuakeSettingsOpen(true);
+      return;
+    }
+    setActiveNav(id);
+  }
 
   // 地震情報(P2P地震情報API)
   const [quakes,          setQuakes]          = useState([]);
@@ -2409,7 +2629,7 @@ export default function App() {
   }, []);
 
   return (
-    <>
+    <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
       <GlobalStyles/>
       <Filters/>
 
@@ -2457,7 +2677,7 @@ export default function App() {
         }}>
           <BottomDock
             active={activeNav}
-            onNav={setActiveNav}
+            onNav={handleNav}
             layerOpen={layerOpen}
             layers={layers}
             onToggleLayer={toggleLayer}
@@ -2470,7 +2690,15 @@ export default function App() {
           />
         </div>
 
+        {/* 地震タブ専用の設定シート — 「地震」タブを見ている間に設定ボタンを押すと開く */}
+        <QuakeSettingsSheet
+          open={quakeSettingsOpen}
+          onClose={() => setQuakeSettingsOpen(false)}
+          colorScheme={quakeColorScheme}
+          onChangeColorScheme={handleChangeQuakeColorScheme}
+        />
+
       </div>
-    </>
+    </QuakeColorSchemeContext.Provider>
   );
 }
