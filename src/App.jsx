@@ -841,7 +841,7 @@ const INTENSITY_LABEL = {
 const QUAKE_COLOR_SCHEMES = { 
 // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。 
 legacy: { 
-label: "eqsviewer", 
+label: "eqsviewer配色", 
 colors: { 
 "0":  { bg: "#8E8E93", fg: "#fff" }, 
 "1":  { bg: "#64D2FF", fg: "#0B0B0C" }, 
