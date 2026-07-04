@@ -1653,9 +1653,20 @@ function useSnapDrag({ heights, index, onSnap }) {
     // 「現在地から見て指の動いた方向にある次のスナップ」を優先する。
     // これにより、上→下へサッとスワイプした時に中間で止まらず、
     // 意図通り1段階(またはそれ以上)下まで閉じやすくなる。
+    //
+    // ただし、指を離した位置がすでに特定のスナップのすぐ近くにある場合は、
+    // そこで止めようとした意図とみなし、フリック判定より最近傍を優先する。
+    // (スナップ間隔が狭い場合、移動中に生じた勢いだけでフリック扱いされ、
+    //  ちょうど止めたい位置で離しても隣のスナップまで飛んでしまうのを防ぐ)
+    let minGap = Infinity;
+    for (let i = 1; i < heights.length; i++) {
+      minGap = Math.min(minGap, heights[i] - heights[i - 1]);
+    }
+    const SNAP_STICK_PX = Math.max(8, Math.min(24, minGap / 2));
+
     const FLICK_THRESHOLD = 0.45; // px/ms。これを超えたら明確なフリックとみなす
     let target = nearest;
-    if (Math.abs(velocity) > FLICK_THRESHOLD) {
+    if (Math.abs(velocity) > FLICK_THRESHOLD && nearestDist > SNAP_STICK_PX) {
       // 現在の指位置(finalH)がどのスナップ帯にいるかを求め、
       // フリック方向にある隣接スナップへ進める。
       let below = 0;
