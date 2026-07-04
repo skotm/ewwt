@@ -471,8 +471,8 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
           // 観測点マーカー本体。circleではなくsymbolレイヤーにすることで、
           // registerStationIconsで焼いたbitmap(白フチ+数字入り)をそのまま使う。
-          // ズームに応じた大きさは、旧Leaflet版(L.StationCanvasLayer)と同じ
-          // 3段階(zoom<7:4px, 7<=zoom<9:8px, zoom>=9:12px)のstep関数で揃える。
+          // ズームに応じた大きさは、段階切り替えだとカクつくため連続補間(interpolate)にし、
+          // 見やすさ重視で全体的に一回り大きめのサイズにしている。
           map.addSource("station-points", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -489,10 +489,12 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
                 8, ["concat", "station-icon-", ["get", "intensityKey"], "-num"],
               ],
               "icon-size": [
-                "step", ["zoom"],
-                4 / STATION_ICON_BASE_RADIUS,
-                7, 8 / STATION_ICON_BASE_RADIUS,
-                9, 12 / STATION_ICON_BASE_RADIUS,
+                "interpolate", ["linear"], ["zoom"],
+                4, 5 / STATION_ICON_BASE_RADIUS,
+                7, 10 / STATION_ICON_BASE_RADIUS,
+                9, 14 / STATION_ICON_BASE_RADIUS,
+                11, 20 / STATION_ICON_BASE_RADIUS,
+                14, 30 / STATION_ICON_BASE_RADIUS,
               ],
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
