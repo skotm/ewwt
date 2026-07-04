@@ -1756,7 +1756,7 @@ function BottomDock({
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
   const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
 
-  // 0:低(閉) 1:中 2:中高 3:中中高 4:高 5:全画面
+  // 0:低(閉) 1:中 2:中中 3:中高 4:高 5:全画面
   // 「高」「全画面」は、以前は表示中のタブの中身の実測高さ(naturalHeight)を
   // 元に計算していたが、これだと地震タブ(地震の件数や「各地の震度」展開で
   // 中身の長さが大きく変動する)だけ、気象/津波/警報/設定タブ(常に同じ
@@ -1770,22 +1770,20 @@ function BottomDock({
   // 「中」「中高」はタブによらず常に同じ高さになるよう固定pxで持つ
   // (地図レイヤー一覧で調整済みだった見た目の高さをそのまま定数化している)。
   const MID_FIXED     = 115; // 「中」の固定高さ(px)
+  // 「中中」の固定高さ(px)。「中」と「中高」の間に設ける中間スナップ。
+  const MIDMID_FIXED = 200;
   // 「中高」の固定高さ(px)。設定タブのトップメニュー(ヘッダー+5項目のカード)が
   // スクロールなしで丸ごと収まる高さを基準に調整している(旧: 222px)。
   const MIDHIGH_FIXED = 290;
-  // 「中中高」の固定高さ(px)。「中高」と「高」の間に設ける中間スナップ。
-  // 地震詳細カード+津波情報カード+「各地の震度」見出しまでが、各地の震度の
-  // 一覧(観測点リスト)はまだ見えない高さでスナップなしで収まる目安(画像基準)。
-  const MIDMIDHIGH_FIXED = 320;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
   const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
   const midHighHeight = Math.max(
     Math.min(MIDHIGH_FIXED, highHeight - GAP),
     midHeight + GAP
   );
-  const midMidHighHeight = Math.max(
-    Math.min(MIDMIDHIGH_FIXED, highHeight - GAP),
-    midHighHeight + GAP
+  const midMidHeight = Math.max(
+    Math.min(MIDMID_FIXED, midHighHeight - GAP),
+    midHeight + GAP
   );
 
   // 地震を選択した直後にスナップする「低(カードのみ)」の高さ。
@@ -1797,8 +1795,8 @@ function BottomDock({
   const SNAP_HEIGHTS = [
     0,
     midHeight,
+    midMidHeight,
     midHighHeight,
-    midMidHighHeight,
     highHeight,
     Math.max(fullscreenContentHeight, highHeight),
   ];
@@ -1810,7 +1808,7 @@ function BottomDock({
   useEffect(() => {
     if (layerOpen !== lastLayerOpen.current) {
       lastLayerOpen.current = layerOpen;
-      setSnapIndex(layerOpen ? (active === "quake" ? 2 : 4) : 0);
+      setSnapIndex(layerOpen ? (active === "quake" ? 3 : 4) : 0);
     }
   }, [layerOpen, active]);
 
@@ -1819,7 +1817,7 @@ function BottomDock({
   const lastSelectedQuakeId = useRef(selectedQuakeId);
   useEffect(() => {
     if (lastSelectedQuakeId.current != null && selectedQuakeId == null) {
-      setSnapIndex(2);
+      setSnapIndex(3);
     }
     lastSelectedQuakeId.current = selectedQuakeId;
   }, [selectedQuakeId]);
@@ -1833,7 +1831,7 @@ function BottomDock({
   useEffect(() => {
     if (lastActiveForSettings.current !== "settings" && active === "settings") {
       preSettingsSnapIndexRef.current = snapIndex; // 開く直前の高さを覚えておく
-      setSnapIndex(2);
+      setSnapIndex(3);
     } else if (lastActiveForSettings.current === "settings" && active !== "settings") {
       setSnapIndex(preSettingsSnapIndexRef.current); // 覚えておいた元の高さに戻す
     }
