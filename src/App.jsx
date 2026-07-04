@@ -1340,15 +1340,23 @@ async function fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey) {
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
 // limit: 設定画面で指定された取得件数(1〜1000、デフォルト100)。
 //
-// 注意: P2P地震情報APIの /history は1回のリクエストにつき limit を1〜100までしか
+// 注意1: P2P地震情報APIの /history は1回のリクエストにつき limit を1〜100までしか
 // 指定できない(仕様: https://www.p2pquake.net/develop/json_api_v2/ の /history 参照)。
 // 100件を超える件数が設定されている場合、limit=100 のリクエストを offset をずらしながら
 // 複数回叩いて必要件数を積み上げる(例: 300件なら3回)。
+//
+// 注意2: 同APIの offset は「1週間以上古い情報は取得できない場合がある」仕様のため、
+// 直近1週間の地震が指定件数に満たない場合、それ以上ページを進めても同じ内容が
+// 返ってくることがある。これを区別せずに積み上げると、後段の重複排除で結局同じ
+// 件数に収束してしまい「件数を増やしても表示が変わらない」ように見えてしまう。
+// → 各ページのidをseenIdsで追跡し、新規idが1件も無いページに当たった時点で
+//   「これ以上遡れない」とみなして打ち切る。
 const P2PQUAKE_API_PAGE_SIZE = 100;
 
 async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
   const target = clampQuakeFetchLimit(limit);
   const results = [];
+  const seenIds = new Set();
   let offset = 0;
 
   while (results.length < target) {
@@ -1358,7 +1366,11 @@ async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
     const page = await res.json();
     if (!Array.isArray(page) || page.length === 0) break; // これ以上遡れる情報が無い
 
-    results.push(...page);
+    const newItems = page.filter(item => item?.id != null && !seenIds.has(item.id));
+    if (newItems.length === 0) break; // 新規レコードが無い = 同じ内容が返ってきている(offsetの限界に到達)
+    for (const item of newItems) seenIds.add(item.id);
+    results.push(...newItems);
+
     offset += page.length;
 
     // 返ってきた件数がリクエストしたページサイズより少なければ、これ以上古い情報は無い
@@ -2852,8 +2864,9 @@ function QuakeFetchLimitSettings({ value, onChange }) {
       <div style={{ padding: "14px 14px 12px" }}>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 12, lineHeight: 1.5 }}>
           地震一覧を取得する最大件数です。{QUAKE_FETCH_LIMIT_MIN}〜{QUAKE_FETCH_LIMIT_MAX}件の範囲で指定できます
-          (デフォルト{QUAKE_FETCH_LIMIT_DEFAULT}件)。気象庁APIの都合上、100件を超える件数を指定すると
-          複数回に分けて取得するため、件数が多いほど取得に時間がかかります。
+          (デフォルト{QUAKE_FETCH_LIMIT_DEFAULT}件)。100件を超える件数を指定すると複数回に分けて取得するため、
+          件数が多いほど取得に時間がかかります。また、直近1週間より前の情報は取得できない仕様のため、
+          地震の少ない期間は指定した件数に満たないことがあります。
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
