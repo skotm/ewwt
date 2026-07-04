@@ -2371,12 +2371,13 @@ function QuakeIntensityLegend({ maxIntensity }) {
 
   return (
     <Glass
-      radius={16}
+      radius={12}
       style={{
         display: "flex",
         flexDirection: "row",
-        gap: 6,
-        padding: 6,
+        alignItems: "flex-end",
+        gap: 3,
+        padding: "8px 7px 6px",
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
@@ -2388,20 +2389,23 @@ function QuakeIntensityLegend({ maxIntensity }) {
           <div
             key={key}
             style={{
-              width: 40, height: 40, borderRadius: 10,
-              background: style.bg, color: style.fg,
               display: "flex", flexDirection: "column",
-              alignItems: "center", justifyContent: "center",
-              boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
+              alignItems: "center", gap: 3,
               flexShrink: 0,
             }}
           >
-            <span className="mono" style={{ fontSize: suffix ? 17 : 19, fontWeight: 800, lineHeight: 1 }}>
-              {num}
+            {/* 設定の震度配色ピッカーと同じ「細い色見本バー」 */}
+            <div style={{
+              width: 9, height: 26, borderRadius: 3,
+              background: style.bg,
+              boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
+            }}/>
+            <span className="mono" style={{
+              fontSize: suffix ? 9 : 10, fontWeight: 800, lineHeight: 1,
+              color: isMax ? "#fff" : "rgba(255,255,255,0.6)",
+            }}>
+              {num}{suffix}
             </span>
-            {suffix && (
-              <span style={{ fontSize: 9, fontWeight: 700, lineHeight: 1.1 }}>{suffix}</span>
-            )}
           </div>
         );
       })}
