@@ -2375,38 +2375,26 @@ function QuakeIntensityLegend({ maxIntensity }) {
       style={{
         display: "flex",
         flexDirection: "row",
-        alignItems: "flex-end",
-        gap: 3,
-        padding: "8px 7px 6px",
+        alignItems: "center",
+        gap: 2,
+        padding: "8px 9px",
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
       {levels.map(key => {
         const style = getIntensityStyleFromScheme(scheme, key);
         const isMax = key === maxIntensity;
-        const { num, suffix } = splitIntensityLabel(style.label);
         return (
+          // 設定の震度配色ピッカーのミニプレビューと同じ、隙間の詰まった横一列のバー
           <div
             key={key}
             style={{
-              display: "flex", flexDirection: "column",
-              alignItems: "center", gap: 3,
-              flexShrink: 0,
-            }}
-          >
-            {/* 設定の震度配色ピッカーと同じ「細い色見本バー」 */}
-            <div style={{
-              width: 9, height: 26, borderRadius: 3,
+              width: 7, height: 16, borderRadius: 2,
               background: style.bg,
               boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
-            }}/>
-            <span className="mono" style={{
-              fontSize: suffix ? 9 : 10, fontWeight: 800, lineHeight: 1,
-              color: isMax ? "#fff" : "rgba(255,255,255,0.6)",
-            }}>
-              {num}{suffix}
-            </span>
-          </div>
+              flexShrink: 0,
+            }}
+          />
         );
       })}
     </Glass>
