@@ -520,12 +520,46 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             // 同じ色ごとにパスをまとめて1回のfill/strokeで済ませることで、
             // 観測点1件ごとに発生していたスタイル切り替え・fill/stroke呼び出しの
             // 回数を大きく減らす(観測点が数百件あるような地震でも重くなりにくくする)。
+            //
+            // 観測点が密集する低ズームでは、円同士が重なって縁がゴチャつき、
+            // 数字も「22」「33」のように重複して読めなくなってしまう。
+            // そのため、円が重ならない間隔(=直径よりわずかに広い距離)を確保できない
+            // 点は間引く。points は震度の低い順に並んでいるため、優先して残したい
+            // 震度の高い点から先に採用されるよう、逆順(震度の高い順)に処理する。
+            const minGap = radius * 2.15; // これより近い点は「重なる」とみなして間引く
+            const cellSize = Math.max(minGap, 1);
+            const grid = new Map(); // "cx_cy" -> [{x,y}, ...] (採用済みの点)
+            function isTooClose(x, y) {
+              const cx = Math.floor(x / cellSize), cy = Math.floor(y / cellSize);
+              for (let dx = -1; dx <= 1; dx++) {
+                for (let dy = -1; dy <= 1; dy++) {
+                  const arr = grid.get((cx + dx) + "_" + (cy + dy));
+                  if (!arr) continue;
+                  for (let k = 0; k < arr.length; k++) {
+                    const ddx = arr[k].x - x, ddy = arr[k].y - y;
+                    if (ddx * ddx + ddy * ddy < minGap * minGap) return true;
+                  }
+                }
+              }
+              return false;
+            }
+            function markAccepted(x, y) {
+              const cx = Math.floor(x / cellSize), cy = Math.floor(y / cellSize);
+              const key = cx + "_" + cy;
+              let arr = grid.get(key);
+              if (!arr) { arr = []; grid.set(key, arr); }
+              arr.push({ x, y });
+            }
+
             const visible = [];
             const groups = new Map(); // color -> [{x,y}, ...]
-            for (let i = 0; i < points.length; i++) {
+            for (let i = points.length - 1; i >= 0; i--) {
               const p = points[i];
               const pt = map.project([p.longitude, p.latitude]);
               if (pt.x < -20 || pt.y < -20 || pt.x > w + 20 || pt.y > h + 20) continue;
+              if (isTooClose(pt.x, pt.y)) continue;
+              markAccepted(pt.x, pt.y);
+
               visible.push({ x: pt.x, y: pt.y, label: p.label });
               let arr = groups.get(p.color);
               if (!arr) { arr = []; groups.set(p.color, arr); }
