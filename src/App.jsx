@@ -1705,15 +1705,20 @@ function useSnapDrag({ heights, index, onSnap }) {
 function BottomDock({
   active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
-  quakeSettingsOpen = false, onCloseQuakeSettings, onChangeQuakeColorScheme,
+  onChangeQuakeColorScheme,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const scrollRef = useRef(null);
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
-  // 地震タブ⇄設定表示を切り替えた瞬間だけ、ナビのハイライトpillのアニメーションを
-  // 1フレーム止めるためのフラグ(パネルの高さ変化と同時に動いて重くなるのを防ぐ)。
-  const [suppressHighlightTransition, setSuppressHighlightTransition] = useState(false);
+
+  // 設定タブ内の階層メニューの現在地。[] = トップメニュー、["quake"] = 地震カテゴリの
+  // メニュー、["quake","colorScheme"] = 震度配色の中身、のようにパスで表現する。
+  // 設定タブ以外に移動したら、次に開いた時は必ずトップメニューから始まるようにリセットする。
+  const [settingsPath, setSettingsPath] = useState([]);
+  useEffect(() => {
+    if (active !== "settings") setSettingsPath([]);
+  }, [active]);
 
   // タブ切り替え、または選択中の地震が変わった際に表示中身が変わると、
   // ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
@@ -1795,39 +1800,6 @@ function BottomDock({
     lastSelectedQuakeId.current = selectedQuakeId;
   }, [selectedQuakeId]);
 
-  // 地震タブ専用設定を開いた瞬間、パネルが「低(0)」に畳まれたままだと
-  // 中身(震度配色の選択肢)が隠れて見えないため、開いた時は「中高」の高さまで広げる。
-  // 逆に閉じて地震タブに戻った時は、開く直前にいた高さ(ドラッグで調整していた場合も含む)
-  // にそのまま戻す。
-  //
-  // また、この開閉ではハイライトpillも「地震」⇄「設定」アイコン間を大きく移動するため、
-  // パネルの高さ変化(blur再計算を伴う)とpillのleftアニメーション(レイアウトに影響する
-  // プロパティ)が同時に走ると体感が重くなる。そこでこの遷移の時だけpillのアニメーションを
-  // 1フレームだけ止めて瞬時に移動させ、同時に動くアニメーションの数を減らしている。
-  const preSettingsSnapIndexRef = useRef(snapIndex);
-  const lastQuakeSettingsOpen = useRef(quakeSettingsOpen);
-  useEffect(() => {
-    if (lastQuakeSettingsOpen.current !== quakeSettingsOpen) {
-      setSuppressHighlightTransition(true);
-      if (quakeSettingsOpen) {
-        preSettingsSnapIndexRef.current = snapIndex; // 開く直前の高さを覚えておく
-        setSnapIndex(2);
-      } else {
-        setSnapIndex(preSettingsSnapIndexRef.current); // 覚えておいた元の高さに戻す
-      }
-    }
-    lastQuakeSettingsOpen.current = quakeSettingsOpen;
-  }, [quakeSettingsOpen]);
-
-  // suppressHighlightTransitionは1フレームだけ効けばよいので、
-  // pillが新しい位置に瞬時移動した直後(次のフレーム)に自動で解除し、
-  // 通常のタブ切替では今まで通りアニメーションするようにする。
-  useEffect(() => {
-    if (!suppressHighlightTransition) return undefined;
-    const id = requestAnimationFrame(() => setSuppressHighlightTransition(false));
-    return () => cancelAnimationFrame(id);
-  }, [suppressHighlightTransition]);
-
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
     const shouldOpen = newIndex > 0;
@@ -1901,11 +1873,7 @@ function BottomDock({
   const N = NAV.length;                       // タブ数
   const tabW = 100 / N;                       // 1タブの幅 [%]（内側領域基準）
 
-  // 地震タブを見ながら地震専用設定を開いている間は、中身は「設定」を表示しているので
-  // ハイライト/アクティブ判定もそれに合わせて「settings」扱いにする
-  // (activeNav自体は"quake"のまま変えていないため、ここだけ見た目上つじつまを合わせる)。
-  const effectiveActive = (active === "quake" && quakeSettingsOpen) ? "settings" : active;
-  const activeIndex = NAV.findIndex(n => n.id === effectiveActive);
+  const activeIndex = NAV.findIndex(n => n.id === active);
   const [highlightLeft, setHighlightLeft] = useState(activeIndex * tabW);
   const [navDragging,   setNavDragging]   = useState(false);
   const [navPressed,    setNavPressed]    = useState(false);  // 指が触れている間ずっとtrue(タップ/ドラッグ問わず)
@@ -2020,21 +1988,10 @@ function BottomDock({
 
   return (
     <>
-      {/* 戻るボタン — 地震を選択している間、または地震タブ専用設定を表示している間だけ、
-          パネルのすぐ上に浮かぶ。Glass(パネル本体)の兄弟として置くことで、
-          currentHeightの変化(ドラッグ含む)にそのまま追従できるようにしている。 */}
-      {active === "quake" && quakeSettingsOpen && (
-        <div style={{
-          position: "absolute",
-          right: 16,
-          bottom: backButtonBottom,
-          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
-          zIndex: 10,
-        }}>
-          <BackToListButton onClick={onCloseQuakeSettings} label="地震タブに戻る"/>
-        </div>
-      )}
-      {active === "quake" && !quakeSettingsOpen && selectedQuakeId != null && (
+      {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
+          Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
+          (ドラッグ含む)にそのまま追従できるようにしている。 */}
+      {active === "quake" && selectedQuakeId != null && (
         <div style={{
           position: "absolute",
           right: 16,
@@ -2103,9 +2060,7 @@ function BottomDock({
           style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none" }}
         >
           <div>
-            {active === "quake" && quakeSettingsOpen ? (
-              <QuakeSettingsBody colorSchemeId={colorSchemeId} onChangeColorScheme={onChangeQuakeColorScheme}/>
-            ) : active === "quake" ? (
+            {active === "quake" ? (
               <>
                 {quakeStatus === "loading" && quakes.length === 0 && (
                   <div style={{
@@ -2190,6 +2145,19 @@ function BottomDock({
                 {/* フローティング部分(地震一覧)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: "rgba(255,255,255,0.22)", margin: "2px 0 0" }}/>
               </>
+            ) : active === "settings" ? (
+              <>
+                <SettingsBody
+                  path={settingsPath}
+                  onNavigate={setSettingsPath}
+                  onBack={() => setSettingsPath(p => p.slice(0, -1))}
+                  colorSchemeId={colorSchemeId}
+                  onChangeColorScheme={onChangeQuakeColorScheme}
+                />
+
+                {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
+                <div style={{ height: 0.5, background: "rgba(255,255,255,0.22)", margin: "2px 0 0" }}/>
+              </>
             ) : (
               <>
                 <div style={{
@@ -2262,11 +2230,9 @@ function BottomDock({
             // "押し込むとガラスが少し膨らむ" 触覚的な質感を再現する。
             transform: navPressed ? "scale(1.16)" : "scale(1)",
             transformOrigin: "center",
-            transition: suppressHighlightTransition
-              ? "none"
-              : navDragging
-                ? "transform 0.18s cubic-bezier(.22,1,.36,1)"
-                : "left 0.38s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
+            transition: navDragging
+              ? "transform 0.18s cubic-bezier(.22,1,.36,1)"
+              : "left 0.38s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
             pointerEvents: "none",
             zIndex: 0,
           }}
@@ -2418,36 +2384,88 @@ function LayersIcon() {
 }
 
 /* ─────────────────────────────────────────────────────
-   QUAKE SETTINGS SHEET
-   「地震」タブを見ている間に設定ボタンを押すと開く、地震タブ専用の設定画面。
-   現状は「震度配色」の切り替えのみ。下からスライドインするGlassシート+
-   背後の半透明バックドロップ(タップで閉じる)という、他のモーダル無しアプリでも
-   よく見る構成。
+   SETTINGS TAB — 階層メニュー
+   設定タブを開くとまずカテゴリ一覧(地震/津波/気象/警報/詳細設定)を表示し、
+   カテゴリを選ぶとその中の項目一覧へ、項目を選ぶと実際の設定内容へ、と
+   BottomDockパネルの中身をその場で差し替えながら掘り下げていく構成。
+   現在地は親(BottomDock)がsettingsPath(配列)として持ち、このコンポーネントは
+   それを受け取って該当する画面を描くだけの純粋な表示コンポーネントにしている。
    ───────────────────────────────────────────────────── */
-/* ─────────────────────────────────────────────────────
-   QUAKE SETTINGS BODY
-   「地震」タブを見ている間に設定ボタンを押すと、新しいフローティングを
-   出すのではなく地震フローティング(BottomDockのパネル)の中身自体を
-   これに差し替える形で表示する、地震タブ専用の設定画面。
-   現状は「震度配色」の切り替えのみ。他のリスト(各地の震度など)と同じ
-   見た目のセクション+行リストで、パネルに馴染むようにしている。
-   ───────────────────────────────────────────────────── */
-function QuakeSettingsBody({ colorSchemeId, onChangeColorScheme }) {
-  const entries = Object.entries(QUAKE_COLOR_SCHEMES);
+const SETTINGS_MENU = [
+  { id: "quake",    label: "地震" },
+  { id: "tsunami",  label: "津波" },
+  { id: "weather",  label: "気象" },
+  { id: "alert",    label: "警報" },
+  { id: "advanced", label: "詳細設定" },
+];
 
+// カテゴリごとの項目一覧。今のところ実際に中身があるのは地震の「震度配色」のみで、
+// 他のカテゴリは骨組み(空のプレースホルダー画面)だけを用意しておく。
+const SETTINGS_ITEMS = {
+  quake: [{ id: "colorScheme", label: "震度配色" }],
+};
+
+// 設定画面共通のヘッダー。トップメニューではonBackを渡さず戻るボタンなしにする。
+function SettingsHeader({ title, onBack }) {
   return (
-    <div style={{ margin: "2px 14px 8px" }}>
-      <div style={{ padding: "10px 2px 2px", fontSize: 16, fontWeight: 700, color: "#fff" }}>
-        地震タブの設定
-      </div>
+    <div style={{
+      display: "flex", alignItems: "center", gap: 6,
+      padding: "8px 14px 11px",
+      borderBottom: "0.5px solid rgba(255,255,255,0.15)",
+    }}>
+      {onBack && (
+        <button
+          onClick={onBack}
+          aria-label="戻る"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 26, height: 26, marginLeft: -4,
+            color: "rgba(255,255,255,0.85)",
+          }}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+               stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 6 9 12 15 18"/>
+          </svg>
+        </button>
+      )}
+      <span style={{ fontSize: 14, fontWeight: 600, flex: 1, color: "rgba(255,255,255,0.9)" }}>
+        {title}
+      </span>
+    </div>
+  );
+}
 
-      <div style={{
-        padding: "6px 2px",
-        fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)",
-      }}>
-        震度配色
-      </div>
+// カテゴリ/項目一覧の1行。右端に「>」を出して、掘り下げられることを示す。
+function SettingsMenuRow({ label, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: "100%", display: "flex", alignItems: "center", gap: 10,
+        padding: "11px 18px", background: "transparent", textAlign: "left",
+      }}
+    >
+      <span style={{ fontSize: 14, color: "rgba(255,255,255,0.85)", flex: 1 }}>
+        {label}
+      </span>
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
+           stroke="rgba(255,255,255,0.3)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="9 6 15 12 9 18"/>
+      </svg>
+    </button>
+  );
+}
 
+function SettingsRowDivider() {
+  return <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", marginLeft: 18 }}/>;
+}
+
+// 震度配色の選択画面。以前のQuakeSettingsBodyと同じ見た目のリストをそのまま流用している。
+function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
+  const entries = Object.entries(QUAKE_COLOR_SCHEMES);
+  return (
+    <div style={{ margin: "10px 14px 8px" }}>
       <div style={{
         borderRadius: 12,
         overflow: "hidden",
@@ -2492,6 +2510,61 @@ function QuakeSettingsBody({ colorSchemeId, onChangeColorScheme }) {
   );
 }
 
+function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorScheme }) {
+  // トップメニュー(カテゴリ一覧)
+  if (path.length === 0) {
+    return (
+      <>
+        <SettingsHeader title="設定"/>
+        {SETTINGS_MENU.map((item, i) => (
+          <div key={item.id}>
+            {i > 0 && <SettingsRowDivider/>}
+            <SettingsMenuRow label={item.label} onClick={() => onNavigate([item.id])}/>
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  const [category, leaf] = path;
+  const categoryLabel = SETTINGS_MENU.find(m => m.id === category)?.label || "";
+
+  // 震度配色(地震カテゴリの項目)の中身
+  if (category === "quake" && leaf === "colorScheme") {
+    return (
+      <>
+        <SettingsHeader title="震度配色" onBack={onBack}/>
+        <QuakeColorSchemeSettings colorSchemeId={colorSchemeId} onChangeColorScheme={onChangeColorScheme}/>
+      </>
+    );
+  }
+
+  // カテゴリ内の項目一覧(現状は地震のみ項目あり)
+  const items = SETTINGS_ITEMS[category] || [];
+  if (!leaf) {
+    return (
+      <>
+        <SettingsHeader title={categoryLabel} onBack={onBack}/>
+        {items.length > 0 ? (
+          items.map((item, i) => (
+            <div key={item.id}>
+              {i > 0 && <SettingsRowDivider/>}
+              <SettingsMenuRow label={item.label} onClick={() => onNavigate([...path, item.id])}/>
+            </div>
+          ))
+        ) : (
+          <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+            現在、設定できる項目はありません
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // 想定外のパス(念のためのフォールバック)
+  return <SettingsHeader title={categoryLabel} onBack={onBack}/>;
+}
+
 /* ─────────────────────────────────────────────────────
    APP ROOT
    ───────────────────────────────────────────────────── */
@@ -2501,27 +2574,13 @@ export default function App() {
   const [layerOpen, setLayerOpen] = useState(false);
   const [map,       setMap]       = useState(null);
 
-  // 地震タブ専用の設定(震度配色)。「設定」ボタンは、地震タブを見ている間だけ
-  // 全体のタブ切替ではなくこのシートを開く特別な挙動になる。
+  // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
   const [quakeColorScheme, setQuakeColorScheme] = useState(loadStoredQuakeColorScheme); // "legacy" | "jma" | "fill"
-  const [quakeSettingsOpen, setQuakeSettingsOpen] = useState(false);
 
   function handleChangeQuakeColorScheme(schemeId) {
     setQuakeColorScheme(schemeId);
     saveQuakeColorScheme(schemeId);
-  }
-
-  // BottomDockからの「ナビタップ」を横取りする。地震タブを見ている時に
-  // 設定ボタンが押された場合だけ、タブ切替の代わりに地震タブ専用の設定表示(中身の差し替え)を開く。
-  // それ以外のタップ(地震タブへの切り戻しも含む)では、開いていれば設定表示を閉じてから通常通り遷移する。
-  function handleNav(id) {
-    if (id === "settings" && activeNav === "quake") {
-      setQuakeSettingsOpen(true);
-      return;
-    }
-    if (quakeSettingsOpen) setQuakeSettingsOpen(false);
-    setActiveNav(id);
   }
 
   // 地震情報(P2P地震情報API)
@@ -2692,7 +2751,7 @@ export default function App() {
         }}>
           <BottomDock
             active={activeNav}
-            onNav={handleNav}
+            onNav={setActiveNav}
             layerOpen={layerOpen}
             layers={layers}
             onToggleLayer={toggleLayer}
@@ -2702,8 +2761,6 @@ export default function App() {
             selectedQuakeId={selectedQuakeId}
             onSelectQuake={setSelectedQuakeId}
             stationPoints={selectedQuakePoints}
-            quakeSettingsOpen={quakeSettingsOpen}
-            onCloseQuakeSettings={() => setQuakeSettingsOpen(false)}
             onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
           />
         </div>
