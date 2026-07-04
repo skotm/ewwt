@@ -1804,10 +1804,16 @@ function BottomDock({
 
   // 設定タブを開いた瞬間は、常にパネルの高さを「中高」にする
   // (トップメニューがスクロールなしで丸ごと見える高さのため)。
+  // 開く前の高さ(ドラッグで調整していた場合も含む)を覚えておき、
+  // 設定タブから元のタブへ戻った時はその高さにそのまま復元する。
+  const preSettingsSnapIndexRef = useRef(snapIndex);
   const lastActiveForSettings = useRef(active);
   useEffect(() => {
     if (lastActiveForSettings.current !== "settings" && active === "settings") {
+      preSettingsSnapIndexRef.current = snapIndex; // 開く直前の高さを覚えておく
       setSnapIndex(2);
+    } else if (lastActiveForSettings.current === "settings" && active !== "settings") {
+      setSnapIndex(preSettingsSnapIndexRef.current); // 覚えておいた元の高さに戻す
     }
     lastActiveForSettings.current = active;
   }, [active]);
