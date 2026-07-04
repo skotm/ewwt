@@ -2179,7 +2179,7 @@ function BottomDock({
                                   fontSize: 11, color: "rgba(255,255,255,0.5)",
                                   flexShrink: 0, whiteSpace: "nowrap",
                                 }}>
-                                  M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}・深さ{q.depth != null ? (q.depth === 0 ? "ごく浅い" : `${q.depth}km`) : "-"}
+                                  M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}{q.depth != null ? (q.depth === 0 ? "・ごく浅い" : `・深さ${q.depth}km`) : "・深さ-"}
                                 </span>
                               )}
                               <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
