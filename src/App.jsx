@@ -2174,6 +2174,14 @@ function BottomDock({
                               }}>
                                 {q.place}
                               </span>
+                              {(q.magnitude != null || q.depth != null) && (
+                                <span className="mono" style={{
+                                  fontSize: 11, color: "rgba(255,255,255,0.5)",
+                                  flexShrink: 0, whiteSpace: "nowrap",
+                                }}>
+                                  M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}・深さ{q.depth != null ? q.depth : "-"}km
+                                </span>
+                              )}
                               <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
                                 {q.time?.slice(5, 16)}
                               </span>
