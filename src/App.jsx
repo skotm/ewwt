@@ -1086,25 +1086,42 @@ function buildQuakeMessage(quake) {
      レコードは「同じ地震の随伴電文」とみなして除外する。
    ───────────────────────────────────────────────────── */
 function dedupeQuakeList(list) {
-  // 発生時刻+震源地に加えて、M・深さも一致条件に含める。
-  // 同じ地震の随伴電文どうしはこれらも完全に一致するはずなので、
-  // 万一まったくの別地震が同時刻・同地名で起きた場合の誤結合リスクを下げる。
-  const groupKey = q => `${q.time}|${q.place}|${q.magnitude}|${q.depth}`;
+  // 発生時刻+震源地が一致すれば「同じ地震の一連の電文」とみなす。
+  // 以前はM・深さも一致条件に含めていたが、顕著な地震などでは
+  // 「震源に関する情報(速報値)」→「震源・震度に関する情報(確定値)」の
+  // 過程でM・深さがわずかに修正されることがあり、その場合に一致しなくなって
+  // 同じ地震が2件並んでしまう不具合があった。
+  // (時刻+震源地が完全一致する別々の地震が同時に起きる可能性は極めて低いため、
+  //  M・深さを条件から外しても誤結合のリスクは実用上問題にならない)
+  const groupKey = q => `${q.time}|${q.place}`;
 
-  const hasSubstanceInGroup = new Map(); // groupKey -> 震度情報を持つレコードがあるか
+  // 各グループについて、最も情報量の多い(震度情報を持つ、かつリスト内でより後に
+  // 出てきた=より新しい)レコードだけを残す。
+  const bestInGroup = new Map(); // groupKey -> 現時点で最良のレコード
   for (const q of list) {
     const key = groupKey(q);
-    const substantial = q.points.length > 0 || (q.maxIntensity !== "0" && q.maxIntensity !== "?");
-    if (substantial) hasSubstanceInGroup.set(key, true);
+    const existing = bestInGroup.get(key);
+    if (!existing) {
+      bestInGroup.set(key, q);
+      continue;
+    }
+    const existingSubstantial = existing.points.length > 0 || (existing.maxIntensity !== "0" && existing.maxIntensity !== "?");
+    const qSubstantial = q.points.length > 0 || (q.maxIntensity !== "0" && q.maxIntensity !== "?");
+    // 震度情報を持つ方を優先。情報量が同じレベルなら、より新しい(リスト内で後の)方を採用する
+    // ことで、M・深さの修正(確定値への更新)を反映できるようにする。
+    if (qSubstantial || qSubstantial === existingSubstantial) {
+      bestInGroup.set(key, q);
+    }
   }
 
-  return list.filter(q => {
+  // 元のリストの並び順を保ったまま、各グループを1件にまとめて書き出す
+  const order = [];
+  const seen = new Set();
+  for (const q of list) {
     const key = groupKey(q);
-    const groupHasSubstance = hasSubstanceInGroup.get(key);
-    const thisIsEmpty = q.points.length === 0 && q.maxIntensity === "0";
-    // 同じグループ内に震度情報を持つレコードが他にあり、かつ自分は空の随伴レコード → 除外
-    return !(groupHasSubstance && thisIsEmpty);
-  });
+    if (!seen.has(key)) { seen.add(key); order.push(key); }
+  }
+  return order.map(key => bestInGroup.get(key));
 }
 
 async function fetchRecentQuakes() {
@@ -2764,16 +2781,15 @@ export default function App() {
           const result = dedupeQuakeList(merged);
 
           // 選択中だった地震が、上記の処理で一覧から消えていないか確認する。
-          // 消えていて、かつ「同じ発生時刻+震源地+M+深さ」の後継レコードが
+          // 消えていて、かつ「同じ発生時刻+震源地」の後継レコードが
           // 残っている場合は、そちらに選択状態を引き継ぐ(カード表示が
           // 突然一覧表示に戻ってしまう・戻るボタンだけ残る、といった
           // ズレを防ぐため)。完全に消えた(後継も無い)場合は選択解除する。
+          // (M・深さは後から修正されることがあるため、一致条件には含めない)
           if (prevSelected && !result.some(q => q.id === prevSelected.id)) {
             const successor = result.find(q =>
               q.time === prevSelected.time &&
-              q.place === prevSelected.place &&
-              q.magnitude === prevSelected.magnitude &&
-              q.depth === prevSelected.depth
+              q.place === prevSelected.place
             );
             setSelectedQuakeId(successor ? successor.id : null);
           }
