@@ -1802,6 +1802,16 @@ function BottomDock({
     lastSelectedQuakeId.current = selectedQuakeId;
   }, [selectedQuakeId]);
 
+  // 設定タブを開いた瞬間は、常にパネルの高さを「中高」にする
+  // (トップメニューがスクロールなしで丸ごと見える高さのため)。
+  const lastActiveForSettings = useRef(active);
+  useEffect(() => {
+    if (lastActiveForSettings.current !== "settings" && active === "settings") {
+      setSnapIndex(2);
+    }
+    lastActiveForSettings.current = active;
+  }, [active]);
+
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
     const shouldOpen = newIndex > 0;
@@ -2005,6 +2015,22 @@ function BottomDock({
         </div>
       )}
 
+      {/* 設定タブのサブ画面(カテゴリ/項目の中身)を見ている間だけ、同じ戻るボタンを浮かべる。 */}
+      {active === "settings" && settingsPath.length > 0 && (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <BackToListButton
+            onClick={() => setSettingsPath(p => p.slice(0, -1))}
+            label="前の画面に戻る"
+          />
+        </div>
+      )}
+
       <Glass
       filterSize={settled ? "normal" : "none"}
       blur={settled ? 14 : 8}
@@ -2152,7 +2178,6 @@ function BottomDock({
                 <SettingsBody
                   path={settingsPath}
                   onNavigate={setSettingsPath}
-                  onBack={() => setSettingsPath(p => p.slice(0, -1))}
                   colorSchemeId={colorSchemeId}
                   onChangeColorScheme={onChangeQuakeColorScheme}
                 />
@@ -2411,37 +2436,13 @@ const SETTINGS_ITEMS = {
   quake: [{ id: "colorScheme", label: "震度配色" }],
 };
 
-const SETTINGS_BACK_SLOT = 26; // 戻るボタンの幅。常にこの分だけ確保しておき、
-                                // 戻るボタンの有無でタイトルの位置がズレないようにする。
-
 // 設定画面共通のヘッダー。「地図レイヤー」のような下線区切りは使わず、
 // 太字の大きめタイトルにすることで独自の見た目にしている。
-// 戻るボタンは常に同じ幅のスロットに置き、無い場合も空スロットを確保することで
-// タイトルの開始位置がトップメニュー/サブ画面のどちらでも揃うようにしている。
-function SettingsHeader({ title, onBack }) {
+// 戻る操作は地震タブと同じ丸いフローティングボタン(BackToListButton)に
+// 統一したので、ヘッダー自体には戻るボタンを持たせていない。
+function SettingsHeader({ title }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", padding: "12px 14px 6px" }}>
-      <div style={{
-        width: SETTINGS_BACK_SLOT, height: SETTINGS_BACK_SLOT, flexShrink: 0,
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        {onBack && (
-          <button
-            onClick={onBack}
-            aria-label="戻る"
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: "100%", height: "100%",
-              color: "rgba(255,255,255,0.85)",
-            }}
-          >
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-                 stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 6 9 12 15 18"/>
-            </svg>
-          </button>
-        )}
-      </div>
+    <div style={{ padding: "12px 14px 6px" }}>
       <span style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>
         {title}
       </span>
@@ -2533,7 +2534,7 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   );
 }
 
-function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorScheme }) {
+function SettingsBody({ path, onNavigate, colorSchemeId, onChangeColorScheme }) {
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
     return (
@@ -2558,7 +2559,7 @@ function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorSc
   if (category === "quake" && leaf === "colorScheme") {
     return (
       <>
-        <SettingsHeader title="震度配色" onBack={onBack}/>
+        <SettingsHeader title="震度配色"/>
         <QuakeColorSchemeSettings colorSchemeId={colorSchemeId} onChangeColorScheme={onChangeColorScheme}/>
       </>
     );
@@ -2569,7 +2570,7 @@ function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorSc
   if (!leaf) {
     return (
       <>
-        <SettingsHeader title={categoryLabel} onBack={onBack}/>
+        <SettingsHeader title={categoryLabel}/>
         {items.length > 0 ? (
           <SettingsCard>
             {items.map((item, i) => (
@@ -2589,7 +2590,7 @@ function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorSc
   }
 
   // 想定外のパス(念のためのフォールバック)
-  return <SettingsHeader title={categoryLabel} onBack={onBack}/>;
+  return <SettingsHeader title={categoryLabel}/>;
 }
 
 /* ─────────────────────────────────────────────────────
