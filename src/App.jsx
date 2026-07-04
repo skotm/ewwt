@@ -449,19 +449,27 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
           if (cancelled) return;
 
           // 震源(バツ印)アイコンを生成してMapLibreへ登録しておく。
-          // canvasで太めの赤いバツ印を描き、addImageでシンボル画像として使う
-          // (影は付けない — 見てもほぼ分からないレベルだったため今回廃止)。
-          const crossSize = 28;
+          // 白フチ付きの赤いバツ印にするため、まず太めの白でストロークしてから
+          // その上に少し細い赤をストロークすることで、白い縁取りを再現する。
+          const crossSize = 36;
           const crossCanvas = document.createElement("canvas");
           crossCanvas.width = crossSize; crossCanvas.height = crossSize;
           const cc = crossCanvas.getContext("2d");
-          cc.strokeStyle = "#FF453A";
-          cc.lineWidth = 4;
+          const crossPad = 10;
+          const drawCrossPath = () => {
+            cc.beginPath();
+            cc.moveTo(crossPad, crossPad); cc.lineTo(crossSize - crossPad, crossSize - crossPad);
+            cc.moveTo(crossSize - crossPad, crossPad); cc.lineTo(crossPad, crossSize - crossPad);
+          };
           cc.lineCap = "round";
-          const crossPad = 6;
-          cc.beginPath();
-          cc.moveTo(crossPad, crossPad); cc.lineTo(crossSize - crossPad, crossSize - crossPad);
-          cc.moveTo(crossSize - crossPad, crossPad); cc.lineTo(crossPad, crossSize - crossPad);
+          cc.lineJoin = "round";
+          cc.strokeStyle = "#ffffff";
+          cc.lineWidth = 10;
+          drawCrossPath();
+          cc.stroke();
+          cc.strokeStyle = "#FF453A";
+          cc.lineWidth = 6;
+          drawCrossPath();
           cc.stroke();
           map.addImage("hypocenter-cross", cc.getImageData(0, 0, crossSize, crossSize));
 
@@ -482,11 +490,11 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             type: "symbol",
             source: "station-points",
             layout: {
-              // ズーム8未満は円が小さく数字が潰れるため、数字なしアイコンに切り替える。
+              // ズーム6未満は円が小さく数字が潰れるため、数字なしアイコンに切り替える。
               "icon-image": [
                 "step", ["zoom"],
                 ["concat", "station-icon-", ["get", "intensityKey"], "-dot"],
-                8, ["concat", "station-icon-", ["get", "intensityKey"], "-num"],
+                6, ["concat", "station-icon-", ["get", "intensityKey"], "-num"],
               ],
               "icon-size": [
                 "interpolate", ["linear"], ["zoom"],
@@ -515,7 +523,8 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             source: "hypocenter-point",
             layout: {
               "icon-image": "hypocenter-cross",
-              "icon-size": 1,
+              // crossSize(36px)を焼いたが、見た目の大きさは元の28px相当のまま保つための比率
+              "icon-size": 28 / 36,
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
             },
