@@ -413,12 +413,6 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
   const mapRef = useRef(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
   const [errorMsg, setErrorMsg] = useState("");
-  // 震度番号を描く2D Canvasオーバーレイ関連のref。
-  // stationPointsは頻繁に変わらないが、mapのrender毎に読む値なのでrefで持ち回す。
-  const overlayCanvasRef = useRef(null);
-  const overlayResizeObserverRef = useRef(null);
-  const stationLabelDataRef = useRef([]);
-  const drawStationLabelsRef = useRef(null);
   // 現在選択中の震度配色スキーム。観測点マーカー・震度分布の塗り分けの両方で使う。
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
@@ -455,119 +449,61 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
           if (cancelled) return;
 
           // 震源(バツ印)アイコンを生成してMapLibreへ登録しておく。
-          // canvasで太めの赤いバツ印を描き、addImageでシンボル画像として使う。
-          const size = 28;
-          const canvas = document.createElement("canvas");
-          canvas.width = size; canvas.height = size;
-          const c = canvas.getContext("2d");
-          c.strokeStyle = "#FF453A";
-          c.lineWidth = 4;
-          c.lineCap = "round";
-          const pad = 6;
-          c.beginPath();
-          c.moveTo(pad, pad); c.lineTo(size - pad, size - pad);
-          c.moveTo(size - pad, pad); c.lineTo(pad, size - pad);
-          c.stroke();
-          map.addImage("hypocenter-cross", c.getImageData(0, 0, size, size));
+          // canvasで太めの赤いバツ印を描き、addImageでシンボル画像として使う
+          // (影は付けない — 見てもほぼ分からないレベルだったため今回廃止)。
+          const crossSize = 28;
+          const crossCanvas = document.createElement("canvas");
+          crossCanvas.width = crossSize; crossCanvas.height = crossSize;
+          const cc = crossCanvas.getContext("2d");
+          cc.strokeStyle = "#FF453A";
+          cc.lineWidth = 4;
+          cc.lineCap = "round";
+          const crossPad = 6;
+          cc.beginPath();
+          cc.moveTo(crossPad, crossPad); cc.lineTo(crossSize - crossPad, crossSize - crossPad);
+          cc.moveTo(crossSize - crossPad, crossPad); cc.lineTo(crossPad, crossSize - crossPad);
+          cc.stroke();
+          map.addImage("hypocenter-cross", cc.getImageData(0, 0, crossSize, crossSize));
 
-          // 観測点(震度)マーカーは、MapLibre標準のcircleレイヤーではなく
-          // 過去のLeaflet版(L.StationCanvasLayer)と全く同じ見た目になるよう、
-          // 円・文字とも下の2D Canvasオーバーレイ側でまとめて自前描画する
-          // (ドロップシャドウ+白いフチのリッチな見た目は、circleレイヤーの
-          //  ペイントプロパティだけでは再現できないため)。
+          // 観測点(震度)マーカー用のアイコン(丸+白フチ+数字)を、
+          // 現在の配色スキームに合わせて生成・登録しておく。
+          registerStationIcons(map, colorScheme);
 
-          // 観測点の円の上に震度番号を描く2D Canvasオーバーレイ。
-          // MapLibreのスタイルにglyphs(フォント)を用意していないためsymbolレイヤーの
-          // text-fieldが使えず、代わりにmapのcontainerへ重ねた素のcanvasへ自前で描画する。
-          // 過去のLeaflet版(L.StationCanvasLayer)と同じ考え方: render毎に観測点の
-          // 画面座標を計算し直し、円の大きさに合わせて文字サイズも一緒にスケールさせる。
-          const overlay = document.createElement("canvas");
-          overlay.style.position = "absolute";
-          overlay.style.top = "0";
-          overlay.style.left = "0";
-          overlay.style.width = "100%";
-          overlay.style.height = "100%";
-          overlay.style.pointerEvents = "none";
-          containerRef.current.appendChild(overlay);
-          overlayCanvasRef.current = overlay;
-          const octx = overlay.getContext("2d");
+          // 観測点マーカー本体。circleではなくsymbolレイヤーにすることで、
+          // registerStationIconsで焼いたbitmap(白フチ+数字入り)をそのまま使う。
+          // ズームに応じた大きさは、過去にCanvas側で使っていたradiusForZoomの
+          // 折れ線(4→3px, 8→9px, 11→16px, 14→26px)をicon-sizeの比率に変換して再現する。
+          map.addSource("station-points", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "station-points-symbol",
+            type: "symbol",
+            source: "station-points",
+            layout: {
+              // ズーム8未満は円が小さく数字が潰れるため、数字なしアイコンに切り替える。
+              "icon-image": [
+                "step", ["zoom"],
+                ["concat", "station-icon-", ["get", "intensityKey"], "-dot"],
+                8, ["concat", "station-icon-", ["get", "intensityKey"], "-num"],
+              ],
+              "icon-size": [
+                "interpolate", ["linear"], ["zoom"],
+                4, 3 / STATION_ICON_BASE_RADIUS,
+                8, 9 / STATION_ICON_BASE_RADIUS,
+                11, 16 / STATION_ICON_BASE_RADIUS,
+                14, 26 / STATION_ICON_BASE_RADIUS,
+              ],
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
+              // 震度が大きいほど後(=前面)に描画されるよう、sort-keyに震度の並び順を使う。
+              "symbol-sort-key": ["get", "sortOrder"],
+            },
+          });
 
-          function resizeOverlay() {
-            const dpr = window.devicePixelRatio || 1;
-            const w = map.getContainer().clientWidth;
-            const h = map.getContainer().clientHeight;
-            overlay.width = w * dpr;
-            overlay.height = h * dpr;
-            octx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            drawStationLabels();
-          }
-
-          // 観測点マーカー(circle-radius)のズーム段階と完全に一致させるための半径計算。
-          // ["interpolate",["linear"],["zoom"], 4,3, 8,9, 11,16, 14,26] と同じ折れ線を再現する。
-          const RADIUS_STOPS = [[4, 3], [8, 9], [11, 16], [14, 26]];
-          function radiusForZoom(zoom) {
-            if (zoom <= RADIUS_STOPS[0][0]) return RADIUS_STOPS[0][1];
-            for (let i = 0; i < RADIUS_STOPS.length - 1; i++) {
-              const [z0, r0] = RADIUS_STOPS[i], [z1, r1] = RADIUS_STOPS[i + 1];
-              if (zoom >= z0 && zoom <= z1) return r0 + (r1 - r0) * ((zoom - z0) / (z1 - z0));
-            }
-            return RADIUS_STOPS[RADIUS_STOPS.length - 1][1];
-          }
-
-          function drawStationLabels() {
-            if (!octx) return;
-            const w = overlay.clientWidth, h = overlay.clientHeight;
-            octx.clearRect(0, 0, w, h);
-
-            const zoom = map.getZoom();
-            const radius = radiusForZoom(zoom);
-            const showText = zoom >= 8; // 円が小さいうちは文字を出さない(潰れて読めないため)
-            const points = stationLabelDataRef.current;
-
-            for (let i = 0; i < points.length; i++) {
-              const p = points[i];
-              const pt = map.project([p.longitude, p.latitude]);
-              if (pt.x < -20 || pt.y < -20 || pt.x > w + 20 || pt.y > h + 20) continue;
-
-              // 円本体 — 過去のプログラム(L.StationCanvasLayer)と同じく、
-              // ドロップシャドウ付きで塗ってから白いフチをストロークするリッチな見た目にする
-              octx.beginPath();
-              octx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
-              octx.fillStyle = p.color;
-              octx.shadowColor = "rgba(0,0,0,0.6)";
-              octx.shadowBlur = 4;
-              octx.shadowOffsetY = 2;
-              octx.fill();
-              octx.shadowColor = "transparent";
-              octx.lineWidth = 1.5;
-              octx.strokeStyle = "#ffffff";
-              octx.stroke();
-
-              if (showText) {
-                // 文字数(「6」1文字 / 「5-」2文字)に応じてフォントサイズを調整し、円からはみ出さないようにする
-                const fontSize = p.label.length > 1 ? radius * 1.05 : radius * 1.3;
-                octx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
-                octx.textAlign = "center";
-                octx.textBaseline = "middle";
-                octx.fillStyle = "#ffffff";
-                octx.shadowColor = "rgba(0,0,0,0.9)";
-                octx.shadowBlur = 2;
-                octx.shadowOffsetY = 1;
-                octx.fillText(p.label, pt.x, pt.y + 1);
-                octx.shadowColor = "transparent";
-              }
-            }
-          }
-          drawStationLabelsRef.current = drawStationLabels;
-
-          resizeOverlay();
-          map.on("render", drawStationLabels);
-          map.on("resize", resizeOverlay);
-          const ro = new ResizeObserver(resizeOverlay);
-          ro.observe(containerRef.current);
-          overlayResizeObserverRef.current = ro;
-
-          // 震源マーカー用のソース・レイヤー(観測点の上に重なるよう最後に追加)
+          // 震源マーカー用のソース・レイヤー。観測点レイヤーより後にaddLayerすることで、
+          // MapLibreのレイヤー順だけで「震源は常に観測点より上」を保証する。
           map.addSource("hypocenter-point", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -606,14 +542,6 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
     return () => {
       cancelled = true;
-      if (overlayResizeObserverRef.current) {
-        overlayResizeObserverRef.current.disconnect();
-        overlayResizeObserverRef.current = null;
-      }
-      if (overlayCanvasRef.current) {
-        overlayCanvasRef.current.remove();
-        overlayCanvasRef.current = null;
-      }
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
@@ -623,27 +551,36 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
   // 選択中の地震(stationPoints)が変わるたびに、観測点マーカーのGeoJSONを更新する。
   // 緯度経度が引けなかった観測点(マスタに見つからなかったもの)は地図には出さない。
-  // 震度が大きい観測点ほど後(=前面)に描画されるよう、震度の小さい順に並べておく
-  // (Canvasは配列の順番どおりに下から重ねて描画するため)。
+  // sortOrder(震度の小さい順の連番)をsymbol-sort-keyに渡すことで、
+  // 震度が大きい観測点ほど前面に描画されるようにする。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    const INTENSITY_ORDER = ["0","1","2","3","4","5-","5+","6-","6+","7"];
-    const sorted = (stationPoints || [])
-      .filter(p => p.latitude != null && p.longitude != null)
-      .slice()
-      .sort((a, b) => INTENSITY_ORDER.indexOf(a.intensityKey) - INTENSITY_ORDER.indexOf(b.intensityKey));
+    const source = map.getSource("station-points");
+    if (!source) return;
 
-    // Canvasオーバーレイ側(円+震度番号)に最新データを渡す
-    stationLabelDataRef.current = sorted.map(p => ({
-      latitude: p.latitude,
-      longitude: p.longitude,
-      label: INTENSITY_LABEL[p.intensityKey] || INTENSITY_LABEL["0"],
-      color: (colorScheme.colors[p.intensityKey] || colorScheme.colors["0"]).bg,
-    }));
-    if (drawStationLabelsRef.current) drawStationLabelsRef.current();
-  }, [stationPoints, status, colorScheme]);
+    const features = (stationPoints || [])
+      .filter(p => p.latitude != null && p.longitude != null)
+      .map(p => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+        properties: {
+          intensityKey: STATION_ICON_KEYS.includes(p.intensityKey) ? p.intensityKey : "0",
+          sortOrder: STATION_ICON_KEYS.indexOf(p.intensityKey),
+        },
+      }));
+    source.setData({ type: "FeatureCollection", features });
+  }, [stationPoints, status]);
+
+  // 配色スキームが切り替わったら、観測点アイコン(丸+白フチ+数字)を焼き直す。
+  // symbolレイヤー側は同じicon-image名を参照し続けるので、updateImageするだけで
+  // 表示中のマーカーにも即座に反映される。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    registerStationIcons(map, colorScheme);
+  }, [colorScheme, status]);
 
   // 震度分布(細分区域ごとの塗り分け)を更新する。
   // 前回塗った区域は毎回リセットしてから、今回の集計結果を塗り直す
@@ -837,6 +774,57 @@ const INTENSITY_LABEL = {
   "5-": "5弱", "5+": "5強", "6-": "6弱", "6+": "6強", "7": "7",
   "?": "?", // 震度が取得できなかった場合(「0」と区別する)
 };
+
+// 観測点マーカーをMapLibreのsymbolレイヤーで描くための下準備。
+// 震度キーは有限個(0〜7,5-,5+,6-,6+,?)しかないので、キーごとに
+// 「丸+白フチ+震度番号」を1枚のbitmapとして事前にcanvasへ焼いておき、
+// addImageでMapLibreに登録する。text-fieldを使わないため、
+// スタイルにglyphs(フォント配信)を用意しなくても数字を表示できる。
+const STATION_ICON_KEYS = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7", "?"];
+const STATION_ICON_BASE_RADIUS = 32; // bitmap側の半径(px)。icon-sizeで実際の大きさへスケールする。
+
+// withText=falseの場合は数字を描かない(低ズームで円が小さいときに文字が潰れるのを避けるため)。
+function buildStationIconCanvas(bg, fg, label, withText) {
+  const size = STATION_ICON_BASE_RADIUS * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const cx = size / 2, cy = size / 2, r = STATION_ICON_BASE_RADIUS - 2;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = bg;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = "#ffffff";
+  ctx.stroke();
+
+  if (withText) {
+    const fontSize = label.length > 1 ? r * 1.05 : r * 1.3;
+    ctx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = fg;
+    ctx.fillText(label, cx, cy + 1);
+  }
+  return ctx.getImageData(0, 0, size, size);
+}
+
+// 現在の配色スキームに合わせて、観測点アイコン(数字あり/なしの2種類 x 震度キー分)を
+// まとめて生成し、MapLibreへaddImage/updateImageする。配色スキームが切り替わるたびに呼ぶ。
+function registerStationIcons(map, scheme) {
+  STATION_ICON_KEYS.forEach(key => {
+    const style = scheme.colors[key] || scheme.colors["0"];
+    const label = INTENSITY_LABEL[key] || INTENSITY_LABEL["0"];
+    const dotImg = buildStationIconCanvas(style.bg, style.fg, label, false);
+    const numImg = buildStationIconCanvas(style.bg, style.fg, label, true);
+    const dotId = `station-icon-${key}-dot`;
+    const numId = `station-icon-${key}-num`;
+    if (map.hasImage(dotId)) map.updateImage(dotId, dotImg); else map.addImage(dotId, dotImg);
+    if (map.hasImage(numId)) map.updateImage(numId, numImg); else map.addImage(numId, numImg);
+  });
+}
 
 const QUAKE_COLOR_SCHEMES = {
   // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。
