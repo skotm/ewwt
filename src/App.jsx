@@ -1375,9 +1375,9 @@ function QuakeDetailCard({ quake }) {
           </span>
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", lineHeight: 1.1 }}>
             深さ<span className="mono" style={{ fontSize: 21, fontWeight: 800, color: "#fff", marginLeft: 3, lineHeight: 1.1 }}>
-              {quake.depth != null ? quake.depth : "-"}
+              {quake.depth != null ? (quake.depth === 0 ? "ごく浅い" : quake.depth) : "-"}
             </span>
-            {quake.depth != null && (
+            {quake.depth != null && quake.depth !== 0 && (
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginLeft: 2, lineHeight: 1.1 }}>km</span>
             )}
           </span>
@@ -2179,7 +2179,7 @@ function BottomDock({
                                   fontSize: 11, color: "rgba(255,255,255,0.5)",
                                   flexShrink: 0, whiteSpace: "nowrap",
                                 }}>
-                                  M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}・深さ{q.depth != null ? q.depth : "-"}km
+                                  M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}・深さ{q.depth != null ? (q.depth === 0 ? "ごく浅い" : `${q.depth}km`) : "-"}
                                 </span>
                               )}
                               <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
