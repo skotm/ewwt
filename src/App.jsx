@@ -1963,14 +1963,23 @@ function BottomDock({
   }
 
   // タップ(pointermove なし)は click でも拾えるようフォールバック。
-  // 同じタブを既定時間内に2回タップした場合はダブルタップとみなし、
-  // ナビ切替の代わりに地図レイヤーパネルを開閉する。
+  // パネルが閉じている状態でアクティブなタブを再タップした場合は、
+  // 待たずに1回のタップで即座に開く。
+  // パネルが開いている状態で同じタブを既定時間内に2回タップした場合は
+  // ダブルタップとみなし、閉じる(誤って閉じないよう、閉じる側だけ2回タップを要求する)。
   const lastTapTime = useRef(0);
   const lastTapId   = useRef(null);
   const DOUBLE_TAP_MS = 320;
 
   function handleNavClick(id) {
     if (navMoved.current) return;   // ドラッグ完了後の二重発火を防ぐ
+
+    if (id === active && !layerOpen) {
+      lastTapTime.current = 0;      // 直後の別タップを誤って連続タップ扱いしないようリセット
+      lastTapId.current   = null;
+      onLayerOpenChange(true);
+      return;                       // 1回のタップで開く
+    }
 
     const now = Date.now();
     const isDoubleTap =
