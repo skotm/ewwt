@@ -2372,31 +2372,32 @@ function QuakeIntensityLegend({ maxIntensity }) {
   return (
     <Glass
       radius={12}
-      style={{
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{
         display: "flex",
         flexDirection: "row",
         alignItems: "center",
         gap: 2,
         padding: "8px 9px",
-        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
-      }}
-    >
-      {levels.map(key => {
-        const style = getIntensityStyleFromScheme(scheme, key);
-        const isMax = key === maxIntensity;
-        return (
-          // 設定の震度配色ピッカーのミニプレビューと同じ、隙間の詰まった横一列のバー
-          <div
-            key={key}
-            style={{
-              width: 7, height: 16, borderRadius: 2,
-              background: style.bg,
-              boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
-              flexShrink: 0,
-            }}
-          />
-        );
-      })}
+      }}>
+        {levels.map(key => {
+          const style = getIntensityStyleFromScheme(scheme, key);
+          const isMax = key === maxIntensity;
+          return (
+            // 設定の震度配色ピッカーのミニプレビューと同じ、隙間の詰まった横一列のバー
+            <div
+              key={key}
+              style={{
+                width: 7, height: 16, borderRadius: 2,
+                background: style.bg,
+                boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
+                flexShrink: 0,
+              }}
+            />
+          );
+        })}
+      </div>
     </Glass>
   );
 }
