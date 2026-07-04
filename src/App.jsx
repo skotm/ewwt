@@ -423,7 +423,7 @@ function buildMapStyle({ world, prefectures, areas }) {
    ───────────────────────────────────────────────────── */
 function MapCanvas({
   onReady, stationPoints, hypocenter,
-  quakeTimeStr, maxIntensityKey, estIntensityEnabled,
+  quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -611,6 +611,7 @@ function MapCanvas({
   // 震度分布(細分区域ごとの塗り分け)を更新する。
   // 前回塗った区域は毎回リセットしてから、今回の集計結果を塗り直す
   // (そうしないと、観測点が無くなった区域の色が古いまま残ってしまう)。
+  // 設定でOFFにされている場合は、リセットだけ行って塗り直しはしない(塗りつぶし無し状態にする)。
   const paintedAreaCodesRef = useRef([]);
   useEffect(() => {
     const map = mapRef.current;
@@ -619,6 +620,9 @@ function MapCanvas({
     for (const code of paintedAreaCodesRef.current) {
       map.setFeatureState({ source: "areas", id: code }, { color: null, hasIntensity: 0 });
     }
+    paintedAreaCodesRef.current = [];
+
+    if (!areaFillEnabled) return;
 
     const maxByArea = aggregateByArea(stationPoints || []);
     const codes = [];
@@ -628,7 +632,7 @@ function MapCanvas({
       codes.push(code);
     });
     paintedAreaCodesRef.current = codes;
-  }, [stationPoints, status, colorScheme]);
+  }, [stationPoints, status, colorScheme, areaFillEnabled]);
 
   // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源+周辺の観測点がちょうど収まる範囲へズームする。
@@ -730,7 +734,7 @@ function MapCanvas({
             type: "raster",
             source: sourceId,
             paint: { "raster-opacity": 0.75 },
-          });
+          }, map.getLayer("station-points-symbol") ? "station-points-symbol" : undefined);
           newIds.push({ sourceId, layerId });
         });
 
@@ -1039,6 +1043,32 @@ function saveEstIntensityEnabled(enabled) {
     localStorage.setItem(EST_INTENSITY_ENABLED_STORAGE_KEY, String(enabled));
   } catch (err) {
     console.warn("推計震度分布の表示設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   細分区域(気象庁の細分区域単位)を震度の色で塗りつぶすかどうかの設定。
+   推計震度分布と同様、localStorageに保存し次回起動時も覚えておく。
+   デフォルトはON(従来どおりの見た目を維持する)。
+   ───────────────────────────────────────────────────── */
+const AREA_FILL_ENABLED_STORAGE_KEY = "showAreaIntensityFill";
+
+function loadStoredAreaFillEnabled() {
+  try {
+    const saved = localStorage.getItem(AREA_FILL_ENABLED_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+  } catch (err) {
+    console.warn("細分区域塗りつぶしの表示設定を読み込めませんでした:", err);
+  }
+  return true;
+}
+
+function saveAreaFillEnabled(enabled) {
+  try {
+    localStorage.setItem(AREA_FILL_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("細分区域塗りつぶしの表示設定を保存できませんでした:", err);
   }
 }
 
@@ -1896,6 +1926,7 @@ function BottomDock({
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
+  areaFillEnabled, onChangeAreaFillEnabled,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const scrollRef = useRef(null);
@@ -2402,6 +2433,8 @@ function BottomDock({
                   onChangeColorScheme={onChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
+                  areaFillEnabled={areaFillEnabled}
+                  onChangeAreaFillEnabled={onChangeAreaFillEnabled}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -2783,6 +2816,7 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
 function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
+  areaFillEnabled, onChangeAreaFillEnabled,
 }) {
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
@@ -2814,15 +2848,19 @@ function SettingsBody({
     );
   }
 
-  // 地震カテゴリのトップ(震度配色への入口 + 推計震度分布のON/OFFトグル)。
-  // 他のカテゴリと違い項目が2種類(掘り下げ式+その場でのトグル)混在するため、
-  // 汎用のitems一覧ループとは別に専用で組み立てる。
-  if (category === "quake" && !leaf) {
+  // 地図塗りつぶし(地震カテゴリの項目)の中身。
+  // 「細分区域を震度で塗りつぶす」「推計震度分布を表示」の2つのON/OFFをまとめる。
+  if (category === "quake" && leaf === "mapFill") {
     return (
       <>
-        <SettingsHeader title="地震"/>
+        <SettingsHeader title="地図塗りつぶし"/>
         <SettingsCard>
-          <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
+          <SettingsToggleRow
+            label="細分区域を震度で塗りつぶす"
+            description="観測点の震度をもとに、気象庁の細分区域単位で地図を塗り分けます。"
+            checked={areaFillEnabled}
+            onChange={() => onChangeAreaFillEnabled(!areaFillEnabled)}
+          />
           <SettingsCardDivider/>
           <SettingsToggleRow
             label="推計震度分布を表示"
@@ -2830,6 +2868,21 @@ function SettingsBody({
             checked={estIntensityEnabled}
             onChange={() => onChangeEstIntensityEnabled(!estIntensityEnabled)}
           />
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // 地震カテゴリのトップ(震度配色・地図塗りつぶしへの入口)。
+  // 他のカテゴリと違い項目を専用に組み立てているため、汎用のitems一覧ループとは別扱いにする。
+  if (category === "quake" && !leaf) {
+    return (
+      <>
+        <SettingsHeader title="地震"/>
+        <SettingsCard>
+          <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="地図塗りつぶし" onClick={() => onNavigate([...path, "mapFill"])}/>
         </SettingsCard>
       </>
     );
@@ -2888,6 +2941,14 @@ export default function App() {
   function handleChangeEstIntensityEnabled(next) {
     setEstIntensityEnabledState(next);
     saveEstIntensityEnabled(next);
+  }
+
+  // 細分区域を震度の色で塗りつぶすかどうか。推計震度分布と同じく設定タブで操作し、localStorageに永続化する。
+  const [areaFillEnabled, setAreaFillEnabledState] = useState(loadStoredAreaFillEnabled);
+
+  function handleChangeAreaFillEnabled(next) {
+    setAreaFillEnabledState(next);
+    saveAreaFillEnabled(next);
   }
 
   // 地震情報(P2P地震情報API)
@@ -3036,6 +3097,7 @@ export default function App() {
           quakeTimeStr={selectedQuake?.time}
           maxIntensityKey={selectedQuake?.maxIntensity}
           estIntensityEnabled={estIntensityEnabled}
+          areaFillEnabled={areaFillEnabled}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
@@ -3090,6 +3152,8 @@ export default function App() {
             onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
             estIntensityEnabled={estIntensityEnabled}
             onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
+            areaFillEnabled={areaFillEnabled}
+            onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
           />
         </div>
 
