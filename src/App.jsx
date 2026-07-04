@@ -1656,13 +1656,15 @@ function useSnapDrag({ heights, index, onSnap }) {
     //
     // ただし、指を離した位置がすでに特定のスナップのすぐ近くにある場合は、
     // そこで止めようとした意図とみなし、フリック判定より最近傍を優先する。
-    // (スナップ間隔が狭い場合、移動中に生じた勢いだけでフリック扱いされ、
-    //  ちょうど止めたい位置で離しても隣のスナップまで飛んでしまうのを防ぐ)
-    let minGap = Infinity;
-    for (let i = 1; i < heights.length; i++) {
-      minGap = Math.min(minGap, heights[i] - heights[i - 1]);
-    }
-    const SNAP_STICK_PX = Math.max(8, Math.min(24, minGap / 2));
+    // 許容範囲は「最も近いスナップと、その両隣との間隔」から決める
+    // (全スナップ中の最小間隔を使うと、無関係な離れた場所の間隔が極端に
+    //  狭い場合に引きずられて許容範囲が潰れてしまうため)。
+    const lowerNeighbor = heights[nearest - 1];
+    const upperNeighbor = heights[nearest + 1];
+    const distToLower = lowerNeighbor !== undefined ? heights[nearest] - lowerNeighbor : Infinity;
+    const distToUpper = upperNeighbor !== undefined ? upperNeighbor - heights[nearest] : Infinity;
+    const localGap = Math.min(distToLower, distToUpper);
+    const SNAP_STICK_PX = Math.max(8, Math.min(30, localGap / 2));
 
     const FLICK_THRESHOLD = 0.45; // px/ms。これを超えたら明確なフリックとみなす
     let target = nearest;
