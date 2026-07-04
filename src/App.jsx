@@ -1764,7 +1764,7 @@ function BottomDock({
   // → タブごとの中身の長さには一切依存させず、常に同じ固定値/画面基準の
   //    値にすることで、どのタブでも「高」「全画面」が同じ高さになるようにする。
   //    中身がその高さより長い場合は、パネル内部のスクロール(scrollRef)に任せる。
-  const highHeight = 350; // 「高」の固定高さ(px)。地図レイヤー一覧(6項目)相当の目安
+  const highHeight = 390; // 「高」の固定高さ(px)。地図レイヤー一覧(6項目)相当の目安(旧: 350)
   const fullscreenContentHeight = viewportH - TOP_GAP - BOTTOM_OFFSET - NAV_ROW_HEIGHT;
 
   // 「中」「中高」はタブによらず常に同じ高さになるよう固定pxで持つ
