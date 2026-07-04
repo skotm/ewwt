@@ -471,8 +471,8 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
           // 観測点マーカー本体。circleではなくsymbolレイヤーにすることで、
           // registerStationIconsで焼いたbitmap(白フチ+数字入り)をそのまま使う。
-          // ズームに応じた大きさは、過去にCanvas側で使っていたradiusForZoomの
-          // 折れ線(4→3px, 8→9px, 11→16px, 14→26px)をicon-sizeの比率に変換して再現する。
+          // ズームに応じた大きさは、旧Leaflet版(L.StationCanvasLayer)と同じ
+          // 3段階(zoom<7:4px, 7<=zoom<9:8px, zoom>=9:12px)のstep関数で揃える。
           map.addSource("station-points", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -489,11 +489,10 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
                 8, ["concat", "station-icon-", ["get", "intensityKey"], "-num"],
               ],
               "icon-size": [
-                "interpolate", ["linear"], ["zoom"],
-                4, 3 / STATION_ICON_BASE_RADIUS,
-                8, 9 / STATION_ICON_BASE_RADIUS,
-                11, 16 / STATION_ICON_BASE_RADIUS,
-                14, 26 / STATION_ICON_BASE_RADIUS,
+                "step", ["zoom"],
+                4 / STATION_ICON_BASE_RADIUS,
+                7, 8 / STATION_ICON_BASE_RADIUS,
+                9, 12 / STATION_ICON_BASE_RADIUS,
               ],
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
@@ -801,8 +800,17 @@ function buildStationIconCanvas(bg, fg, label, withText) {
   ctx.stroke();
 
   if (withText) {
-    const fontSize = label.length > 1 ? r * 1.05 : r * 1.3;
-    ctx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
+    // 文字数で単純に切り替えると「5-」「6+」のような2文字が「1」等の1文字より
+    // 見た目に小さくなってしまうため、実際の文字幅を測って、丸からはみ出さない
+    // 範囲でできるだけ大きく表示されるようフォントサイズを自動調整する。
+    const maxTextWidth = r * 1.7;
+    let fontSize = r * 1.3;
+    ctx.font = `800 ${fontSize}px sans-serif`;
+    const width = ctx.measureText(label).width;
+    if (width > maxTextWidth) {
+      fontSize *= maxTextWidth / width;
+      ctx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
+    }
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = fg;
