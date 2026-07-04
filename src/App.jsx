@@ -1072,6 +1072,40 @@ function saveAreaFillEnabled(enabled) {
   }
 }
 
+/* ─────────────────────────────────────────────────────
+   地震一覧の取得件数の設定。
+   P2P地震情報APIの /history から一度に取得する件数(=一覧に表示する最大件数)。
+   1〜1000件の範囲でユーザーが指定でき、localStorageに保存する。デフォルトは100件。
+   ───────────────────────────────────────────────────── */
+const QUAKE_FETCH_LIMIT_STORAGE_KEY = "quakeFetchLimit";
+const QUAKE_FETCH_LIMIT_MIN = 1;
+const QUAKE_FETCH_LIMIT_MAX = 1000;
+const QUAKE_FETCH_LIMIT_DEFAULT = 100;
+
+function clampQuakeFetchLimit(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return QUAKE_FETCH_LIMIT_DEFAULT;
+  return Math.min(QUAKE_FETCH_LIMIT_MAX, Math.max(QUAKE_FETCH_LIMIT_MIN, n));
+}
+
+function loadStoredQuakeFetchLimit() {
+  try {
+    const saved = localStorage.getItem(QUAKE_FETCH_LIMIT_STORAGE_KEY);
+    if (saved != null) return clampQuakeFetchLimit(saved);
+  } catch (err) {
+    console.warn("地震の取得件数の設定を読み込めませんでした:", err);
+  }
+  return QUAKE_FETCH_LIMIT_DEFAULT;
+}
+
+function saveQuakeFetchLimit(limit) {
+  try {
+    localStorage.setItem(QUAKE_FETCH_LIMIT_STORAGE_KEY, String(clampQuakeFetchLimit(limit)));
+  } catch (err) {
+    console.warn("地震の取得件数の設定を保存できませんでした:", err);
+  }
+}
+
 // 指定したスキームオブジェクトについて、震度キーに対応する{ bg, fg, label }を返す。
 // .map()のコールバック内などフックを呼べない場所からはこちらを直接使う
 // (スキーム自体はコンポーネント側で useContext(QuakeColorSchemeContext) して渡す)。
@@ -1103,7 +1137,7 @@ function splitIntensityLabel(label) {
    maxScale は 10刻みの震度コード(10=震度1 ... 70=震度7)で返ってくるため、
    INTENSITY_STYLE のキー("1"〜"7","5-","5+","6-","6+")に変換する。
    ───────────────────────────────────────────────────── */
-const P2PQUAKE_HISTORY_URL = "https://api.p2pquake.net/v2/history?codes=551&limit=100";
+const P2PQUAKE_HISTORY_URL_BASE = "https://api.p2pquake.net/v2/history?codes=551";
 
 function maxScaleToIntensityKey(maxScale) {
   const map = {
@@ -1303,8 +1337,10 @@ async function fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey) {
   return null;
 }
 
-async function fetchRecentQuakes() {
-  const res = await fetch(P2PQUAKE_HISTORY_URL);
+// 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
+// limit: 設定画面で指定された取得件数(1〜1000、デフォルト100)。
+async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
+  const res = await fetch(`${P2PQUAKE_HISTORY_URL_BASE}&limit=${clampQuakeFetchLimit(limit)}`);
   if (!res.ok) throw new Error(`地震情報の取得に失敗しました (${res.status})`);
   const data = await res.json();
   // 「震度速報のみ」等、震源情報が欠けているレコードを除外
@@ -1927,6 +1963,7 @@ function BottomDock({
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
+  quakeFetchLimit, onChangeQuakeFetchLimit,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const scrollRef = useRef(null);
@@ -2435,6 +2472,8 @@ function BottomDock({
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
                   onChangeAreaFillEnabled={onChangeAreaFillEnabled}
+                  quakeFetchLimit={quakeFetchLimit}
+                  onChangeQuakeFetchLimit={onChangeQuakeFetchLimit}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -2771,6 +2810,69 @@ function SettingsToggleRow({ label, description, checked, onChange }) {
   );
 }
 
+// 地震一覧の取得件数の設定画面。数値入力欄 + よく使う件数のプリセットチップ。
+function QuakeFetchLimitSettings({ value, onChange }) {
+  const [text, setText] = useState(String(value));
+
+  // 外部(プリセットタップ等)から値が変わったら表示中のテキストも同期する
+  useEffect(() => { setText(String(value)); }, [value]);
+
+  function commit() {
+    const clamped = clampQuakeFetchLimit(text);
+    onChange(clamped);
+    setText(String(clamped));
+  }
+
+  const presets = [50, 100, 300, 500, 1000];
+
+  return (
+    <SettingsCard>
+      <div style={{ padding: "14px 14px 12px" }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 12, lineHeight: 1.5 }}>
+          地震一覧を取得する最大件数です。{QUAKE_FETCH_LIMIT_MIN}〜{QUAKE_FETCH_LIMIT_MAX}件の範囲で指定できます
+          (デフォルト{QUAKE_FETCH_LIMIT_DEFAULT}件)。件数を増やすと確認できる履歴は増えますが、
+          取得や表示にかかる時間が長くなることがあります。
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={QUAKE_FETCH_LIMIT_MIN}
+            max={QUAKE_FETCH_LIMIT_MAX}
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            style={{
+              width: 90, fontSize: 15, fontWeight: 600, color: "#fff",
+              background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.16)",
+              borderRadius: 8, padding: "7px 10px", outline: "none",
+            }}
+          />
+          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>件</span>
+        </div>
+      </div>
+      <SettingsCardDivider/>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "12px 14px" }}>
+        {presets.map(p => (
+          <button
+            key={p}
+            onClick={() => onChange(p)}
+            style={{
+              padding: "6px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+              border: "1px solid rgba(255,255,255,0.16)",
+              background: value === p ? "rgba(10,132,255,0.9)" : "rgba(255,255,255,0.08)",
+              color: "#fff", cursor: "pointer",
+            }}
+          >
+            {p}件
+          </button>
+        ))}
+      </div>
+    </SettingsCard>
+  );
+}
+
 // 震度配色の選択画面。元のQuakeSettingsBodyと同じ見た目のリスト。
 function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   const entries = Object.entries(QUAKE_COLOR_SCHEMES);
@@ -2817,6 +2919,7 @@ function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
+  quakeFetchLimit, onChangeQuakeFetchLimit,
 }) {
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
@@ -2873,7 +2976,17 @@ function SettingsBody({
     );
   }
 
-  // 地震カテゴリのトップ(震度配色・地図塗りつぶしへの入口)。
+  // 取得件数(地震カテゴリの項目)の中身
+  if (category === "quake" && leaf === "fetchLimit") {
+    return (
+      <>
+        <SettingsHeader title="取得件数"/>
+        <QuakeFetchLimitSettings value={quakeFetchLimit} onChange={onChangeQuakeFetchLimit}/>
+      </>
+    );
+  }
+
+  // 地震カテゴリのトップ(震度配色・地図塗りつぶし・取得件数への入口)。
   // 他のカテゴリと違い項目を専用に組み立てているため、汎用のitems一覧ループとは別扱いにする。
   if (category === "quake" && !leaf) {
     return (
@@ -2883,6 +2996,8 @@ function SettingsBody({
           <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="地図塗りつぶし" onClick={() => onNavigate([...path, "mapFill"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
         </SettingsCard>
       </>
     );
@@ -2951,6 +3066,15 @@ export default function App() {
     saveAreaFillEnabled(next);
   }
 
+  // 地震一覧の取得件数(1〜1000、デフォルト100)。設定タブで変更すると一覧を取り直す。
+  const [quakeFetchLimit, setQuakeFetchLimitState] = useState(loadStoredQuakeFetchLimit);
+
+  function handleChangeQuakeFetchLimit(next) {
+    const clamped = clampQuakeFetchLimit(next);
+    setQuakeFetchLimitState(clamped);
+    saveQuakeFetchLimit(clamped);
+  }
+
   // 地震情報(P2P地震情報API)
   const [quakes,          setQuakes]          = useState([]);
   const [quakeStatus,     setQuakeStatus]     = useState("loading"); // loading | ready | error
@@ -3002,11 +3126,13 @@ export default function App() {
   }, [selectedQuake]);
 
   // 起動時に /history で最新一覧を1回だけ取得し、以降はWebSocketで新着分を随時追加する。
+  // quakeFetchLimit(設定タブで変更可能)が変わった場合も、この効果全体をやり直して
+  // 新しい件数で一覧を取得し直す。
   const [wsStatus, setWsStatus] = useState("connecting"); // connecting | open | closed
   useEffect(() => {
     let cancelled = false;
 
-    fetchRecentQuakes()
+    fetchRecentQuakes(quakeFetchLimit)
       .then(list => {
         if (cancelled) return;
         setQuakes(prev => {
@@ -3022,7 +3148,7 @@ export default function App() {
           for (const q of prev) if (!byId.has(q.id)) byId.set(q.id, q);
           const merged = Array.from(byId.values())
             .sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0))
-            .slice(0, 100);
+            .slice(0, quakeFetchLimit);
           const result = dedupeQuakeList(merged);
 
           // 選択中の地震が、統合後もなお一覧に存在しない場合だけ選択解除する。
@@ -3051,9 +3177,9 @@ export default function App() {
           const prevSelected = prev.find(q => q.id === selectedQuakeIdRef.current) || null;
 
           // 同一idの重複配信を除外しつつ、新着を先頭に追加する。
-          // 件数は/historyの初期取得と揃えて100件までに抑える。
+          // 件数は/historyの初期取得と揃えて設定値(quakeFetchLimit)までに抑える。
           const deduped = prev.filter(q => q.id !== newQuake.id);
-          const merged = [newQuake, ...deduped].slice(0, 100);
+          const merged = [newQuake, ...deduped].slice(0, quakeFetchLimit);
           // 同じ地震の「震度を持つレコード」と「震源だけの空レコード」が
           // 別々に届くことがあるため、都度まとめて重複排除しておく。
           const result = dedupeQuakeList(merged);
@@ -3080,7 +3206,7 @@ export default function App() {
     );
 
     return () => { cancelled = true; socket.close(); };
-  }, []);
+  }, [quakeFetchLimit]);
 
   return (
     <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
@@ -3154,6 +3280,8 @@ export default function App() {
             onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
             areaFillEnabled={areaFillEnabled}
             onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+            quakeFetchLimit={quakeFetchLimit}
+            onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
           />
         </div>
 
