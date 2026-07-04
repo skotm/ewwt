@@ -2408,13 +2408,25 @@ function QuakeIntensityLegend({ maxIntensity }) {
    押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
    ───────────────────────────────────────────────────── */
 function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
+  // ナビ行のガラスハイライトと同じ、"押し込むとガラスが少し膨らむ"演出。
+  const [pressed, setPressed] = useState(false);
+
   return (
     <Glass
       radius={999}
-      style={{ width: 44, height: 44 }}
+      style={{
+        width: 44, height: 44,
+        transform: pressed ? "scale(1.1)" : "scale(1)",
+        transformOrigin: "center",
+        transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
+      }}
     >
       <button
         onClick={onClick}
+        onPointerDown={() => setPressed(true)}
+        onPointerUp={() => setPressed(false)}
+        onPointerCancel={() => setPressed(false)}
+        onPointerLeave={() => setPressed(false)}
         aria-label={label}
         style={{
           position: "relative", zIndex: 1,
