@@ -816,7 +816,8 @@ function buildStationIconCanvas(bg, fg, label, withText) {
 function registerStationIcons(map, scheme) {
   STATION_ICON_KEYS.forEach(key => {
     const style = scheme.colors[key] || scheme.colors["0"];
-    const label = INTENSITY_LABEL[key] || INTENSITY_LABEL["0"];
+    // 地図上の丸には「5弱」「6強」ではなくキー表記(5-,6+等)をそのまま出す。
+    const label = key;
     const dotImg = buildStationIconCanvas(style.bg, style.fg, label, false);
     const numImg = buildStationIconCanvas(style.bg, style.fg, label, true);
     const dotId = `station-icon-${key}-dot`;
