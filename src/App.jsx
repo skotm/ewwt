@@ -419,6 +419,10 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
   const overlayResizeObserverRef = useRef(null);
   const stationLabelDataRef = useRef([]);
   const drawStationLabelsRef = useRef(null);
+  // 震源(バツ印)の位置。観測点と同じCanvasオーバーレイに、観測点より後に描くことで
+  // 必ず観測点の上に重なるようにする(MapLibre標準のsymbolレイヤーだと、地図本体の
+  // canvasの中で描かれるため、上に重ねた観測点用オーバーレイの下に隠れてしまうため)。
+  const hypocenterRef = useRef(null);
   // 現在選択中の震度配色スキーム。観測点マーカー・震度分布の塗り分けの両方で使う。
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
@@ -453,22 +457,6 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
 
         map.on("load", () => {
           if (cancelled) return;
-
-          // 震源(バツ印)アイコンを生成してMapLibreへ登録しておく。
-          // canvasで太めの赤いバツ印を描き、addImageでシンボル画像として使う。
-          const size = 28;
-          const canvas = document.createElement("canvas");
-          canvas.width = size; canvas.height = size;
-          const c = canvas.getContext("2d");
-          c.strokeStyle = "#FF453A";
-          c.lineWidth = 4;
-          c.lineCap = "round";
-          const pad = 6;
-          c.beginPath();
-          c.moveTo(pad, pad); c.lineTo(size - pad, size - pad);
-          c.moveTo(size - pad, pad); c.lineTo(pad, size - pad);
-          c.stroke();
-          map.addImage("hypocenter-cross", c.getImageData(0, 0, size, size));
 
           // 観測点(震度)マーカーは、MapLibre標準のcircleレイヤーではなく
           // 過去のLeaflet版(L.StationCanvasLayer)と全く同じ見た目になるよう、
@@ -523,29 +511,56 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             const radius = radiusForZoom(zoom);
             const showText = zoom >= 8; // 円が小さいうちは文字を出さない(潰れて読めないため)
             const points = stationLabelDataRef.current;
+            // 円が小さい(=ズームが低くて観測点が多く画面に入りがちな)時は、
+            // 影を落としてもほぼ見えないうえに描画コストだけがかさむため省略する
+            // (観測点の多い地震で動作が重くなるのを防ぐ)。
+            const useShadow = radius > 5;
 
+            // 画面内に入っている点だけを対象にする。さらに、円の塗り+フチのストロークは
+            // 同じ色ごとにパスをまとめて1回のfill/strokeで済ませることで、
+            // 観測点1件ごとに発生していたスタイル切り替え・fill/stroke呼び出しの
+            // 回数を大きく減らす(観測点が数百件あるような地震でも重くなりにくくする)。
+            const visible = [];
+            const groups = new Map(); // color -> [{x,y}, ...]
             for (let i = 0; i < points.length; i++) {
               const p = points[i];
               const pt = map.project([p.longitude, p.latitude]);
               if (pt.x < -20 || pt.y < -20 || pt.x > w + 20 || pt.y > h + 20) continue;
+              visible.push({ x: pt.x, y: pt.y, label: p.label });
+              let arr = groups.get(p.color);
+              if (!arr) { arr = []; groups.set(p.color, arr); }
+              arr.push(pt);
+            }
 
-              // 円本体 — 過去のプログラム(L.StationCanvasLayer)と同じく、
-              // ドロップシャドウ付きで塗ってから白いフチをストロークするリッチな見た目にする
-              octx.beginPath();
-              octx.arc(pt.x, pt.y, radius, 0, Math.PI * 2);
-              octx.fillStyle = p.color;
+            // 円本体 — 過去のプログラム(L.StationCanvasLayer)と同じく、
+            // ドロップシャドウ付きで塗ってから白いフチをストロークするリッチな見た目にする
+            if (useShadow) {
               octx.shadowColor = "rgba(0,0,0,0.6)";
               octx.shadowBlur = 4;
               octx.shadowOffsetY = 2;
-              octx.fill();
+            } else {
               octx.shadowColor = "transparent";
-              octx.lineWidth = 1.5;
-              octx.strokeStyle = "#ffffff";
+            }
+            octx.lineWidth = 1.5;
+            octx.strokeStyle = "#ffffff";
+            groups.forEach((pts, color) => {
+              octx.beginPath();
+              for (let i = 0; i < pts.length; i++) {
+                const { x, y } = pts[i];
+                octx.moveTo(x + radius, y); // arcの前にmoveToしておき、前の円とつながる線が出ないようにする
+                octx.arc(x, y, radius, 0, Math.PI * 2);
+              }
+              octx.fillStyle = color;
+              octx.fill();
               octx.stroke();
+            });
+            octx.shadowColor = "transparent";
 
-              if (showText) {
+            if (showText) {
+              for (let i = 0; i < visible.length; i++) {
+                const v = visible[i];
                 // 文字数(「6」1文字 / 「5-」2文字)に応じてフォントサイズを調整し、円からはみ出さないようにする
-                const fontSize = p.label.length > 1 ? radius * 1.05 : radius * 1.3;
+                const fontSize = v.label.length > 1 ? radius * 1.05 : radius * 1.3;
                 octx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
                 octx.textAlign = "center";
                 octx.textBaseline = "middle";
@@ -553,7 +568,30 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
                 octx.shadowColor = "rgba(0,0,0,0.9)";
                 octx.shadowBlur = 2;
                 octx.shadowOffsetY = 1;
-                octx.fillText(p.label, pt.x, pt.y + 1);
+                octx.fillText(v.label, v.x, v.y + 1);
+                octx.shadowColor = "transparent";
+              }
+            }
+
+            // 震源(バツ印) — 必ず観測点より後に描くことで、観測点の円の上に重なるようにする
+            // (MapLibre標準のsymbolレイヤーで別途描いていた頃は、地図本体のcanvasの中で
+            //  描画されるため、上に重ねているこのオーバーレイの観測点の下に隠れてしまっていた)。
+            const hp = hypocenterRef.current;
+            if (hp && hp.latitude != null && hp.longitude != null) {
+              const hpt = map.project([hp.longitude, hp.latitude]);
+              if (hpt.x > -30 && hpt.y > -30 && hpt.x < w + 30 && hpt.y < h + 30) {
+                const crossSize = 12;
+                octx.strokeStyle = "#FF453A";
+                octx.lineWidth = 4;
+                octx.lineCap = "round";
+                octx.shadowColor = "rgba(0,0,0,0.5)";
+                octx.shadowBlur = 3;
+                octx.beginPath();
+                octx.moveTo(hpt.x - crossSize, hpt.y - crossSize);
+                octx.lineTo(hpt.x + crossSize, hpt.y + crossSize);
+                octx.moveTo(hpt.x + crossSize, hpt.y - crossSize);
+                octx.lineTo(hpt.x - crossSize, hpt.y + crossSize);
+                octx.stroke();
                 octx.shadowColor = "transparent";
               }
             }
@@ -566,23 +604,6 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
           const ro = new ResizeObserver(resizeOverlay);
           ro.observe(containerRef.current);
           overlayResizeObserverRef.current = ro;
-
-          // 震源マーカー用のソース・レイヤー(観測点の上に重なるよう最後に追加)
-          map.addSource("hypocenter-point", {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: [] },
-          });
-          map.addLayer({
-            id: "hypocenter-point-symbol",
-            type: "symbol",
-            source: "hypocenter-point",
-            layout: {
-              "icon-image": "hypocenter-cross",
-              "icon-size": 1,
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-            },
-          });
 
           setStatus("ready");
           if (onReady) onReady(map);
@@ -667,27 +688,20 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
     paintedAreaCodesRef.current = codes;
   }, [stationPoints, status, colorScheme]);
 
-  // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカーを更新し、
-  // 震源+周辺の観測点がちょうど収まる範囲へズームする。
+  // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカー(Canvasオーバーレイ側)を
+  // 更新し、震源+周辺の観測点がちょうど収まる範囲へズームする。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
-    const source = map.getSource("hypocenter-point");
-    if (!source) return;
 
     if (!hypocenter || hypocenter.latitude == null || hypocenter.longitude == null) {
-      source.setData({ type: "FeatureCollection", features: [] });
+      hypocenterRef.current = null;
+      if (drawStationLabelsRef.current) drawStationLabelsRef.current();
       return;
     }
 
-    source.setData({
-      type: "FeatureCollection",
-      features: [{
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [hypocenter.longitude, hypocenter.latitude] },
-        properties: {},
-      }],
-    });
+    hypocenterRef.current = hypocenter;
+    if (drawStationLabelsRef.current) drawStationLabelsRef.current();
 
     // 震源 + 観測点(緯度経度が引けたもの)が全部収まるbounding boxを作ってfitBoundsする。
     // 観測点が1件も無い(マッチできなかった)場合は、震源を中心にほどよいズームへ寄せる。
