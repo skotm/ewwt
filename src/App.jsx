@@ -195,6 +195,16 @@ function GlobalStyles() {
         touch-action: none;
         color: #fff;
       }
+      /* アプリ全体をネイティブアプリのUIのように扱うため、長押しでの
+         テキスト選択・コピー/調べる/翻訳メニュー(iOSのcallout)を無効化する。
+         フローティングパネルや震度凡例を長押しした時に、意図せず選択
+         ハイライトやコピーメニューが出てしまうのを防ぐ。 */
+      *, *::before, *::after {
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
       #root {
         position: absolute;
         inset: 0;
