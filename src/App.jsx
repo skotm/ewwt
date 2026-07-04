@@ -2416,7 +2416,7 @@ function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
       radius={999}
       style={{
         width: 44, height: 44,
-        transform: pressed ? "scale(1.1)" : "scale(1)",
+        transform: pressed ? "scale(1.16)" : "scale(1)",
         transformOrigin: "center",
         transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
       }}
