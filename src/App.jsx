@@ -811,16 +811,20 @@ function buildStationIconCanvas(bg, fg, label, withText) {
   ctx.stroke();
 
   if (withText) {
+    // アプリ全体のCSSと同じフォントスタックに揃える。iOSではSan Francisco、
+    // それ以外ではNoto Sans JP等に自然にフォールバックし、見た目を統一する。
+    const STATION_ICON_FONT_STACK =
+      '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "Noto Sans JP", sans-serif';
     // 文字数で単純に切り替えると「5-」「6+」のような2文字が「1」等の1文字より
     // 見た目に小さくなってしまうため、実際の文字幅を測って、丸からはみ出さない
     // 範囲でできるだけ大きく表示されるようフォントサイズを自動調整する。
     const maxTextWidth = r * 1.7;
     let fontSize = r * 1.3;
-    ctx.font = `800 ${fontSize}px sans-serif`;
+    ctx.font = `800 ${fontSize}px ${STATION_ICON_FONT_STACK}`;
     const width = ctx.measureText(label).width;
     if (width > maxTextWidth) {
       fontSize *= maxTextWidth / width;
-      ctx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
+      ctx.font = `800 ${fontSize.toFixed(1)}px ${STATION_ICON_FONT_STACK}`;
     }
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -1704,25 +1708,12 @@ function BottomDock({
   quakeSettingsOpen = false, onCloseQuakeSettings, onChangeQuakeColorScheme,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
-  const bodyRef = useRef(null);
   const scrollRef = useRef(null);
-  const [bodyNaturalHeight, setBodyNaturalHeight] = useState(0);
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
   // 地震タブ⇄設定表示を切り替えた瞬間だけ、ナビのハイライトpillのアニメーションを
   // 1フレーム止めるためのフラグ(パネルの高さ変化と同時に動いて重くなるのを防ぐ)。
   const [suppressHighlightTransition, setSuppressHighlightTransition] = useState(false);
-
-  // パネル本体(ヘッダー+レイヤー一覧。ハンドルは含まない)の
-  // 「クリップされていない自然な高さ」を常に測定しておく。「高」スナップの基準になる。
-  useLayoutEffect(() => {
-    if (!bodyRef.current) return;
-    const measure = () => setBodyNaturalHeight(bodyRef.current.scrollHeight);
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(bodyRef.current);
-    return () => ro.disconnect();
-  }, []);
 
   // タブ切り替え、または選択中の地震が変わった際に表示中身が変わると、
   // ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
@@ -1732,7 +1723,6 @@ function BottomDock({
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
   }, [active, selectedQuakeId]);
 
-  const naturalHeight = HANDLE_HEIGHT + bodyNaturalHeight; // ハンドル+本体の合計(=「高」スナップの高さ)
 
   // 画面の高さ — 「全画面」スナップの基準になる
   const [viewportH, setViewportH] = useState(() =>
@@ -1889,7 +1879,11 @@ function BottomDock({
   // — 26〜33はどちらも箱の最小高さ(66, 半分33)を超えない安全な値なので、
   // 補間の途中でも歪みは発生しない(「高」を超えて全画面へ伸びる間もtopRadiusは26で頭打ち)。
   const BOTTOM_RADIUS = NAV_ROW_HEIGHT / 2; // 33px
-  const openProgress = naturalHeight > 0 ? Math.min(1, Math.max(0, currentHeight / naturalHeight)) : 0;
+  // openProgressは「高」の固定高さ(highHeight)を基準にする。
+  // 以前はnaturalHeight(タブごとに変わる中身の実測高さ)を分母にしていたため、
+  // 同じスナップ高さでもタブによってopenProgressが変わり、地震タブだけ
+  // 上の角丸が他タブと微妙に異なって見える原因になっていた。
+  const openProgress = Math.min(1, Math.max(0, currentHeight / highHeight));
   const topRadius    = BOTTOM_RADIUS + (26 - BOTTOM_RADIUS) * openProgress;
   const bottomRadius = BOTTOM_RADIUS;
 
@@ -2108,7 +2102,7 @@ function BottomDock({
           ref={scrollRef}
           style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none" }}
         >
-          <div ref={bodyRef}>
+          <div>
             {active === "quake" && quakeSettingsOpen ? (
               <QuakeSettingsBody colorSchemeId={colorSchemeId} onChangeColorScheme={onChangeQuakeColorScheme}/>
             ) : active === "quake" ? (
