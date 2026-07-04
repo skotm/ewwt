@@ -525,64 +525,10 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
               projected.push({ x: pt.x, y: pt.y, label: p.label, color: p.color });
             }
 
-            // 観測点が密集している場所では、標準の半径のままだと円の縁や数字が
-            // 重なってしまう。そこで「間引く」のではなく、最も近い隣の観測点までの
-            // 距離に応じてこの点だけの半径を個別に縮め、隣接円と重ならない
-            // ギリギリの大きさに収める(全点は必ず描画されたままになる)。
-            // 近傍探索を高速化するため、画面座標を格子(グリッド)に登録しておく。
-            const cellSize = Math.max(baseRadius * 2, 1);
-            const grid = new Map(); // "cx_cy" -> [インデックス, ...]
-            function cellKeyOf(x, y) {
-              return Math.floor(x / cellSize) + "_" + Math.floor(y / cellSize);
-            }
-            for (let i = 0; i < projected.length; i++) {
-              const q = projected[i];
-              const key = cellKeyOf(q.x, q.y);
-              let arr = grid.get(key);
-              if (!arr) { arr = []; grid.set(key, arr); }
-              arr.push(i);
-            }
-            function nearestNeighborDist(i) {
-              const q = projected[i];
-              const cx = Math.floor(q.x / cellSize), cy = Math.floor(q.y / cellSize);
-              let best = Infinity;
-              for (let dx = -1; dx <= 1; dx++) {
-                for (let dy = -1; dy <= 1; dy++) {
-                  const arr = grid.get((cx + dx) + "_" + (cy + dy));
-                  if (!arr) continue;
-                  for (let k = 0; k < arr.length; k++) {
-                    const j = arr[k];
-                    if (j === i) continue;
-                    const o = projected[j];
-                    const ddx = o.x - q.x, ddy = o.y - q.y;
-                    const dist = Math.sqrt(ddx * ddx + ddy * ddy);
-                    if (dist < best) best = dist;
-                  }
-                }
-              }
-              return best;
-            }
+            const MIN_RADIUS_FOR_TEXT = 6; // 円が小さい(低ズーム)時は数字を省略する
 
-            const MIN_RADIUS = 2; // どんなに密集していても、これより小さくはしない(点として視認できる最小サイズ)
-            const visible = [];
-            const groups = new Map(); // color -> [{x,y,r}, ...]
-            for (let i = 0; i < projected.length; i++) {
-              const q = projected[i];
-              const d = nearestNeighborDist(i);
-              // 隣の点との距離の半分より半径が大きいと重なってしまうため、
-              // 「基準の半径」と「重ならないための上限」の小さい方を採用する
-              const r = Number.isFinite(d)
-                ? Math.max(MIN_RADIUS, Math.min(baseRadius, d / 2))
-                : baseRadius;
-
-              visible.push({ x: q.x, y: q.y, label: q.label, r });
-              let arr = groups.get(q.color);
-              if (!arr) { arr = []; groups.set(q.color, arr); }
-              arr.push({ x: q.x, y: q.y, r });
-            }
-
-            // 円本体 — 過去のプログラム(L.StationCanvasLayer)と同じく、
-            // ドロップシャドウ付きで塗ってから白いフチをストロークするリッチな見た目にする
+            // 円の塗り分けと影の設定は全点共通なのでループの外で一度だけ設定しておく
+            // (色だけは点ごとに変わるためループ内でfillStyleを都度差し替える)。
             if (useShadow) {
               octx.shadowColor = "rgba(0,0,0,0.6)";
               octx.shadowBlur = 4;
@@ -592,37 +538,42 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
             }
             octx.lineWidth = 1.5;
             octx.strokeStyle = "#ffffff";
-            groups.forEach((pts, color) => {
+
+            // 「円だけ全部まとめて描いてから、文字を全部まとめて描く」方式だと、
+            // 手前の円の上に、本来は隠れているはずの奥の観測点の数字が
+            // 突き抜けて表示されてしまう(文字を描く順番が円の重なり順と無関係になるため)。
+            // そのため、1件ごとに「円→(必要なら)数字」を描き、元の重なり順
+            // (points配列の並び=震度の低い順→高い順、後ろのものほど手前)を
+            // そのまま守るようにする。円の大きさは観測点によらず常にbaseRadiusで統一する。
+            const r = baseRadius;
+            for (let i = 0; i < projected.length; i++) {
+              const q = projected[i];
+
               octx.beginPath();
-              for (let i = 0; i < pts.length; i++) {
-                const { x, y, r } = pts[i];
-                octx.moveTo(x + r, y); // arcの前にmoveToしておき、前の円とつながる線が出ないようにする
-                octx.arc(x, y, r, 0, Math.PI * 2);
-              }
-              octx.fillStyle = color;
+              octx.moveTo(q.x + r, q.y); // arcの前にmoveToしておき、前の円とつながる線が出ないようにする
+              octx.arc(q.x, q.y, r, 0, Math.PI * 2);
+              octx.fillStyle = q.color;
               octx.fill();
               octx.stroke();
-            });
-            octx.shadowColor = "transparent";
 
-            // 文字は、円が縮んで数字が収まらないほど小さい場合は省略する
-            // (数字だけ円からはみ出して隣と重なってしまうのを防ぐため)。
-            const MIN_RADIUS_FOR_TEXT = 6;
-            for (let i = 0; i < visible.length; i++) {
-              const v = visible[i];
-              if (v.r < MIN_RADIUS_FOR_TEXT) continue;
+              if (r < MIN_RADIUS_FOR_TEXT) continue;
+
               // 文字数(「6」1文字 / 「5-」2文字)に応じてフォントサイズを調整し、円からはみ出さないようにする
-              const fontSize = v.label.length > 1 ? v.r * 1.05 : v.r * 1.3;
+              const fontSize = q.label.length > 1 ? r * 1.05 : r * 1.3;
               octx.font = `800 ${fontSize.toFixed(1)}px sans-serif`;
               octx.textAlign = "center";
               octx.textBaseline = "middle";
               octx.fillStyle = "#ffffff";
+              const prevShadowColor = octx.shadowColor;
               octx.shadowColor = "rgba(0,0,0,0.9)";
               octx.shadowBlur = 2;
               octx.shadowOffsetY = 1;
-              octx.fillText(v.label, v.x, v.y + 1);
-              octx.shadowColor = "transparent";
+              octx.fillText(q.label, q.x, q.y + 1);
+              octx.shadowColor = prevShadowColor;
+              octx.shadowBlur = useShadow ? 4 : 0;
+              octx.shadowOffsetY = useShadow ? 2 : 0;
             }
+            octx.shadowColor = "transparent";
 
             // 震源(バツ印) — 必ず観測点より後に描くことで、観測点の円の上に重なるようにする
             // (MapLibre標準のsymbolレイヤーで別途描いていた頃は、地図本体のcanvasの中で
