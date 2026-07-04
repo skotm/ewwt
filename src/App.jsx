@@ -13,12 +13,15 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, crea
 const ALERT = { level: "warning", title: "大雨警報", region: "東京都・神奈川県" };
 
 const LAYERS = [
-  { id: "radar",   label: "雨雲レーダー", on: true  },
-  { id: "quake",   label: "震度分布",     on: false },
-  { id: "tsunami", label: "津波予報区",   on: false },
-  { id: "river",   label: "河川水位",     on: true  },
-  { id: "hazard",  label: "ハザード",     on: false },
-  { id: "evac",    label: "避難所",       on: false },
+  { id: "radar",        label: "雨雲レーダー", on: true  },
+  { id: "quake",        label: "震度分布",     on: false },
+  // 実際のon/offは常にApp側のestIntensityEnabled(設定と共有・localStorage永続化)で
+  // 上書きされるため、ここでの初期値(false)自体は使われない(layersForPanelを参照)。
+  { id: "estIntensity", label: "推計震度分布", on: false },
+  { id: "tsunami",      label: "津波予報区",   on: false },
+  { id: "river",        label: "河川水位",     on: true  },
+  { id: "hazard",       label: "ハザード",     on: false },
+  { id: "evac",         label: "避難所",       on: false },
 ];
 
 const NAV = [
@@ -418,7 +421,10 @@ function buildMapStyle({ world, prefectures, areas }) {
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
-function MapCanvas({ onReady, stationPoints, hypocenter }) {
+function MapCanvas({
+  onReady, stationPoints, hypocenter,
+  quakeTimeStr, maxIntensityKey, estIntensityEnabled,
+}) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -668,6 +674,72 @@ function MapCanvas({ onReady, stationPoints, hypocenter }) {
       map.flyTo({ center: [hypocenter.longitude, hypocenter.latitude], zoom: 7, duration: 800 });
     }
   }, [hypocenter, stationPoints, status]);
+
+  // 推計震度分布(気象庁 estimated_intensity_map)のメッシュ画像を更新する。
+  // 選択中の地震・設定トグルが変わるたびに、前回分のimageソース/rasterレイヤーを
+  // すべて掃除してから、対象(震度5弱以上 かつ トグルON)の場合だけ新しく積み直す。
+  const estIntensityLayerIdsRef = useRef([]);
+  const estIntensityRequestIdRef = useRef(0);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+
+    // 前回分のメッシュ画像レイヤー/ソースを掃除する
+    for (const { layerId, sourceId } of estIntensityLayerIdsRef.current) {
+      if (map.getLayer(layerId)) map.removeLayer(layerId);
+      if (map.getSource(sourceId)) map.removeSource(sourceId);
+    }
+    estIntensityLayerIdsRef.current = [];
+
+    // 対象外(トグルOFF・震度5弱未満・地震未選択)ならここで終了
+    if (!estIntensityEnabled || !EST_INTENSITY_MIN_INTENSITY_KEYS.includes(maxIntensityKey)) {
+      return;
+    }
+
+    // 選択が変わった後に古いリクエストの結果が遅れて反映されるのを防ぐための番号
+    const requestId = ++estIntensityRequestIdRef.current;
+
+    fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey)
+      .then(matched => {
+        if (requestId !== estIntensityRequestIdRef.current) return; // 選択が変わった後の古い結果
+        if (!matched || mapRef.current !== map) return;
+
+        const baseUrl = `https://www.jma.go.jp/bosai/estimated_intensity_map/data/${matched.url}/`;
+        const newIds = [];
+
+        matched.mesh_num.forEach((meshCode, i) => {
+          const { latStart, lonStart, latEnd, lonEnd } = meshCodeToBounds(meshCode);
+          const sourceId = `est-intensity-src-${i}`;
+          const layerId = `est-intensity-layer-${i}`;
+          if (map.getLayer(layerId)) map.removeLayer(layerId);
+          if (map.getSource(sourceId)) map.removeSource(sourceId);
+
+          map.addSource(sourceId, {
+            type: "image",
+            url: `${baseUrl}${meshCode}.png`,
+            // 左上→右上→右下→左下の順(MapLibreのimageソースの座標指定順)
+            coordinates: [
+              [lonStart, latEnd],
+              [lonEnd, latEnd],
+              [lonEnd, latStart],
+              [lonStart, latStart],
+            ],
+          });
+          map.addLayer({
+            id: layerId,
+            type: "raster",
+            source: sourceId,
+            paint: { "raster-opacity": 0.75 },
+          });
+          newIds.push({ sourceId, layerId });
+        });
+
+        estIntensityLayerIdsRef.current = newIds;
+      })
+      .catch(err => {
+        console.error("推計震度分布の取得に失敗:", err);
+      });
+  }, [status, quakeTimeStr, maxIntensityKey, estIntensityEnabled]);
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#121214" }}>
@@ -944,6 +1016,32 @@ function saveQuakeColorScheme(schemeId) {
   }
 }
 
+/* ─────────────────────────────────────────────────────
+   推計震度分布(気象庁 estimated_intensity_map)の表示ON/OFF設定。
+   震度配色と同様、ブラウザのlocalStorageに保存し次回起動時も覚えておく。
+   デフォルトはON(防災アプリとして、初回起動時から見えている方が安全側)。
+   ───────────────────────────────────────────────────── */
+const EST_INTENSITY_ENABLED_STORAGE_KEY = "showEstimatedIntensity";
+
+function loadStoredEstIntensityEnabled() {
+  try {
+    const saved = localStorage.getItem(EST_INTENSITY_ENABLED_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+  } catch (err) {
+    console.warn("推計震度分布の表示設定を読み込めませんでした:", err);
+  }
+  return true;
+}
+
+function saveEstIntensityEnabled(enabled) {
+  try {
+    localStorage.setItem(EST_INTENSITY_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("推計震度分布の表示設定を保存できませんでした:", err);
+  }
+}
+
 // 指定したスキームオブジェクトについて、震度キーに対応する{ bg, fg, label }を返す。
 // .map()のコールバック内などフックを呼べない場所からはこちらを直接使う
 // (スキーム自体はコンポーネント側で useContext(QuakeColorSchemeContext) して渡す)。
@@ -1122,6 +1220,57 @@ function dedupeQuakeList(list) {
     if (!seen.has(key)) { seen.add(key); order.push(key); }
   }
   return order.map(key => bestInGroup.get(key));
+}
+
+/* ─────────────────────────────────────────────────────
+   気象庁 推計震度分布(estimated_intensity_map) 連携
+   震度5弱以上の地震選択時、気象庁が発表する250mメッシュの推計震度分布画像を
+   地図上に重ねて表示する。過去に別アプリ(index.html版)で実装済みのロジックを
+   MapLibre GL JS向けに移植したもの。
+   ───────────────────────────────────────────────────── */
+const EST_INTENSITY_LIST_URL = "https://www.jma.go.jp/bosai/estimated_intensity_map/data/list.json";
+// 一覧データの発生時刻とP2P地震情報側の発生時刻がぴったり一致しないことがあるため、
+// 差がこの範囲内(1分以内)なら同じ地震とみなす。
+const EST_INTENSITY_MATCH_TOLERANCE_MS = 60 * 1000;
+// この震度分布は震度5弱以上の地震でのみ気象庁から発表される。
+const EST_INTENSITY_MIN_INTENSITY_KEYS = ["5-", "5+", "6-", "6+", "7"];
+
+// 気象庁の1次地域メッシュコード(4桁)から、画像を貼り付ける緯度経度範囲(矩形)を計算する。
+// 上2桁が緯度方向・下2桁が経度方向のメッシュ番号で、1次メッシュは緯度2/3度×経度1度。
+function meshCodeToBounds(meshCode) {
+  const latStart = parseInt(meshCode.substring(0, 2), 10) / 1.5;
+  const lonStart = parseInt(meshCode.substring(2, 4), 10) + 100;
+  const latEnd = latStart + 2 / 3;
+  const lonEnd = lonStart + 1;
+  return { latStart, lonStart, latEnd, lonEnd };
+}
+
+// 選択中の地震の発生時刻・最大震度から、該当する推計震度分布データを検索する。
+// 対象外(震度5弱未満)・該当データなし・取得失敗の場合はnullを返す
+// (呼び出し側では「表示しない」扱いにするだけで、エラー扱いにはしない)。
+async function fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey) {
+  if (!EST_INTENSITY_MIN_INTENSITY_KEYS.includes(maxIntensityKey)) return null;
+  if (!quakeTimeStr) return null;
+
+  const targetTimeMs = new Date(quakeTimeStr).getTime();
+  if (Number.isNaN(targetTimeMs)) return null;
+
+  const res = await fetch(EST_INTENSITY_LIST_URL);
+  if (!res.ok) throw new Error(`推計震度分布一覧の取得に失敗しました (${res.status})`);
+  const list = await res.json();
+  if (!Array.isArray(list)) return null;
+
+  for (const item of list) {
+    const at = item?.hypo?.at;
+    if (!at) continue;
+    const itemTimeMs = new Date(at).getTime();
+    if (Number.isNaN(itemTimeMs)) continue;
+    if (Math.abs(itemTimeMs - targetTimeMs) <= EST_INTENSITY_MATCH_TOLERANCE_MS) {
+      if (Array.isArray(item.mesh_num) && item.url) return item;
+      return null;
+    }
+  }
+  return null;
 }
 
 async function fetchRecentQuakes() {
@@ -1746,6 +1895,7 @@ function BottomDock({
   active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   onChangeQuakeColorScheme,
+  estIntensityEnabled, onChangeEstIntensityEnabled,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
   const scrollRef = useRef(null);
@@ -2250,6 +2400,8 @@ function BottomDock({
                   onNavigate={setSettingsPath}
                   colorSchemeId={colorSchemeId}
                   onChangeColorScheme={onChangeQuakeColorScheme}
+                  estIntensityEnabled={estIntensityEnabled}
+                  onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -2505,11 +2657,9 @@ const SETTINGS_MENU = [
   { id: "advanced", label: "詳細設定" },
 ];
 
-// カテゴリごとの項目一覧。今のところ実際に中身があるのは地震の「震度配色」のみで、
-// 他のカテゴリは骨組み(空のプレースホルダー画面)だけを用意しておく。
-const SETTINGS_ITEMS = {
-  quake: [{ id: "colorScheme", label: "震度配色" }],
-};
+// カテゴリごとの項目一覧。地震カテゴリはSettingsBody内で専用に組み立てるため
+// ここには含めない。他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
+const SETTINGS_ITEMS = {};
 
 // 設定画面共通のヘッダー。「地図レイヤー」のような下線区切りは使わず、
 // 太字の大きめタイトルにすることで独自の見た目にしている。
@@ -2567,6 +2717,27 @@ function SettingsMenuRow({ label, onClick }) {
   );
 }
 
+// カード内の1行(ON/OFF切り替え用)。SettingsMenuRowと同じ余白・見た目で、
+// 右端は「>」の代わりに丸いスイッチ(Toggle)を出す。
+function SettingsToggleRow({ label, description, checked, onChange }) {
+  return (
+    <div style={{
+      width: "100%", display: "flex", alignItems: "center", gap: 10,
+      padding: "12px 14px",
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{label}</div>
+        {description && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.4 }}>
+            {description}
+          </div>
+        )}
+      </div>
+      <Toggle on={checked} onChange={onChange}/>
+    </div>
+  );
+}
+
 // 震度配色の選択画面。元のQuakeSettingsBodyと同じ見た目のリスト。
 function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   const entries = Object.entries(QUAKE_COLOR_SCHEMES);
@@ -2609,7 +2780,10 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   );
 }
 
-function SettingsBody({ path, onNavigate, colorSchemeId, onChangeColorScheme }) {
+function SettingsBody({
+  path, onNavigate, colorSchemeId, onChangeColorScheme,
+  estIntensityEnabled, onChangeEstIntensityEnabled,
+}) {
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
     return (
@@ -2640,7 +2814,28 @@ function SettingsBody({ path, onNavigate, colorSchemeId, onChangeColorScheme }) 
     );
   }
 
-  // カテゴリ内の項目一覧(現状は地震のみ項目あり)
+  // 地震カテゴリのトップ(震度配色への入口 + 推計震度分布のON/OFFトグル)。
+  // 他のカテゴリと違い項目が2種類(掘り下げ式+その場でのトグル)混在するため、
+  // 汎用のitems一覧ループとは別に専用で組み立てる。
+  if (category === "quake" && !leaf) {
+    return (
+      <>
+        <SettingsHeader title="地震"/>
+        <SettingsCard>
+          <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
+          <SettingsCardDivider/>
+          <SettingsToggleRow
+            label="推計震度分布を表示"
+            description="震度5弱以上の地震選択時、気象庁の推計震度分布を地図に重ねて表示します。"
+            checked={estIntensityEnabled}
+            onChange={() => onChangeEstIntensityEnabled(!estIntensityEnabled)}
+          />
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // カテゴリ内の項目一覧(地震カテゴリは上で処理済みのため、それ以外のカテゴリ用)
   const items = SETTINGS_ITEMS[category] || [];
   if (!leaf) {
     return (
@@ -2686,6 +2881,15 @@ export default function App() {
     saveQuakeColorScheme(schemeId);
   }
 
+  // 推計震度分布の表示ON/OFF。地図レイヤーパネルの「推計震度分布」トグルと
+  // 設定タブ「地震」内のトグルの、両方から操作できる単一の状態(localStorageに永続化)。
+  const [estIntensityEnabled, setEstIntensityEnabledState] = useState(loadStoredEstIntensityEnabled);
+
+  function handleChangeEstIntensityEnabled(next) {
+    setEstIntensityEnabledState(next);
+    saveEstIntensityEnabled(next);
+  }
+
   // 地震情報(P2P地震情報API)
   const [quakes,          setQuakes]          = useState([]);
   const [quakeStatus,     setQuakeStatus]     = useState("loading"); // loading | ready | error
@@ -2698,8 +2902,21 @@ export default function App() {
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
 
-  const toggleLayer = id =>
+  const toggleLayer = id => {
+    // 「推計震度分布」レイヤーだけは、layers配列ではなく設定と共有のestIntensityEnabled側で管理する
+    if (id === "estIntensity") {
+      handleChangeEstIntensityEnabled(!estIntensityEnabled);
+      return;
+    }
     setLayers(prev => prev.map(l => l.id === id ? { ...l, on: !l.on } : l));
+  };
+
+  // レイヤーパネルに渡す一覧。「推計震度分布」の見た目上のon/offは、layers配列の
+  // 初期値ではなく、常にestIntensityEnabled(設定と共有・永続化されている値)を反映させる。
+  const layersForPanel = useMemo(
+    () => layers.map(l => l.id === "estIntensity" ? { ...l, on: estIntensityEnabled } : l),
+    [layers, estIntensityEnabled]
+  );
 
   // 観測点マスタは全地震で共通なので、起動時に一度だけ取得する
   useEffect(() => {
@@ -2812,7 +3029,14 @@ export default function App() {
       <div style={{ height: "100dvh", position: "relative", overflow: "hidden", background: "#121214" }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
-        <MapCanvas onReady={setMap} stationPoints={selectedQuakePoints} hypocenter={selectedHypocenter}/>
+        <MapCanvas
+          onReady={setMap}
+          stationPoints={selectedQuakePoints}
+          hypocenter={selectedHypocenter}
+          quakeTimeStr={selectedQuake?.time}
+          maxIntensityKey={selectedQuake?.maxIntensity}
+          estIntensityEnabled={estIntensityEnabled}
+        />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
         {activeNav === "quake" && selectedQuake && (
@@ -2855,7 +3079,7 @@ export default function App() {
             active={activeNav}
             onNav={setActiveNav}
             layerOpen={layerOpen}
-            layers={layers}
+            layers={layersForPanel}
             onToggleLayer={toggleLayer}
             onLayerOpenChange={setLayerOpen}
             quakes={quakes}
@@ -2864,6 +3088,8 @@ export default function App() {
             onSelectQuake={setSelectedQuakeId}
             stationPoints={selectedQuakePoints}
             onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
+            estIntensityEnabled={estIntensityEnabled}
+            onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
           />
         </div>
 
