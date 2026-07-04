@@ -1692,7 +1692,7 @@ function useSnapDrag({ heights, index, onSnap }) {
    高さ・角丸だけを変化させることで、ナビバーのガラス素材そのものが
    下から上へ伸びて、内側からパネルが生まれてくるように見せる。
 
-   - 高さ: useSnapDrag により、低(閉)・中・高(従来の全開)・全画面の
+   - 高さ: useSnapDrag により、低(閉)・中・中高・中中高・高(従来の全開)・全画面の
      4段階のスナップ位置のどれかに固定される。先頭の白いハンドルを
      ドラッグすると、指の動きにリアルタイムで追従し、離した位置に
      最も近いスナップへ収まる。画面上部近くまで引き上げ続けると、
@@ -1743,7 +1743,7 @@ function BottomDock({
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
   const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
 
-  // 0:低(閉) 1:中 2:中高 3:高 4:全画面
+  // 0:低(閉) 1:中 2:中高 3:中中高 4:高 5:全画面
   // 「高」「全画面」は、以前は表示中のタブの中身の実測高さ(naturalHeight)を
   // 元に計算していたが、これだと地震タブ(地震の件数や「各地の震度」展開で
   // 中身の長さが大きく変動する)だけ、気象/津波/警報/設定タブ(常に同じ
@@ -1760,11 +1760,19 @@ function BottomDock({
   // 「中高」の固定高さ(px)。設定タブのトップメニュー(ヘッダー+5項目のカード)が
   // スクロールなしで丸ごと収まる高さを基準に調整している(旧: 222px)。
   const MIDHIGH_FIXED = 290;
+  // 「中中高」の固定高さ(px)。「中高」と「高」の間に設ける中間スナップ。
+  // 地震詳細カード+津波情報カード+「各地の震度」見出しまでが、各地の震度の
+  // 一覧(観測点リスト)はまだ見えない高さでスナップなしで収まる目安(画像基準)。
+  const MIDMIDHIGH_FIXED = 320;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
   const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
   const midHighHeight = Math.max(
     Math.min(MIDHIGH_FIXED, highHeight - GAP),
     midHeight + GAP
+  );
+  const midMidHighHeight = Math.max(
+    Math.min(MIDMIDHIGH_FIXED, highHeight - GAP),
+    midHighHeight + GAP
   );
 
   // 地震を選択した直後にスナップする「低(カードのみ)」の高さ。
@@ -1777,18 +1785,19 @@ function BottomDock({
     0,
     midHeight,
     midHighHeight,
+    midMidHighHeight,
     highHeight,
     Math.max(fullscreenContentHeight, highHeight),
   ];
   const [snapIndex, setSnapIndex] = useState(0);
 
-  // 親から渡される layerOpen(真偽値)を 低(0)⇄高(3) として反映する。
+  // 親から渡される layerOpen(真偽値)を 低(0)⇄高(4) として反映する。
   // ドラッグで内部的に決めたスナップを、ここで二重に上書きしないようrefで判定する。
   const lastLayerOpen = useRef(layerOpen);
   useEffect(() => {
     if (layerOpen !== lastLayerOpen.current) {
       lastLayerOpen.current = layerOpen;
-      setSnapIndex(layerOpen ? (active === "quake" ? 2 : 3) : 0);
+      setSnapIndex(layerOpen ? (active === "quake" ? 2 : 4) : 0);
     }
   }, [layerOpen, active]);
 
