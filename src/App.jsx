@@ -1757,7 +1757,9 @@ function BottomDock({
   // 「中」「中高」はタブによらず常に同じ高さになるよう固定pxで持つ
   // (地図レイヤー一覧で調整済みだった見た目の高さをそのまま定数化している)。
   const MID_FIXED     = 115; // 「中」の固定高さ(px)
-  const MIDHIGH_FIXED = 222; // 「中高」の固定高さ(px)
+  // 「中高」の固定高さ(px)。設定タブのトップメニュー(ヘッダー+5項目のカード)が
+  // スクロールなしで丸ごと収まる高さを基準に調整している(旧: 222px)。
+  const MIDHIGH_FIXED = 290;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
   const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
   const midHighHeight = Math.max(
@@ -2390,6 +2392,10 @@ function LayersIcon() {
    BottomDockパネルの中身をその場で差し替えながら掘り下げていく構成。
    現在地は親(BottomDock)がsettingsPath(配列)として持ち、このコンポーネントは
    それを受け取って該当する画面を描くだけの純粋な表示コンポーネントにしている。
+
+   見た目は「地図レイヤー」一覧(フチなし全幅リスト+下線ヘッダー)をそのまま
+   流用せず、震度配色ピッカーで元々使っていた「角丸のグループ化カード」を
+   基本デザインとして統一している。
    ───────────────────────────────────────────────────── */
 const SETTINGS_MENU = [
   { id: "quake",    label: "地震" },
@@ -2405,48 +2411,76 @@ const SETTINGS_ITEMS = {
   quake: [{ id: "colorScheme", label: "震度配色" }],
 };
 
-// 設定画面共通のヘッダー。トップメニューではonBackを渡さず戻るボタンなしにする。
+const SETTINGS_BACK_SLOT = 26; // 戻るボタンの幅。常にこの分だけ確保しておき、
+                                // 戻るボタンの有無でタイトルの位置がズレないようにする。
+
+// 設定画面共通のヘッダー。「地図レイヤー」のような下線区切りは使わず、
+// 太字の大きめタイトルにすることで独自の見た目にしている。
+// 戻るボタンは常に同じ幅のスロットに置き、無い場合も空スロットを確保することで
+// タイトルの開始位置がトップメニュー/サブ画面のどちらでも揃うようにしている。
 function SettingsHeader({ title, onBack }) {
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 6,
-      padding: "8px 14px 11px",
-      borderBottom: "0.5px solid rgba(255,255,255,0.15)",
-    }}>
-      {onBack && (
-        <button
-          onClick={onBack}
-          aria-label="戻る"
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center",
-            width: 26, height: 26, marginLeft: -4,
-            color: "rgba(255,255,255,0.85)",
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="15 6 9 12 15 18"/>
-          </svg>
-        </button>
-      )}
-      <span style={{ fontSize: 14, fontWeight: 600, flex: 1, color: "rgba(255,255,255,0.9)" }}>
+    <div style={{ display: "flex", alignItems: "center", padding: "12px 14px 6px" }}>
+      <div style={{
+        width: SETTINGS_BACK_SLOT, height: SETTINGS_BACK_SLOT, flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        {onBack && (
+          <button
+            onClick={onBack}
+            aria-label="戻る"
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: "100%", height: "100%",
+              color: "rgba(255,255,255,0.85)",
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+                 stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 6 9 12 15 18"/>
+            </svg>
+          </button>
+        )}
+      </div>
+      <span style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>
         {title}
       </span>
     </div>
   );
 }
 
-// カテゴリ/項目一覧の1行。右端に「>」を出して、掘り下げられることを示す。
+// カテゴリ/項目一覧を包む角丸のグループ化カード。震度配色ピッカーと同じ見た目の箱。
+function SettingsCard({ children }) {
+  return (
+    <div style={{ margin: "6px 14px 8px" }}>
+      <div style={{
+        borderRadius: 12,
+        overflow: "hidden",
+        background: "rgba(255,255,255,0.04)",
+        boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function SettingsCardDivider() {
+  return <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>;
+}
+
+// カード内の1行。右端に「>」を出して、掘り下げられることを示す。
 function SettingsMenuRow({ label, onClick }) {
   return (
     <button
       onClick={onClick}
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 10,
-        padding: "11px 18px", background: "transparent", textAlign: "left",
+        padding: "12px 14px", background: "transparent", border: "none",
+        cursor: "pointer", textAlign: "left",
       }}
     >
-      <span style={{ fontSize: 14, color: "rgba(255,255,255,0.85)", flex: 1 }}>
+      <span style={{ fontSize: 14, fontWeight: 600, color: "#fff", flex: 1 }}>
         {label}
       </span>
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
@@ -2457,56 +2491,45 @@ function SettingsMenuRow({ label, onClick }) {
   );
 }
 
-function SettingsRowDivider() {
-  return <div style={{ height: 0.5, background: "rgba(255,255,255,0.1)", marginLeft: 18 }}/>;
-}
-
-// 震度配色の選択画面。以前のQuakeSettingsBodyと同じ見た目のリストをそのまま流用している。
+// 震度配色の選択画面。元のQuakeSettingsBodyと同じ見た目のリスト。
 function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   const entries = Object.entries(QUAKE_COLOR_SCHEMES);
   return (
-    <div style={{ margin: "10px 14px 8px" }}>
-      <div style={{
-        borderRadius: 12,
-        overflow: "hidden",
-        background: "rgba(255,255,255,0.04)",
-        boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
-      }}>
-        {entries.map(([id, scheme], i) => {
-          const selected = colorSchemeId === id;
-          return (
-            <div key={id}>
-              {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>}
-              <button
-                onClick={() => onChangeColorScheme(id)}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", gap: 12,
-                  padding: "11px 12px",
-                  background: selected ? "rgba(255,255,255,0.07)" : "transparent",
-                  border: "none", cursor: "pointer", textAlign: "left",
-                }}
-              >
-                {/* ミニプレビュー(震度1〜7の色見本を並べる) */}
-                <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
-                  {["1","2","3","4","5-","5+","6-","6+","7"].map(key => (
-                    <div key={key} style={{
-                      width: 7, height: 16, borderRadius: 2,
-                      background: scheme.colors[key].bg,
-                    }}/>
-                  ))}
-                </div>
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>
-                  {scheme.label}
-                </span>
-                {selected && (
-                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
-                )}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <SettingsCard>
+      {entries.map(([id, scheme], i) => {
+        const selected = colorSchemeId === id;
+        return (
+          <div key={id}>
+            {i > 0 && <SettingsCardDivider/>}
+            <button
+              onClick={() => onChangeColorScheme(id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12,
+                padding: "11px 12px",
+                background: selected ? "rgba(255,255,255,0.07)" : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left",
+              }}
+            >
+              {/* ミニプレビュー(震度1〜7の色見本を並べる) */}
+              <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                {["1","2","3","4","5-","5+","6-","6+","7"].map(key => (
+                  <div key={key} style={{
+                    width: 7, height: 16, borderRadius: 2,
+                    background: scheme.colors[key].bg,
+                  }}/>
+                ))}
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>
+                {scheme.label}
+              </span>
+              {selected && (
+                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
+              )}
+            </button>
+          </div>
+        );
+      })}
+    </SettingsCard>
   );
 }
 
@@ -2516,12 +2539,14 @@ function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorSc
     return (
       <>
         <SettingsHeader title="設定"/>
-        {SETTINGS_MENU.map((item, i) => (
-          <div key={item.id}>
-            {i > 0 && <SettingsRowDivider/>}
-            <SettingsMenuRow label={item.label} onClick={() => onNavigate([item.id])}/>
-          </div>
-        ))}
+        <SettingsCard>
+          {SETTINGS_MENU.map((item, i) => (
+            <div key={item.id}>
+              {i > 0 && <SettingsCardDivider/>}
+              <SettingsMenuRow label={item.label} onClick={() => onNavigate([item.id])}/>
+            </div>
+          ))}
+        </SettingsCard>
       </>
     );
   }
@@ -2546,12 +2571,14 @@ function SettingsBody({ path, onNavigate, onBack, colorSchemeId, onChangeColorSc
       <>
         <SettingsHeader title={categoryLabel} onBack={onBack}/>
         {items.length > 0 ? (
-          items.map((item, i) => (
-            <div key={item.id}>
-              {i > 0 && <SettingsRowDivider/>}
-              <SettingsMenuRow label={item.label} onClick={() => onNavigate([...path, item.id])}/>
-            </div>
-          ))
+          <SettingsCard>
+            {items.map((item, i) => (
+              <div key={item.id}>
+                {i > 0 && <SettingsCardDivider/>}
+                <SettingsMenuRow label={item.label} onClick={() => onNavigate([...path, item.id])}/>
+              </div>
+            ))}
+          </SettingsCard>
         ) : (
           <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
             現在、設定できる項目はありません
