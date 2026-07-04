@@ -1339,12 +1339,34 @@ async function fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey) {
 
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
 // limit: 設定画面で指定された取得件数(1〜1000、デフォルト100)。
+//
+// 注意: P2P地震情報APIの /history は1回のリクエストにつき limit を1〜100までしか
+// 指定できない(仕様: https://www.p2pquake.net/develop/json_api_v2/ の /history 参照)。
+// 100件を超える件数が設定されている場合、limit=100 のリクエストを offset をずらしながら
+// 複数回叩いて必要件数を積み上げる(例: 300件なら3回)。
+const P2PQUAKE_API_PAGE_SIZE = 100;
+
 async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
-  const res = await fetch(`${P2PQUAKE_HISTORY_URL_BASE}&limit=${clampQuakeFetchLimit(limit)}`);
-  if (!res.ok) throw new Error(`地震情報の取得に失敗しました (${res.status})`);
-  const data = await res.json();
+  const target = clampQuakeFetchLimit(limit);
+  const results = [];
+  let offset = 0;
+
+  while (results.length < target) {
+    const pageSize = Math.min(P2PQUAKE_API_PAGE_SIZE, target - results.length);
+    const res = await fetch(`${P2PQUAKE_HISTORY_URL_BASE}&limit=${pageSize}&offset=${offset}`);
+    if (!res.ok) throw new Error(`地震情報の取得に失敗しました (${res.status})`);
+    const page = await res.json();
+    if (!Array.isArray(page) || page.length === 0) break; // これ以上遡れる情報が無い
+
+    results.push(...page);
+    offset += page.length;
+
+    // 返ってきた件数がリクエストしたページサイズより少なければ、これ以上古い情報は無い
+    if (page.length < pageSize) break;
+  }
+
   // 「震度速報のみ」等、震源情報が欠けているレコードを除外
-  const list = data
+  const list = results
     .filter(item => item.earthquake && item.earthquake.hypocenter && item.earthquake.hypocenter.name)
     .map(toQuakeCard);
   return dedupeQuakeList(list);
@@ -2830,8 +2852,8 @@ function QuakeFetchLimitSettings({ value, onChange }) {
       <div style={{ padding: "14px 14px 12px" }}>
         <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 12, lineHeight: 1.5 }}>
           地震一覧を取得する最大件数です。{QUAKE_FETCH_LIMIT_MIN}〜{QUAKE_FETCH_LIMIT_MAX}件の範囲で指定できます
-          (デフォルト{QUAKE_FETCH_LIMIT_DEFAULT}件)。件数を増やすと確認できる履歴は増えますが、
-          取得や表示にかかる時間が長くなることがあります。
+          (デフォルト{QUAKE_FETCH_LIMIT_DEFAULT}件)。気象庁APIの都合上、100件を超える件数を指定すると
+          複数回に分けて取得するため、件数が多いほど取得に時間がかかります。
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <input
