@@ -2345,7 +2345,8 @@ function BottomDock({
   areaFillEnabled, onChangeAreaFillEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
 }) {
-  const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)
+  const HANDLE_HEIGHT = 26; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
+                            // 直下のQuakeListToolbarとの誤タップを避けるため、当たり判定を広めに取っている。
   const scrollRef = useRef(null);
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
@@ -2752,7 +2753,11 @@ function BottomDock({
             スクロールしても本体と一緒には動かない(検索/一覧の入口を常に見せておく)。
             地震を選択してカード表示になっている間は不要なので隠す。 */}
         {active === "quake" && selectedQuakeId == null && (
-          <QuakeListToolbar mode={quakeViewMode} onModeChange={setQuakeViewMode}/>
+          <QuakeListToolbar
+            mode={quakeViewMode}
+            onModeChange={setQuakeViewMode}
+            onHandoffToPanelDrag={handlePointerDown}
+          />
         )}
 
         {/* スクロール可能な本体 — ヘッダー・レイヤー一覧だけがここでスクロールする。
@@ -3242,13 +3247,14 @@ const QUAKE_TOOLBAR_ITEMS = [
   { id: "search", label: "地震検索" },
 ];
 
-function QuakeListToolbar({ mode, onModeChange }) {
+function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
   // ナビ行と同じ %ベース連続追従方式。PAD_X はJSX側のpaddingと必ず一致させる。
   const PAD_X = 3;
   const rowRef      = useRef(null);
   const pointerId    = useRef(null);
   const moved        = useRef(false);
   const startX       = useRef(0);
+  const startY       = useRef(0);
   const N     = QUAKE_TOOLBAR_ITEMS.length;
   const tabW  = 100 / N; // 1タブの幅[%]（内側領域基準）
 
@@ -3282,6 +3288,7 @@ function QuakeListToolbar({ mode, onModeChange }) {
     pointerId.current = e.pointerId;
     moved.current      = false;
     startX.current     = e.clientX;
+    startY.current     = e.clientY;
     e.currentTarget.setPointerCapture(e.pointerId);
     const idx = clientXToIndex(e.clientX);
     setPreviewIdx(idx);
@@ -3291,10 +3298,31 @@ function QuakeListToolbar({ mode, onModeChange }) {
 
   function handlePointerMove(e) {
     if (pointerId.current !== e.pointerId) return;
-    if (Math.abs(e.clientX - startX.current) > 3 && !moved.current) {
-      moved.current = true;
-      setDragging(true);
+
+    if (!moved.current) {
+      const dx = e.clientX - startX.current;
+      const dy = e.clientY - startY.current;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+        moved.current = true;
+
+        // 縦方向優位の動き = すぐ上にあるドラッグハンドルを掴もうとして
+        // 指が少しずれてこのバーの上で始まってしまったケース。
+        // このバーのトグル操作としては扱わず、パネル本体のリサイズドラッグへ
+        // そのまま引き渡す(ハイライトは元の位置に戻して動かさない)。
+        if (Math.abs(dy) > Math.abs(dx)) {
+          setPressed(false);
+          setPreviewIdx(null);
+          setHighlightLeft(activeIndex * tabW);
+          try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+          pointerId.current = null;
+          onHandoffToPanelDrag?.(e);
+          return;
+        }
+
+        setDragging(true);
+      }
     }
+
     const idx = clientXToIndex(e.clientX);
     setPreviewIdx(idx);
     if (moved.current) {
@@ -3317,7 +3345,7 @@ function QuakeListToolbar({ mode, onModeChange }) {
   }
 
   function handleClick(id) {
-    if (moved.current) return; // ドラッグ完了後の二重発火を防ぐ
+    if (moved.current) return; // ドラッグ完了後(縦方向への引き渡しを含む)の二重発火を防ぐ
     const idx = QUAKE_TOOLBAR_ITEMS.findIndex(item => item.id === id);
     setHighlightLeft(idx * tabW);
     onModeChange(id);
