@@ -505,6 +505,11 @@ function MapCanvas({
           map.addSource("est-intensity-fill", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
+            // MapLibreはGeoJSONソースを内部的にタイル分割して描画するため、単純化
+            // (簡略化)されると、隣接タイル同士で境界の頂点位置がわずかにずれて、
+            // 継ぎ目(細い線)として見えてしまうことがある。矩形はもともと単純な形状で
+            // 単純化の恩恵もほぼ無いため、toleranceを0にして単純化自体を無効化する。
+            tolerance: 0,
           });
           map.addLayer({
             id: "est-intensity-fill-layer",
@@ -513,6 +518,9 @@ function MapCanvas({
             paint: {
               "fill-color": buildEstIntensityFillColorExpr(colorScheme),
               "fill-opacity": 0.75,
+              // 隣接する矩形ポリゴン同士の境目(内部タイル分割の継ぎ目を含む)に
+              // GPU描画特有の細い隙間(線)が出るのを防ぐため、アンチエイリアスを無効化する。
+              "fill-antialias": false,
             },
           });
           map.addSource("est-intensity-line", {
