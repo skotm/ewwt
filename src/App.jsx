@@ -497,6 +497,38 @@ function MapCanvas({
           // registerStationIconsで焼いたbitmap(白フチ+数字入り)をそのまま使う。
           // ズームに応じた大きさは、段階切り替えだとカクつくため連続補間(interpolate)にし、
           // 見やすさ重視で全体的に一回り大きめのサイズにしている。
+          // 推計震度分布(250mメッシュをベクター化したもの)の塗り・境界線レイヤー。
+          // 初期状態は空のFeatureCollectionで登録しておき、実際のデータは専用の
+          // useEffect内でsetData()により差し替える(選択中の地震・トグルが変わるたび)。
+          // station-points-symbolより前にaddLayerすることで、観測点マーカーより
+          // 必ず下に来るようにしている。
+          map.addSource("est-intensity-fill", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "est-intensity-fill-layer",
+            type: "fill",
+            source: "est-intensity-fill",
+            paint: {
+              "fill-color": buildEstIntensityFillColorExpr(colorScheme),
+              "fill-opacity": 0.75,
+            },
+          });
+          map.addSource("est-intensity-line", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "est-intensity-line-layer",
+            type: "line",
+            source: "est-intensity-line",
+            paint: {
+              "line-color": "rgba(0,0,0,0.35)",
+              "line-width": 0.6,
+            },
+          });
+
           map.addSource("station-points", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -679,71 +711,89 @@ function MapCanvas({
     }
   }, [hypocenter, stationPoints, status]);
 
-  // 推計震度分布(気象庁 estimated_intensity_map)のメッシュ画像を更新する。
-  // 選択中の地震・設定トグルが変わるたびに、前回分のimageソース/rasterレイヤーを
-  // すべて掃除してから、対象(震度5弱以上 かつ トグルON)の場合だけ新しく積み直す。
-  const estIntensityLayerIdsRef = useRef([]);
+  // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
+  // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
+  // 塗り(est-intensity-fill)・境界線(est-intensity-line)の2つのソースにsetData()する。
+  // 画像デコード・320×320のピクセル走査はメッシュ数によっては時間がかかるため、
+  // 処理中はestIntensityLoadingをtrueにして呼び出し側(このコンポーネント自身)で
+  // ローディング表示を出す。
   const estIntensityRequestIdRef = useRef(0);
+  const [estIntensityLoading, setEstIntensityLoading] = useState(false);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
 
-    // 前回分のメッシュ画像レイヤー/ソースを掃除する
-    for (const { layerId, sourceId } of estIntensityLayerIdsRef.current) {
-      if (map.getLayer(layerId)) map.removeLayer(layerId);
-      if (map.getSource(sourceId)) map.removeSource(sourceId);
-    }
-    estIntensityLayerIdsRef.current = [];
+    const requestId = ++estIntensityRequestIdRef.current;
+    const isStale = () => requestId !== estIntensityRequestIdRef.current || mapRef.current !== map;
+
+    const clearData = () => {
+      if (map.getSource("est-intensity-fill")) {
+        map.getSource("est-intensity-fill").setData({ type: "FeatureCollection", features: [] });
+      }
+      if (map.getSource("est-intensity-line")) {
+        map.getSource("est-intensity-line").setData({ type: "FeatureCollection", features: [] });
+      }
+    };
+
+    clearData();
+    setEstIntensityLoading(false);
 
     // 対象外(トグルOFF・震度5弱未満・地震未選択)ならここで終了
     if (!estIntensityEnabled || !EST_INTENSITY_MIN_INTENSITY_KEYS.includes(maxIntensityKey)) {
       return;
     }
 
-    // 選択が変わった後に古いリクエストの結果が遅れて反映されるのを防ぐための番号
-    const requestId = ++estIntensityRequestIdRef.current;
+    setEstIntensityLoading(true);
 
     fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey)
-      .then(matched => {
-        if (requestId !== estIntensityRequestIdRef.current) return; // 選択が変わった後の古い結果
-        if (!matched || mapRef.current !== map) return;
+      .then(async matched => {
+        if (isStale()) return;
+        if (!matched) { setEstIntensityLoading(false); return; }
 
         const baseUrl = `https://www.jma.go.jp/bosai/estimated_intensity_map/data/${matched.url}/`;
-        const newIds = [];
+        const allFillFeatures = [];
+        const allLineCoords = [];
 
-        matched.mesh_num.forEach((meshCode, i) => {
-          const { latStart, lonStart, latEnd, lonEnd } = meshCodeToBounds(meshCode);
-          const sourceId = `est-intensity-src-${i}`;
-          const layerId = `est-intensity-layer-${i}`;
-          if (map.getLayer(layerId)) map.removeLayer(layerId);
-          if (map.getSource(sourceId)) map.removeSource(sourceId);
+        // メッシュ(1次メッシュ画像)単位で処理する。1枚の取得・解析に失敗しても、
+        // 他のメッシュは表示できるよう、失敗はログに残すだけで処理を継続する。
+        for (const meshCode of matched.mesh_num) {
+          if (isStale()) return;
+          try {
+            const bounds = meshCodeToBounds(meshCode);
+            const img = await loadImageElement(`${baseUrl}${meshCode}.png`);
+            if (isStale()) return;
+            const { fillFeatures, lineCoords } = buildEstIntensityFeaturesFromImage(img, bounds);
+            allFillFeatures.push(...fillFeatures);
+            allLineCoords.push(...lineCoords);
+          } catch (err) {
+            console.error(`推計震度分布メッシュ(${meshCode})の変換に失敗:`, err);
+          }
+        }
 
-          map.addSource(sourceId, {
-            type: "image",
-            url: `${baseUrl}${meshCode}.png`,
-            // 左上→右上→右下→左下の順(MapLibreのimageソースの座標指定順)
-            coordinates: [
-              [lonStart, latEnd],
-              [lonEnd, latEnd],
-              [lonEnd, latStart],
-              [lonStart, latStart],
-            ],
-          });
-          map.addLayer({
-            id: layerId,
-            type: "raster",
-            source: sourceId,
-            paint: { "raster-opacity": 0.75 },
-          }, map.getLayer("station-points-symbol") ? "station-points-symbol" : undefined);
-          newIds.push({ sourceId, layerId });
+        if (isStale()) return;
+
+        map.getSource("est-intensity-fill")?.setData({ type: "FeatureCollection", features: allFillFeatures });
+        map.getSource("est-intensity-line")?.setData({
+          type: "FeatureCollection",
+          features: [{ type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: allLineCoords } }],
         });
-
-        estIntensityLayerIdsRef.current = newIds;
+        setEstIntensityLoading(false);
       })
       .catch(err => {
         console.error("推計震度分布の取得に失敗:", err);
+        if (!isStale()) setEstIntensityLoading(false);
       });
   }, [status, quakeTimeStr, maxIntensityKey, estIntensityEnabled]);
+
+  // 震度配色スキームが変わったら、既に表示中の推計震度分布の塗り色だけを塗り替える
+  // (データの再取得・再解析は不要なため、これは別のuseEffectに分けている)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (map.getLayer("est-intensity-fill-layer")) {
+      map.setPaintProperty("est-intensity-fill-layer", "fill-color", buildEstIntensityFillColorExpr(colorScheme));
+    }
+  }, [colorScheme, status]);
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#121214" }}>
@@ -774,6 +824,37 @@ function MapCanvas({
             animation: "spin 0.8s linear infinite",
           }}/>
           <span style={{ fontSize: 12 }}>地図を読み込み中…</span>
+        </div>
+      )}
+
+      {/* 推計震度分布を画像→ベクター変換している間の、地図を隠さない小さなローディング表示 */}
+      {status === "ready" && estIntensityLoading && (
+        <div style={{
+          position: "absolute",
+          top: "calc(14px + env(safe-area-inset-top, 0px))",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 5,
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "8px 14px",
+          borderRadius: 999,
+          background: "rgba(20,20,22,0.75)",
+          backdropFilter: "blur(10px)",
+          WebkitBackdropFilter: "blur(10px)",
+          color: "rgba(255,255,255,0.85)",
+          fontSize: 12,
+          fontWeight: 600,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+          pointerEvents: "none",
+        }}>
+          <div style={{
+            width: 14, height: 14, borderRadius: "50%",
+            border: "2px solid rgba(255,255,255,0.25)",
+            borderTopColor: "rgba(255,255,255,0.9)",
+            animation: "spin 0.8s linear infinite",
+            flexShrink: 0,
+          }}/>
+          推計震度分布を計算中…
         </div>
       )}
 
@@ -1335,6 +1416,127 @@ async function fetchEstimatedIntensityMatch(quakeTimeStr, maxIntensityKey) {
     }
   }
   return null;
+}
+
+/* ─────────────────────────────────────────────────────
+   推計震度分布 画像 → ベクター(GeoJSON)変換
+   参考: 【気象庁HP】推計震度分布図のGeoJSONデータを無料で取得したい！！
+         https://qiita.com/ZeroQuake/items/e6dd2691fe8fa5e2b3b2
+   気象庁の画像(800×800px)は250mメッシュ(1メッシュ=2.5px)を表現しているため、
+   拡大するとアンチエイリアスで境界がぼやける。ズームしても輪郭が鮮明なままになるよう、
+   画像を1度だけピクセル解析し、320×320の格子(メッシュ)ごとに震度階級を判定して
+   ポリゴン(塗り)・境界線(隣接メッシュと震度階級が異なる辺のみ)に変換する。
+   ───────────────────────────────────────────────────── */
+const EST_INTENSITY_GRID_SIZE = 320;
+
+// 気象庁の公式配色(推計震度分布画像で使われている色)と震度階級の対応。
+// 画像は圧縮等で色が微妙にずれることがあるため、RGB各値の差分16未満を許容して判定する
+// (元記事の閾値をそのまま採用)。
+const EST_INTENSITY_COLOR_TABLE = [
+  { key: "4",  r: 250, g: 230, b: 150 },
+  { key: "5-", r: 255, g: 230, b: 0   },
+  { key: "5+", r: 255, g: 153, b: 0   },
+  { key: "6-", r: 255, g: 40,  b: 0   },
+  { key: "6+", r: 165, g: 0,   b: 33  },
+  { key: "7",  r: 180, g: 0,   b: 104 },
+];
+
+function classifyEstIntensityColor(r, g, b, a) {
+  if (a <= 50) return null; // 透明(データ無し)
+  for (const c of EST_INTENSITY_COLOR_TABLE) {
+    if (Math.abs(r - c.r) < 16 && Math.abs(g - c.g) < 16 && Math.abs(b - c.b) < 16) return c.key;
+  }
+  return null;
+}
+
+// 画像を読み込む。getImageData()でピクセルを読み取るため、crossOriginを明示的に指定し、
+// キャンバスが「汚染」されて読み取り不能にならないようにする。
+function loadImageElement(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`画像の読み込みに失敗しました: ${url}`));
+    img.src = url;
+  });
+}
+
+// 1枚の推計震度分布画像(1次メッシュ分)を、250mメッシュ単位の格子に分解し、
+// 塗り用ポリゴン(fillFeatures)と、震度階級が変わる境目だけの線分(lineCoords)を作る。
+function buildEstIntensityFeaturesFromImage(img, meshBounds) {
+  const { latStart: lat, lonStart: lng, latEnd: lat2, lonEnd: lng2 } = meshBounds;
+  const GRID = EST_INTENSITY_GRID_SIZE;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 800;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, 800, 800);
+  // クロスオリジンで汚染されたcanvasの場合、ここでSecurityErrorが投げられる
+  // (呼び出し側でtry/catchして「表示しない」扱いにフォールバックする)。
+  const imgData = ctx.getImageData(0, 0, 800, 800).data;
+
+  // grid[i][j] = 判定された震度キー(該当なしはnull)。
+  // アンチエイリアスの影響を受けない「元の色を完全に反映するピクセル」だけを
+  // 参照する(x: 5n+1,5n+3 / y: 5m+1,5m+4 のパターンで交互に2px・3pxずつ進む)。
+  const grid = Array.from({ length: GRID }, () => new Array(GRID).fill(null));
+  let y = 1;
+  for (let i = 0; i < GRID; i++) {
+    let x = 1;
+    for (let j = 0; j < GRID; j++) {
+      const idx = (y * 800 + x) * 4;
+      grid[i][j] = classifyEstIntensityColor(
+        imgData[idx], imgData[idx + 1], imgData[idx + 2], imgData[idx + 3]
+      );
+      x += (j % 2 === 0) ? 3 : 2;
+    }
+    y += (i % 2 === 0) ? 2 : 3;
+  }
+
+  const fillFeatures = [];
+  const lineCoords = [];
+
+  for (let i = 0; i < GRID; i++) {
+    for (let j = 0; j < GRID; j++) {
+      const intensity = grid[i][j];
+      if (!intensity) continue;
+
+      const North = lat2 + ((lat - lat2) / GRID) * i;
+      const South = lat2 + ((lat - lat2) / GRID) * (i + 1);
+      const West = lng + ((lng2 - lng) / GRID) * j;
+      const East = lng + ((lng2 - lng) / GRID) * (j + 1);
+
+      fillFeatures.push({
+        type: "Feature",
+        properties: { intensity },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[[West, North], [East, North], [East, South], [West, South], [West, North]]],
+        },
+      });
+
+      // 右隣・下隣と震度階級が異なる(データ無しを含む)場合だけ、その辺を境界線にする。
+      // (全メッシュの外周を線にすると格子状にうるさくなるため、階級が変わる境目に限定)
+      if ((j + 1 < GRID ? grid[i][j + 1] : null) !== intensity) {
+        lineCoords.push([[East, North], [East, South]]);
+      }
+      if ((i + 1 < GRID ? grid[i + 1][j] : null) !== intensity) {
+        lineCoords.push([[West, South], [East, South]]);
+      }
+    }
+  }
+
+  return { fillFeatures, lineCoords };
+}
+
+// 現在の震度配色スキームから、MapLibreの"fill-color"に使うmatch式を組み立てる。
+// (推計震度分布も、他の震度表示と同じアプリ内配色に合わせて塗るため)
+function buildEstIntensityFillColorExpr(colorScheme) {
+  const expr = ["match", ["get", "intensity"]];
+  for (const c of EST_INTENSITY_COLOR_TABLE) {
+    expr.push(c.key, (colorScheme.colors[c.key] || colorScheme.colors["0"]).bg);
+  }
+  expr.push("rgba(0,0,0,0)"); // 該当なし(通常は発生しない)
+  return expr;
 }
 
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
