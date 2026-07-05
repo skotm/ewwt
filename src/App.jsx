@@ -2391,6 +2391,13 @@ function BottomDock({
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
   const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
 
+  // ハンドル行を当たり判定確保のため18px→26pxへ広げた分(+8px)。
+  // 各スナップの固定高さは元々HANDLE_HEIGHT=18px前提で調整済みだったため、
+  // このズレをそのまま加算して中身の表示領域を変えないようにする
+  // (これを入れないと、ハンドルが広がった分だけ各スナップで中身の下端が
+  //  見切れてしまう — 特に地震カード表示時に顕著だった)。
+  const HANDLE_HEIGHT_DELTA = HANDLE_HEIGHT - 18;
+
   // 0:低(閉) 1:中 2:中中 3:中高 4:高 5:全画面
   // 「高」「全画面」は、以前は表示中のタブの中身の実測高さ(naturalHeight)を
   // 元に計算していたが、これだと地震タブ(地震の件数や「各地の震度」展開で
@@ -2399,17 +2406,17 @@ function BottomDock({
   // → タブごとの中身の長さには一切依存させず、常に同じ固定値/画面基準の
   //    値にすることで、どのタブでも「高」「全画面」が同じ高さになるようにする。
   //    中身がその高さより長い場合は、パネル内部のスクロール(scrollRef)に任せる。
-  const highHeight = 390; // 「高」の固定高さ(px)。地図レイヤー一覧(6項目)相当の目安(旧: 350)
+  const highHeight = 390 + HANDLE_HEIGHT_DELTA; // 「高」の固定高さ(px)。地図レイヤー一覧(6項目)相当の目安(旧: 350)
   const fullscreenContentHeight = viewportH - TOP_GAP - BOTTOM_OFFSET - NAV_ROW_HEIGHT;
 
   // 「中」「中高」はタブによらず常に同じ高さになるよう固定pxで持つ
   // (地図レイヤー一覧で調整済みだった見た目の高さをそのまま定数化している)。
-  const MID_FIXED     = 115; // 「中」の固定高さ(px)
+  const MID_FIXED     = 115 + HANDLE_HEIGHT_DELTA; // 「中」の固定高さ(px)
   // 「中中」の固定高さ(px)。「中」と「中高」の間に設ける中間スナップ。
-  const MIDMID_FIXED = 200;
+  const MIDMID_FIXED = 200 + HANDLE_HEIGHT_DELTA;
   // 「中高」の固定高さ(px)。設定タブのトップメニュー(ヘッダー+5項目のカード)が
   // スクロールなしで丸ごと収まる高さを基準に調整している(旧: 222px)。
-  const MIDHIGH_FIXED = 290;
+  const MIDHIGH_FIXED = 290 + HANDLE_HEIGHT_DELTA;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
   const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
   const midHighHeight = Math.max(
@@ -2424,7 +2431,7 @@ function BottomDock({
   // 地震を選択した直後にスナップする「低(カードのみ)」の高さ。
   // 完全に閉じる(0)ではなく、QuakeDetailCard 1枚(+ハンドル)がちょうど収まる
   // 高さにして、地図の震源付近が広く見えつつカードも確認できるようにする。
-  const CARD_ONLY_HEIGHT = 96; // QuakeDetailCard 1枚の実測目安(margin込み)
+  const CARD_ONLY_HEIGHT = 96 + HANDLE_HEIGHT_DELTA; // QuakeDetailCard 1枚の実測目安(margin込み)
   const quakeLowHeight = Math.min(CARD_ONLY_HEIGHT, midHeight - GAP);
 
   const SNAP_HEIGHTS = [
