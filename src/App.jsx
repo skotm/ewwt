@@ -2345,8 +2345,9 @@ function BottomDock({
   areaFillEnabled, onChangeAreaFillEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
 }) {
-  const HANDLE_HEIGHT = 26; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
-                            // 直下のQuakeListToolbarとの誤タップを避けるため、当たり判定を広めに取っている。
+  const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
+                            // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
+                            // 引き渡す(onHandoffToPanelDrag)ため、ハンドル自体を広げる必要はない。
   const scrollRef = useRef(null);
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
@@ -2391,11 +2392,11 @@ function BottomDock({
   const BOTTOM_OFFSET   = 32; // 親側の bottom:16px+safeArea の概算
   const TOP_GAP         = 56; // 全画面時に画面最上部へ残す余白
 
-  // ハンドル行を当たり判定確保のため18px→26pxへ広げた分(+8px)。
-  // 各スナップの固定高さは元々HANDLE_HEIGHT=18px前提で調整済みだったため、
-  // このズレをそのまま加算して中身の表示領域を変えないようにする
-  // (これを入れないと、ハンドルが広がった分だけ各スナップで中身の下端が
-  //  見切れてしまう — 特に地震カード表示時に顕著だった)。
+  // ハンドル行の高さ(HANDLE_HEIGHT)を変更した場合の差分。
+  // 各スナップの固定高さは元々HANDLE_HEIGHT=18px前提で調整済みなので、
+  // ここで差分を加算しておくことで、将来ハンドルの高さを変えても
+  // 中身の表示領域(ここが本質)は変えずに済むようにしている。
+  // 現在はHANDLE_HEIGHT=18のためこの差分は0。
   const HANDLE_HEIGHT_DELTA = HANDLE_HEIGHT - 18;
 
   // 0:低(閉) 1:中 2:中中 3:中高 4:高 5:全画面
