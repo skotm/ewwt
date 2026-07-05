@@ -1473,12 +1473,23 @@ const EST_INTENSITY_COLOR_TABLE = [
   { key: "7",  r: 180, g: 0,   b: 104 },
 ];
 
+// ピクセルの色から、最も近い震度階級を選ぶ(周囲から推測するのではなく、
+// あくまでそのピクセル自身の色を根拠にする)。
+// 境界(色の変わり目)は元画像でアンチエイリアスがかかっており、6色のどれとも
+// 「ぴったり一致」しない中間色になっていることがある。以前は許容誤差(閾値)を
+// 決めて外れたものを「データなし」にしていたが、それだと本来は震度が付いている
+// はずのメッシュまで欠落して見えてしまう。実際にはその中間色は隣り合う2つの
+// 震度色のどちらかに近いはずなので、6色のうち最も色が近いものを選ぶ方が、
+// 周囲のメッシュから推測するよりも本来のデータに忠実。
 function classifyEstIntensityColor(r, g, b, a) {
-  if (a <= 50) return null; // 透明(データ無し)
+  if (a <= 50) return null; // 透明(=本当にデータが無い場所)
+  let best = null;
+  let bestDist = Infinity;
   for (const c of EST_INTENSITY_COLOR_TABLE) {
-    if (Math.abs(r - c.r) < 16 && Math.abs(g - c.g) < 16 && Math.abs(b - c.b) < 16) return c.key;
+    const dist = (r - c.r) ** 2 + (g - c.g) ** 2 + (b - c.b) ** 2;
+    if (dist < bestDist) { bestDist = dist; best = c.key; }
   }
-  return null;
+  return best;
 }
 
 // 画像を読み込む。getImageData()でピクセルを読み取るため、crossOriginを明示的に指定し、
