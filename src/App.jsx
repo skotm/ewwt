@@ -532,8 +532,8 @@ function MapCanvas({
             type: "line",
             source: "est-intensity-line",
             paint: {
-              "line-color": "rgba(0,0,0,0.35)",
-              "line-width": 0.6,
+              "line-color": "rgba(0,0,0,0.45)",
+              "line-width": 1,
             },
           });
 
