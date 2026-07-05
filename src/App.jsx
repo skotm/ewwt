@@ -513,6 +513,9 @@ function MapCanvas({
             paint: {
               "fill-color": buildEstIntensityFillColorExpr(colorScheme),
               "fill-opacity": 0.75,
+              // 隣接するポリゴン同士(矩形統合しきれなかった境目)にGPU描画特有の
+              // 細い隙間(白線)が出るのを防ぐため、アンチエイリアスを無効化する。
+              "fill-antialias": false,
             },
           });
           map.addSource("est-intensity-line", {
@@ -756,6 +759,8 @@ function MapCanvas({
 
         // メッシュ(1次メッシュ画像)単位で処理する。1枚の取得・解析に失敗しても、
         // 他のメッシュは表示できるよう、失敗はログに残すだけで処理を継続する。
+        // 1枚ごとに処理後わずかに間を空け(setTimeout 0)、ピクセル走査中もブラウザが
+        // 操作やアニメーションに応答できるようにする(長時間のフリーズを避けるため)。
         for (const meshCode of matched.mesh_num) {
           if (isStale()) return;
           try {
@@ -765,6 +770,7 @@ function MapCanvas({
             const { fillFeatures, lineCoords } = buildEstIntensityFeaturesFromImage(img, bounds);
             allFillFeatures.push(...fillFeatures);
             allLineCoords.push(...lineCoords);
+            await new Promise(resolve => setTimeout(resolve, 0));
           } catch (err) {
             console.error(`推計震度分布メッシュ(${meshCode})の変換に失敗:`, err);
           }
@@ -1492,9 +1498,30 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
     y += (i % 2 === 0) ? 2 : 3;
   }
 
-  const fillFeatures = [];
-  const lineCoords = [];
+  // ─ 塗り: 同じ震度階級が隣接するメッシュを1枚の四角形にまとめる(矩形統合)。
+  // 250mメッシュ1枚ごとにポリゴンを作ると(広い震度5弱の範囲などで)数万枚に
+  // なってしまい、MapLibre側の描画処理が重くフリーズの原因になる。また、
+  // 同じ色のポリゴン同士が隣接する境目にGPU描画特有の細い隙間(白線)が
+  // 見えてしまう問題もあるため、まとめて1枚にすることで両方を解消する。
+  const rectangles = mergeGridIntoRectangles(grid, GRID);
+  const fillFeatures = rectangles.map(rect => {
+    const North = lat2 + ((lat - lat2) / GRID) * rect.i0;
+    const South = lat2 + ((lat - lat2) / GRID) * (rect.i1 + 1);
+    const West = lng + ((lng2 - lng) / GRID) * rect.j0;
+    const East = lng + ((lng2 - lng) / GRID) * (rect.j1 + 1);
+    return {
+      type: "Feature",
+      properties: { intensity: rect.intensity },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[West, North], [East, North], [East, South], [West, South], [West, North]]],
+      },
+    };
+  });
 
+  // ─ 境界線: 震度階級が変わる境目だけを抽出する(こちらは1メッシュ単位のまま判定してよい。
+  // 境界線分の本数はデータの輪郭部分のみに限られるため、塗りほどの負荷にはならない)。
+  const lineCoords = [];
   for (let i = 0; i < GRID; i++) {
     for (let j = 0; j < GRID; j++) {
       const intensity = grid[i][j];
@@ -1504,15 +1531,6 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
       const South = lat2 + ((lat - lat2) / GRID) * (i + 1);
       const West = lng + ((lng2 - lng) / GRID) * j;
       const East = lng + ((lng2 - lng) / GRID) * (j + 1);
-
-      fillFeatures.push({
-        type: "Feature",
-        properties: { intensity },
-        geometry: {
-          type: "Polygon",
-          coordinates: [[[West, North], [East, North], [East, South], [West, South], [West, North]]],
-        },
-      });
 
       // 右隣・下隣と震度階級が異なる(データ無しを含む)場合だけ、その辺を境界線にする。
       // (全メッシュの外周を線にすると格子状にうるさくなるため、階級が変わる境目に限定)
@@ -1526,6 +1544,51 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
   }
 
   return { fillFeatures, lineCoords };
+}
+
+// 格子(grid[i][j] = 震度キー or null)を、同じ震度階級が連続する矩形の集まりに変換する。
+// 手順: ① 各行ごとに横方向へ連続する同じ値をひとまとめの区間(ラン)にする
+//       ② 上の行から縦方向に伸ばせる区間(j0・j1・intensityが完全一致)は1つの矩形として延長し、
+//          伸ばせなくなった時点で確定させる
+// (震源付近のような大きな塊はこれでほぼ1枚〜数枚の矩形にまとまり、ポリゴン数が劇的に減る)
+function mergeGridIntoRectangles(grid, GRID) {
+  const finished = [];
+  let openRects = []; // 直前の行まで伸びている矩形: { j0, j1, intensity, i0, i1 }
+
+  for (let i = 0; i < GRID; i++) {
+    // この行の横方向のラン(連続区間)を作る
+    const runs = [];
+    let j = 0;
+    while (j < GRID) {
+      const intensity = grid[i][j];
+      if (!intensity) { j++; continue; }
+      let j1 = j;
+      while (j1 + 1 < GRID && grid[i][j1 + 1] === intensity) j1++;
+      runs.push({ j0: j, j1, intensity });
+      j = j1 + 1;
+    }
+
+    const nextOpenRects = [];
+    for (const run of runs) {
+      // 直前の行で同じ範囲・同じ震度階級の矩形が伸びてきていれば、そのまま延長する
+      const match = openRects.find(r => r.j0 === run.j0 && r.j1 === run.j1 && r.intensity === run.intensity && r.i1 === i - 1);
+      if (match) {
+        match.i1 = i;
+        nextOpenRects.push(match);
+      } else {
+        nextOpenRects.push({ j0: run.j0, j1: run.j1, intensity: run.intensity, i0: i, i1: i });
+      }
+    }
+
+    // 今回延長されなかった(=これ以上下に続かない)矩形は確定させる
+    for (const r of openRects) {
+      if (!nextOpenRects.includes(r)) finished.push(r);
+    }
+    openRects = nextOpenRects;
+  }
+  finished.push(...openRects); // 最後の行まで伸びていた分を確定させる
+
+  return finished;
 }
 
 // 現在の震度配色スキームから、MapLibreの"fill-color"に使うmatch式を組み立てる。
