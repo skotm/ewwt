@@ -1871,6 +1871,185 @@ function aggregateByArea(resolvedPoints) {
   return maxByArea;
 }
 
+/* ─────────────────────────────────────────────────────
+   気象庁 震度データベース(eqdb) 検索API
+   https://www.data.jma.go.jp/eqdb/data/shindo/
+   過去の地震を期間・マグニチュード・最大震度で検索する(mode=search)、
+   および1件の地震の観測点別震度を取得する(mode=event)ためのAPI。
+   このAPIはP2P地震情報と違い、観測点の緯度経度(lat/lon)を直接返してくるため、
+   自前の観測点マスタ(stations)との突き合わせをしなくても地図に描画できる。
+   ───────────────────────────────────────────────────── */
+const EQDB_API_URL = "https://www.data.jma.go.jp/eqdb/data/shindo/api/";
+
+// 検索フォーム「最大震度」欄の選択肢。値はeqdb APIのmaxIntパラメータそのもの。
+const EQDB_MAX_INT_OPTIONS = [
+  { value: "1", label: "指定なし（震度1以上）" },
+  { value: "2", label: "震度2以上" },
+  { value: "3", label: "震度3以上" },
+  { value: "4", label: "震度4以上" },
+  { value: "A", label: "震度5弱以上" },
+  { value: "B", label: "震度5強以上" },
+  { value: "C", label: "震度6弱以上" },
+  { value: "D", label: "震度6強以上" },
+  { value: "7", label: "震度7" },
+];
+const EQDB_MAX_INT_SCALE = { "1": 10, "2": 20, "3": 30, "4": 40, "A": 45, "B": 50, "C": 55, "D": 60, "7": 70 };
+
+const EQDB_SORT_OPTIONS = [
+  { value: "S0", label: "新しい順" },
+  { value: "S1", label: "古い順" },
+  { value: "S2", label: "最大震度の大きい順" },
+  { value: "S3", label: "地震の規模の大きい順" },
+];
+
+// 最小マグニチュードの選択肢("1.0"〜"9.9")
+const EQDB_MIN_MAG_OPTIONS = Array.from({ length: 90 }, (_, i) => ((i + 10) / 10).toFixed(1));
+
+// "震度５弱"/"５弱"/"震度７" のような文字列(全角数字・「震度」接頭辞の有無を問わない)を
+// 10刻みのJMAスケール(10=震度1 ... 70=震度7、47=旧震度5、57=旧震度6)に変換する。
+function eqdbIntensityStringToScale(raw) {
+  if (!raw) return 0;
+  const str = raw
+    .replace(/震度/g, "")
+    .replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .trim();
+  const map = {
+    "7": 70, "6強": 60, "6弱": 55, "6": 57,
+    "5強": 50, "5弱": 45, "5": 47,
+    "4": 40, "3": 30, "2": 20, "1": 10,
+  };
+  return map[str] || 0;
+}
+
+// eqdbのid(dbid)は "YYYYMMDDHHMMSS..." 形式の発生時刻エンコード文字列。
+// アプリ内の他の地震カードと表示を揃えるため "YYYY/MM/DD HH:MM:SS" に変換する。
+function eqdbIdToTimeDisplay(id) {
+  if (!id || id.length < 14) return "";
+  return `${id.slice(0,4)}/${id.slice(4,6)}/${id.slice(6,8)} ${id.slice(8,10)}:${id.slice(10,12)}:${id.slice(12,14)}`;
+}
+
+// mode=search: 期間・M・最大震度で地震を検索する。観測点別の詳細は含まない一覧のみを返す。
+async function fetchEqdbSearch({ startDate, endDate, minMag, maxInt, sort }) {
+  const isFiltered = minMag > 0 || maxInt !== "1";
+  const fd = new FormData();
+  fd.append("mode", "search");
+  fd.append("dateTimeF[]", startDate); fd.append("dateTimeF[]", "00:00");
+  fd.append("dateTimeT[]", endDate);   fd.append("dateTimeT[]", "23:59");
+  fd.append("mag[]", minMag.toFixed(1)); fd.append("mag[]", "9.9");
+  fd.append("dep[]", "000"); fd.append("dep[]", "999");
+  fd.append("epi[]", "99"); fd.append("pref[]", "99"); fd.append("city[]", "99"); fd.append("station[]", "99");
+  fd.append("obsInt", "1");
+  fd.append("maxInt", maxInt);
+  fd.append("additionalC", isFiltered ? "true" : "false");
+  fd.append("Sort", sort);
+  fd.append("Comp", "C0");
+  fd.append("seisCount", "false");
+  fd.append("observed", "false");
+  fd.append("strParam", "[object Object]");
+
+  const res = await fetch(EQDB_API_URL, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  const list = Array.isArray(data.res) ? data.res : [];
+  const strMsgs = Array.isArray(data.str) ? data.str : [];
+  const errMsg = strMsgs.find(s => s.includes("ありません") || s.includes("エラー") || s.includes("見直し"));
+  return { list, errMsg, summary: strMsgs[1] || "" };
+}
+
+// mode=event: 1件の地震について、観測点ごとの震度(int[], lat/lon付き)を含む詳細を取得する。
+async function fetchEqdbEvent(id) {
+  const fd = new FormData();
+  fd.append("mode", "event");
+  fd.append("id", id);
+  const res = await fetch(EQDB_API_URL, { method: "POST", body: fd });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  if (data.res && Array.isArray(data.res.hyp) && data.res.hyp.length > 0) return data.res;
+  return null;
+}
+
+// 観測点マスタ(stations)から同名の地点を探し、区域コード(area.code)をベストエフォートで補完する。
+// eqdbの観測点データには区域コードが無いため、区域単位の震度塗り分け(aggregateByArea)を
+// 使えるようにするための補助。同名地点が複数県にまたがる場合は、eqdbが返す緯度経度に
+// 最も近いものを採用することで、県名が分からなくても正しい地点を選べるようにしている。
+function findAreaCodeByStationName(stations, name, lat, lon) {
+  if (!stations || !name) return null;
+  const candidates = stations.filter(s => s.name === name);
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1 || lat == null || lon == null) return candidates[0]?.area?.code || null;
+  let best = candidates[0], bestDist = Infinity;
+  for (const c of candidates) {
+    const dLat = parseFloat(c.lat) - lat, dLon = parseFloat(c.lon) - lon;
+    const dist = dLat * dLat + dLon * dLon;
+    if (dist < bestDist) { bestDist = dist; best = c; }
+  }
+  return best?.area?.code || null;
+}
+
+// eqdbのmode=eventレスポンスを、アプリ内の「地震カード」共通形式に変換する。
+// P2P地震情報由来のカードと違い、resolvedPointsとして緯度経度・震度キーまで
+// 解決済みの状態を直接持たせる。selectedQuakePoints側は、resolvedPointsが
+// あればそれをそのまま使い、無ければ従来通り観測点マスタで解決する。
+function buildEqdbQuakeCard(detail, listItem, stations) {
+  const hyp = detail.hyp[0];
+  const intPoints = Array.isArray(detail.int) ? detail.int : [];
+
+  const lat = parseFloat(hyp.lat);
+  const lon = parseFloat(hyp.lon);
+  const mag = parseFloat(hyp.mag);
+  const depMatch = (hyp.dep || "").match(/\d+/);
+  const depth = depMatch ? parseInt(depMatch[0], 10) : 0;
+  const maxScale = eqdbIntensityStringToScale(hyp.maxI || "");
+
+  const resolvedPoints = intPoints.map(pt => {
+    const scale = eqdbIntensityStringToScale(pt.int || "");
+    if (scale <= 0) return null;
+    const pLat = parseFloat(pt.lat), pLon = parseFloat(pt.lon);
+    return {
+      pref: null,
+      addr: pt.name,
+      intensityKey: maxScaleToIntensityKey(scale),
+      latitude: Number.isFinite(pLat) ? pLat : null,
+      longitude: Number.isFinite(pLon) ? pLon : null,
+      areaCode: findAreaCodeByStationName(stations, pt.name, pLat, pLon),
+    };
+  }).filter(Boolean);
+
+  return {
+    id: `eqdb_${listItem?.id || hyp.name}`,
+    time: eqdbIdToTimeDisplay(listItem?.id) || (listItem?.ot || ""),
+    place: hyp.name || listItem?.name || "震源地不明",
+    maxIntensity: maxScaleToIntensityKey(maxScale),
+    isForeign: false,
+    magnitude: Number.isFinite(mag) && mag > 0 ? mag : null,
+    depth: Number.isFinite(depth) ? depth : null,
+    longPeriod: null,
+    latitude: Number.isFinite(lat) ? lat : null,
+    longitude: Number.isFinite(lon) ? lon : null,
+    points: [],
+    resolvedPoints,
+    // eqdbには津波情報が含まれないため、津波の心配なし文言をデフォルトにしておく
+    domesticTsunami: "None",
+    freeFormComment: "気象庁 震度データベースより取得",
+  };
+}
+
+// 検索結果一覧(mode=searchの生データ)の1件を、QuakeListRowでそのまま表示できる
+// 「地震カード」互換の軽量プレビュー形式に変換する(観測点別震度はまだ持たない)。
+function eqdbListItemToPreview(eq) {
+  const scale = eqdbIntensityStringToScale(eq.maxI || "");
+  const depMatch = (eq.dep || "").match(/\d+/);
+  const mag = parseFloat(eq.mag);
+  return {
+    id: eq.id,
+    time: eqdbIdToTimeDisplay(eq.id) || (eq.ot || ""),
+    place: eq.name || "震源地不明",
+    maxIntensity: scale > 0 ? maxScaleToIntensityKey(scale) : "?",
+    isForeign: false,
+    magnitude: Number.isFinite(mag) && mag > 0 ? mag : null,
+    depth: depMatch ? parseInt(depMatch[0], 10) : null,
+  };
+}
 
 /* ─────────────────────────────────────────────────────
    AUTO FIT TEXT
@@ -2344,6 +2523,7 @@ function BottomDock({
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
+  stations, searchQuake, onFoundSearchQuake,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
@@ -2364,7 +2544,6 @@ function BottomDock({
   // "search" = 気象庁 震度データベースを検索するUI。
   // タブを離れたら次に開いた時は必ず「一覧」から始まるようにリセットする。
   const [quakeViewMode, setQuakeViewMode] = useState("recent"); // "recent" | "search"
-  const [quakeSearchKeyword, setQuakeSearchKeyword] = useState("");
   useEffect(() => {
     if (active !== "quake") setQuakeViewMode("recent");
   }, [active]);
@@ -2779,7 +2958,7 @@ function BottomDock({
           <div>
             {active === "quake" ? (
               <>
-                {quakeStatus === "loading" && quakes.length === 0 && (
+                {quakeViewMode !== "search" && quakeStatus === "loading" && quakes.length === 0 && (
                   <div style={{
                     display: "flex", alignItems: "center", justifyContent: "center",
                     gap: 8, padding: "18px 0", color: "rgba(255,255,255,0.45)",
@@ -2794,7 +2973,7 @@ function BottomDock({
                   </div>
                 )}
 
-                {quakeStatus === "error" && quakes.length === 0 && (
+                {quakeViewMode !== "search" && quakeStatus === "error" && quakes.length === 0 && (
                   <div style={{ padding: "18px 16px", textAlign: "center" }}>
                     <span style={{ fontSize: 12, color: "rgba(255,140,140,0.9)" }}>
                       地震情報の取得に失敗しました
@@ -2802,8 +2981,11 @@ function BottomDock({
                   </div>
                 )}
 
-                {quakes.length > 0 && (() => {
-                  const selected = quakes.find(q => q.id === selectedQuakeId) || null;
+                {(() => {
+                  // 選択中の地震は、直近一覧(quakes)だけでなく、気象庁 震度データベース検索
+                  // から開いた地震(searchQuake)も対象に探す(検索結果はquakesには入れていないため)。
+                  const selected = quakes.find(q => q.id === selectedQuakeId)
+                    || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
 
                   // 選択中は「カード(+各地の震度)のみ」、未選択は「一覧のみ」の排他表示。
                   if (selected) {
@@ -2818,17 +3000,13 @@ function BottomDock({
                     );
                   }
 
-                  // 「検索」モード: 気象庁 震度データベースの検索UI。
-                  // TODO: 現時点ではキーワードによる地名の絞り込みを、既に取得済みの
-                  // 直近フィード(quakes)に対して行っている簡易版。気象庁 震度データベース
-                  // (より長期間・詳細な検索が可能な本来のデータソース)への接続は今後追加する。
+                  // 「検索」モード: 気象庁 震度データベース(eqdb)を期間・M・最大震度で検索するUI。
                   if (quakeViewMode === "search") {
                     return (
                       <QuakeSearchPanel
-                        quakes={quakes}
-                        keyword={quakeSearchKeyword}
-                        onChangeKeyword={setQuakeSearchKeyword}
+                        stations={stations}
                         colorScheme={colorScheme}
+                        onFoundQuake={onFoundSearchQuake}
                         onSelectQuake={(id) => { onSelectQuake(id); setSnapIndex(1); }}
                       />
                     );
@@ -3175,66 +3353,194 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   QUAKE SEARCH PANEL
-   「検索」モードの中身。キーワード入力欄 + 結果一覧。
-   TODO: 現在は取得済みの直近フィード(quakes)を地名でフィルタする簡易実装。
-         気象庁 震度データベース(本来のデータソース)へのAPI接続は今後追加する。
+   EQDB FORM FIELD — 検索フォームの1項目(ラベル+入力欄)の共通ラッパー
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ quakes, keyword, onChangeKeyword, colorScheme, onSelectQuake }) {
-  const trimmed = keyword.trim();
-  const results = trimmed
-    ? quakes.filter(q => (q.place || "").toLowerCase().includes(trimmed.toLowerCase()))
-    : [];
+const EQDB_INPUT_STYLE = {
+  width: "100%", background: "rgba(255,255,255,0.08)", color: "#fff",
+  border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8,
+  padding: "7px 8px", fontSize: 13, outline: "none", boxSizing: "border-box",
+  colorScheme: "dark",
+};
+
+function EqdbFormField({ label, full, children }) {
+  return (
+    <div style={{ flex: full ? "1 1 100%" : 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+      <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+// 今日を基準に「開始日=1か月前・終了日=今日」を初期値にする
+function defaultEqdbDateRange() {
+  const toValue = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const end = new Date();
+  const start = new Date(end);
+  start.setMonth(start.getMonth() - 1);
+  return { start: toValue(start), end: toValue(end) };
+}
+
+/* ─────────────────────────────────────────────────────
+   QUAKE SEARCH PANEL
+   「検索」モードの中身。気象庁 震度データベース(eqdb)を期間・マグニチュード・
+   最大震度で検索するフォーム + 結果一覧。
+   結果一覧の1件をタップすると、その地震の観測点別震度(mode=event)を取得し、
+   通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
+   onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
+   ───────────────────────────────────────────────────── */
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }) {
+  const [startDate, setStartDate] = useState(() => defaultEqdbDateRange().start);
+  const [endDate,   setEndDate]   = useState(() => defaultEqdbDateRange().end);
+  const [minMag,    setMinMag]    = useState("0.0");
+  const [maxInt,    setMaxInt]    = useState("1");
+  const [sort,      setSort]      = useState("S0");
+
+  const [status,      setStatus]      = useState("");
+  const [isSearching, setIsSearching] = useState(false);
+  const [hasSearched,  setHasSearched] = useState(false);
+  const [results,     setResults]     = useState([]); // mode=searchの生データ一覧
+  const [loadingId,   setLoadingId]   = useState(null); // 詳細取得中のeq.id
+
+  async function handleSearch() {
+    if (isSearching) return;
+    if (!startDate || !endDate) { setStatus("開始日・終了日を指定してください"); return; }
+    setIsSearching(true);
+    setHasSearched(true);
+    setStatus("気象庁 震度データベースを検索中…");
+    try {
+      const minMagNum = parseFloat(minMag) || 0;
+      const { list, errMsg, summary } = await fetchEqdbSearch({ startDate, endDate, minMag: minMagNum, maxInt, sort });
+      if (errMsg) {
+        setStatus(`⚠ ${errMsg}`);
+        setResults([]);
+        return;
+      }
+      const maxIntScale = EQDB_MAX_INT_SCALE[maxInt] || 10;
+      const filtered = list.filter(eq => {
+        const magOk = minMagNum <= 0 || parseFloat(eq.mag) >= minMagNum;
+        const intOk = maxInt === "1" || eqdbIntensityStringToScale(eq.maxI || "") >= maxIntScale;
+        return magOk && intOk;
+      });
+      if (sort === "S2") {
+        filtered.sort((a, b) => eqdbIntensityStringToScale(b.maxI || "") - eqdbIntensityStringToScale(a.maxI || "") || parseFloat(b.mag) - parseFloat(a.mag));
+      } else if (sort === "S3") {
+        filtered.sort((a, b) => parseFloat(b.mag) - parseFloat(a.mag) || eqdbIntensityStringToScale(b.maxI || "") - eqdbIntensityStringToScale(a.maxI || ""));
+      }
+      setResults(filtered);
+      setStatus(
+        filtered.length !== list.length
+          ? `${filtered.length}件（取得${list.length}件からM${minMagNum.toFixed(1)}以上でフィルター）`
+          : (summary || `${filtered.length}件`)
+      );
+    } catch (e) {
+      setStatus(`検索中にエラーが発生しました: ${e.message}`);
+      setResults([]);
+    } finally {
+      setIsSearching(false);
+    }
+  }
+
+  async function handleSelect(eq) {
+    if (loadingId) return;
+    setLoadingId(eq.id);
+    setStatus(`「${eq.name}」の震度データを取得中…`);
+    try {
+      const detail = await fetchEqdbEvent(eq.id);
+      if (!detail) {
+        setStatus("詳細データの取得に失敗しました");
+        return;
+      }
+      const card = buildEqdbQuakeCard(detail, eq, stations);
+      onFoundQuake(card);
+      onSelectQuake(card.id);
+    } catch (e) {
+      setStatus(`詳細データの取得に失敗しました: ${e.message}`);
+    } finally {
+      setLoadingId(null);
+    }
+  }
 
   return (
     <div>
-      {/* 検索入力欄 */}
-      <div style={{ padding: "2px 14px 10px" }}>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8,
-          background: "rgba(255,255,255,0.06)",
-          borderRadius: 12,
-          padding: "8px 12px",
-          boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.14)",
-        }}>
-          <SearchGlassIcon size={15}/>
-          <input
-            value={keyword}
-            onChange={e => onChangeKeyword(e.target.value)}
-            placeholder="地域名で検索（例: 石川県能登地方）"
-            style={{
-              flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none",
-              color: "#fff", fontSize: 13,
-            }}
-          />
+      {/* 検索条件フォーム */}
+      <div style={{ padding: "2px 14px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8 }}>
+          <EqdbFormField label="開始日">
+            <input type="date" value={startDate} max={endDate || undefined}
+              onChange={e => setStartDate(e.target.value)} style={EQDB_INPUT_STYLE}/>
+          </EqdbFormField>
+          <EqdbFormField label="終了日">
+            <input type="date" value={endDate} min={startDate || undefined}
+              onChange={e => setEndDate(e.target.value)} style={EQDB_INPUT_STYLE}/>
+          </EqdbFormField>
         </div>
-        <div style={{ padding: "6px 2px 0", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-          気象庁 震度データベースとの連携は準備中です。現在は取得済みの一覧から検索します。
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <EqdbFormField label="最小M">
+            <select value={minMag} onChange={e => setMinMag(e.target.value)} style={EQDB_INPUT_STYLE}>
+              <option value="0.0">指定なし</option>
+              {EQDB_MIN_MAG_OPTIONS.map(v => <option key={v} value={v}>{`M${v}以上`}</option>)}
+            </select>
+          </EqdbFormField>
+          <EqdbFormField label="最大震度">
+            <select value={maxInt} onChange={e => setMaxInt(e.target.value)} style={EQDB_INPUT_STYLE}>
+              {EQDB_MAX_INT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </EqdbFormField>
         </div>
+
+        <EqdbFormField label="並び順" full>
+          <select value={sort} onChange={e => setSort(e.target.value)} style={EQDB_INPUT_STYLE}>
+            {EQDB_SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </EqdbFormField>
+
+        <button
+          onClick={handleSearch}
+          disabled={isSearching}
+          style={{
+            marginTop: 2, padding: "10px 0", borderRadius: 10,
+            border: "1px solid rgba(10,132,255,0.5)",
+            background: "rgba(10,132,255,0.22)", color: "#64D2FF",
+            fontSize: 14, fontWeight: 700,
+            opacity: isSearching ? 0.5 : 1,
+          }}
+        >
+          {isSearching ? "検索中…" : "🔍 検索"}
+        </button>
+
+        {status !== "" && (
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", textAlign: "center" }}>
+            {status}
+          </div>
+        )}
       </div>
 
-      {/* 検索結果 */}
-      {trimmed === "" ? (
+      {/* 検索結果一覧 */}
+      {!hasSearched ? (
         <div style={{ padding: "18px 16px", textAlign: "center" }}>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-            地域名を入力して検索してください
+            条件を指定して検索してください
           </span>
         </div>
       ) : results.length === 0 ? (
-        <div style={{ padding: "18px 16px", textAlign: "center" }}>
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-            該当する地震が見つかりませんでした
-          </span>
-        </div>
+        !isSearching && (
+          <div style={{ padding: "18px 16px", textAlign: "center" }}>
+            <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+              該当する地震が見つかりませんでした
+            </span>
+          </div>
+        )
       ) : (
-        results.map((q, i) => (
-          <QuakeListRow
-            key={q.id}
-            quake={q}
-            showDivider={i > 0}
-            colorScheme={colorScheme}
-            onSelect={() => onSelectQuake(q.id)}
-          />
+        results.map((eq, i) => (
+          <div key={eq.id} style={loadingId === eq.id ? { opacity: 0.5, pointerEvents: "none" } : undefined}>
+            <QuakeListRow
+              quake={eqdbListItemToPreview(eq)}
+              showDivider={i > 0}
+              colorScheme={colorScheme}
+              onSelect={() => handleSelect(eq)}
+            />
+          </div>
         ))
       )}
     </div>
@@ -3813,6 +4119,10 @@ export default function App() {
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
 
+  // 気象庁 震度データベース(eqdb)検索で開いた地震。直近一覧(quakes)には混ぜず、
+  // ここだけで別管理する(P2P地震情報のWebSocket更新・件数上限に巻き込まれないようにするため)。
+  const [searchQuake, setSearchQuake] = useState(null);
+
   const toggleLayer = id => {
     // 「推計震度分布」レイヤーだけは、layers配列ではなく設定と共有のestIntensityEnabled側で管理する
     if (id === "estIntensity") {
@@ -3838,10 +4148,16 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  // 選択中の地震 + 観測点マスタが揃ったら、観測点ごとの震度に緯度経度を割り当てる
-  const selectedQuake = quakes.find(q => q.id === selectedQuakeId) || null;
+  // 選択中の地震 + 観測点マスタが揃ったら、観測点ごとの震度に緯度経度を割り当てる。
+  // 気象庁 震度データベース検索から開いた地震(searchQuake)は quakes には入っていないため、
+  // そちらも見つからなかった場合のフォールバックとして探す。
+  const selectedQuake = quakes.find(q => q.id === selectedQuakeId)
+    || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
   const selectedQuakePoints = useMemo(() => {
-    if (!selectedQuake || !stations) return [];
+    if (!selectedQuake) return [];
+    // eqdb由来の地震は、観測点の緯度経度を自前で解決済み(resolvedPoints)なのでそのまま使う。
+    if (selectedQuake.resolvedPoints) return selectedQuake.resolvedPoints;
+    if (!stations) return [];
     return resolveStationPoints(selectedQuake.points, stations);
   }, [selectedQuake, stations]);
 
@@ -3878,8 +4194,10 @@ export default function App() {
           const result = dedupeQuakeList(merged);
 
           // 選択中の地震が、統合後もなお一覧に存在しない場合だけ選択解除する。
+          // ただし気象庁 震度データベース検索由来(id が "eqdb_" 始まり)の地震は
+          // そもそもこの一覧(P2P地震情報)には入らないため、対象外にする。
           const selId = selectedQuakeIdRef.current;
-          if (selId != null && !result.some(q => q.id === selId)) {
+          if (selId != null && !String(selId).startsWith("eqdb_") && !result.some(q => q.id === selId)) {
             setSelectedQuakeId(null);
           }
 
@@ -4008,6 +4326,9 @@ export default function App() {
             onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
             quakeFetchLimit={quakeFetchLimit}
             onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
+            stations={stations}
+            searchQuake={searchQuake}
+            onFoundSearchQuake={setSearchQuake}
           />
         </div>
 
