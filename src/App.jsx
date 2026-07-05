@@ -532,7 +532,9 @@ function MapCanvas({
             type: "line",
             source: "est-intensity-line",
             paint: {
-              "line-color": "rgba(0,0,0,0.45)",
+              // 外周(色が付いた範囲と地図の背景との境目)は暗い地図に対して見やすいよう白、
+              // 震度階級同士の境目(4と5-の間など)は両側とも明るい色なので黒のままにする。
+              "line-color": ["match", ["get", "edgeType"], "outer", "rgba(255,255,255,0.8)", "rgba(0,0,0,0.45)"],
               "line-width": 1,
             },
           });
@@ -788,7 +790,8 @@ function MapCanvas({
         // 境界線は、画像の端(1次メッシュの継ぎ目)で誤って線を引いてしまわないよう、
         // 東隣・南隣のメッシュが取得できていれば、その実データを参照して判定する。
         const allFillFeatures = [];
-        const allLineCoords = [];
+        const allOuterLineCoords = [];
+        const allInnerLineCoords = [];
         for (const [meshCode, grid] of gridsByMeshCode) {
           const bounds = boundsByMeshCode.get(meshCode);
           allFillFeatures.push(...buildEstIntensityFillFeatures(grid, bounds));
@@ -799,7 +802,9 @@ function MapCanvas({
             eastGrid: eastCode ? gridsByMeshCode.get(eastCode) : undefined,
             southGrid: southCode ? gridsByMeshCode.get(southCode) : undefined,
           };
-          allLineCoords.push(...buildEstIntensityLineCoords(grid, bounds, neighborGrids));
+          const { outerCoords, innerCoords } = buildEstIntensityLineCoords(grid, bounds, neighborGrids);
+          allOuterLineCoords.push(...outerCoords);
+          allInnerLineCoords.push(...innerCoords);
         }
 
         if (isStale()) return;
@@ -807,7 +812,12 @@ function MapCanvas({
         map.getSource("est-intensity-fill")?.setData({ type: "FeatureCollection", features: allFillFeatures });
         map.getSource("est-intensity-line")?.setData({
           type: "FeatureCollection",
-          features: [{ type: "Feature", properties: {}, geometry: { type: "MultiLineString", coordinates: allLineCoords } }],
+          features: [
+            // 色が付いた範囲と地図の背景との境目(外周)。暗い地図に対して見やすいよう白線にする。
+            { type: "Feature", properties: { edgeType: "outer" }, geometry: { type: "MultiLineString", coordinates: allOuterLineCoords } },
+            // 震度階級同士の境目(4と5-の間など)。両側とも明るい色なので黒線のままでよい。
+            { type: "Feature", properties: { edgeType: "inner" }, geometry: { type: "MultiLineString", coordinates: allInnerLineCoords } },
+          ],
         });
         setEstIntensityLoading(false);
       })
@@ -1577,12 +1587,19 @@ function buildEstIntensityFillFeatures(grid, meshBounds) {
 // 誤って境界線を引いてしまう(隣の画像との継ぎ目に黒い線が入って見える不具合の原因)。
 // これを避けるため、東隣・南隣のメッシュの格子(あれば)を渡してもらい、画像の端では
 // そちらの値を参照して判定する。
+//
+// 境界線は2種類に分けて返す。
+// ・outerCoords: 色が付いた範囲と「データなし(=地図の背景)」との境目。
+//   暗い地図の背景に対して黒線だと見えにくいため、呼び出し側で白線にする。
+// ・innerCoords: 震度階級同士(4と5-など)の境目。両側とも明るい色なので、
+//   今まで通り黒線のままでよい。
 function buildEstIntensityLineCoords(grid, meshBounds, neighborGrids = {}) {
   const { latStart: lat, lonStart: lng, latEnd: lat2, lonEnd: lng2 } = meshBounds;
   const GRID = EST_INTENSITY_GRID_SIZE;
   const { eastGrid, southGrid } = neighborGrids;
 
-  const lineCoords = [];
+  const outerCoords = [];
+  const innerCoords = [];
   for (let i = 0; i < GRID; i++) {
     for (let j = 0; j < GRID; j++) {
       const intensity = grid[i][j];
@@ -1597,17 +1614,17 @@ function buildEstIntensityLineCoords(grid, meshBounds, neighborGrids = {}) {
       // 同じ行・左端(列0)を参照する(東隣メッシュが無ければ本当にデータなし=null)。
       const rightIntensity = j + 1 < GRID ? grid[i][j + 1] : (eastGrid ? eastGrid[i][0] : null);
       if (rightIntensity !== intensity) {
-        lineCoords.push([[East, North], [East, South]]);
+        (rightIntensity ? innerCoords : outerCoords).push([[East, North], [East, South]]);
       }
       // 下隣: 同じ画像内ならgrid[i+1][j]、画像の下端(i+1がGRID)なら南隣メッシュの
       // 同じ列・上端(行0)を参照する(南隣メッシュが無ければ本当にデータなし=null)。
       const bottomIntensity = i + 1 < GRID ? grid[i + 1][j] : (southGrid ? southGrid[0][j] : null);
       if (bottomIntensity !== intensity) {
-        lineCoords.push([[West, South], [East, South]]);
+        (bottomIntensity ? innerCoords : outerCoords).push([[West, South], [East, South]]);
       }
     }
   }
-  return lineCoords;
+  return { outerCoords, innerCoords };
 }
 
 // 格子(grid[i][j] = 震度キー or null)を、同じ震度階級が連続する矩形の集まりに変換する。
