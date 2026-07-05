@@ -2358,6 +2358,15 @@ function BottomDock({
     if (active !== "settings") setSettingsPath([]);
   }, [active]);
 
+  // 地震タブの表示モード。"recent" = 直近の地震一覧(P2P地震情報フィード)、
+  // "search" = 気象庁 震度データベースを検索するUI。
+  // タブを離れたら次に開いた時は必ず「一覧」から始まるようにリセットする。
+  const [quakeViewMode, setQuakeViewMode] = useState("recent"); // "recent" | "search"
+  const [quakeSearchKeyword, setQuakeSearchKeyword] = useState("");
+  useEffect(() => {
+    if (active !== "quake") setQuakeViewMode("recent");
+  }, [active]);
+
   // タブ切り替え、または選択中の地震が変わった際に表示中身が変わると、
   // ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
   // カードやヘッダーが隠れて見えることがあるため、そのたびに明示的に
@@ -2739,6 +2748,13 @@ function BottomDock({
           }}/>
         </div>
 
+        {/* 地震タブの「一覧⇄検索」切り替えバー — ハンドル直下に固定表示し、
+            スクロールしても本体と一緒には動かない(検索/一覧の入口を常に見せておく)。
+            地震を選択してカード表示になっている間は不要なので隠す。 */}
+        {active === "quake" && selectedQuakeId == null && (
+          <QuakeListToolbar mode={quakeViewMode} onModeChange={setQuakeViewMode}/>
+        )}
+
         {/* スクロール可能な本体 — ヘッダー・レイヤー一覧だけがここでスクロールする。
             overflowAnchor: "none" は、タブ切り替えで中身の高さが変わった際に
             ブラウザのスクロールアンカリングがスクロール位置を勝手にずらし、
@@ -2789,51 +2805,33 @@ function BottomDock({
                     );
                   }
 
+                  // 「検索」モード: 気象庁 震度データベースの検索UI。
+                  // TODO: 現時点ではキーワードによる地名の絞り込みを、既に取得済みの
+                  // 直近フィード(quakes)に対して行っている簡易版。気象庁 震度データベース
+                  // (より長期間・詳細な検索が可能な本来のデータソース)への接続は今後追加する。
+                  if (quakeViewMode === "search") {
+                    return (
+                      <QuakeSearchPanel
+                        quakes={quakes}
+                        keyword={quakeSearchKeyword}
+                        onChangeKeyword={setQuakeSearchKeyword}
+                        colorScheme={colorScheme}
+                        onSelectQuake={(id) => { onSelectQuake(id); setSnapIndex(1); }}
+                      />
+                    );
+                  }
+
                   return (
                     <>
-                      {quakes.map((q, i) => {
-                        const style = getIntensityStyleFromScheme(colorScheme, q.maxIntensity || "1");
-                        return (
-                          <div key={q.id}>
-                            {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
-                            <button
-                              onClick={() => { onSelectQuake(q.id); setSnapIndex(1); }}
-                              style={{
-                                width: "100%", display: "flex", alignItems: "center", gap: 10,
-                                padding: "9px 14px",
-                                background: "transparent",
-                                textAlign: "left",
-                              }}
-                            >
-                              <span style={{
-                                flexShrink: 0, width: 28, height: 22, borderRadius: 6,
-                                background: style.bg, color: style.fg,
-                                display: "flex", alignItems: "center", justifyContent: "center",
-                                fontSize: q.isForeign ? 9 : 11, fontWeight: 800,
-                              }}>
-                                {q.isForeign ? "遠地" : style.label}
-                              </span>
-                              <span style={{
-                                flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
-                                whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                              }}>
-                                {q.place}
-                              </span>
-                              {(q.magnitude != null || q.depth != null) && (
-                                <span className="mono" style={{
-                                  fontSize: 11, color: "rgba(255,255,255,0.5)",
-                                  flexShrink: 0, whiteSpace: "nowrap",
-                                }}>
-                                  M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}{q.depth != null ? (q.depth === 0 ? "・ごく浅い" : `・深さ${q.depth}km`) : "・深さ-"}
-                                </span>
-                              )}
-                              <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-                                {q.time?.slice(5, 16)}
-                              </span>
-                            </button>
-                          </div>
-                        );
-                      })}
+                      {quakes.map((q, i) => (
+                        <QuakeListRow
+                          key={q.id}
+                          quake={q}
+                          showDivider={i > 0}
+                          colorScheme={colorScheme}
+                          onSelect={() => { onSelectQuake(q.id); setSnapIndex(1); }}
+                        />
+                      ))}
                     </>
                   );
                 })()}
@@ -3086,6 +3084,217 @@ function LayersIcon() {
       <polyline points="2 17 12 22 22 17"/>
       <polyline points="2 12 12 17 22 12"/>
     </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   LIST VIEW ICON — 横長長方形が縦に3段積み上がったアイコン
+   ───────────────────────────────────────────────────── */
+function ListViewIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="currentColor">
+      <rect x="3" y="4.5"  width="18" height="4" rx="1.6"/>
+      <rect x="3" y="10.25" width="18" height="4" rx="1.6"/>
+      <rect x="3" y="16"   width="18" height="4" rx="1.6"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   SEARCH ICON — 虫眼鏡アイコン
+   ───────────────────────────────────────────────────── */
+function SearchGlassIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="10.5" cy="10.5" r="6.5"/>
+      <line x1="15.3" y1="15.3" x2="20.5" y2="20.5"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   QUAKE LIST ROW
+   地震一覧の1行分。「直近の一覧」と「検索結果一覧」の両方から共通で使う。
+   ───────────────────────────────────────────────────── */
+function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
+  const style = getIntensityStyleFromScheme(colorScheme, q.maxIntensity || "1");
+  return (
+    <div>
+      {showDivider && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
+      <button
+        onClick={onSelect}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 10,
+          padding: "9px 14px",
+          background: "transparent",
+          textAlign: "left",
+        }}
+      >
+        <span style={{
+          flexShrink: 0, width: 28, height: 22, borderRadius: 6,
+          background: style.bg, color: style.fg,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: q.isForeign ? 9 : 11, fontWeight: 800,
+        }}>
+          {q.isForeign ? "遠地" : style.label}
+        </span>
+        <span style={{
+          flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {q.place}
+        </span>
+        {(q.magnitude != null || q.depth != null) && (
+          <span className="mono" style={{
+            fontSize: 11, color: "rgba(255,255,255,0.5)",
+            flexShrink: 0, whiteSpace: "nowrap",
+          }}>
+            M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}{q.depth != null ? (q.depth === 0 ? "・ごく浅い" : `・深さ${q.depth}km`) : "・深さ-"}
+          </span>
+        )}
+        <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+          {q.time?.slice(5, 16)}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   QUAKE SEARCH PANEL
+   「検索」モードの中身。キーワード入力欄 + 結果一覧。
+   TODO: 現在は取得済みの直近フィード(quakes)を地名でフィルタする簡易実装。
+         気象庁 震度データベース(本来のデータソース)へのAPI接続は今後追加する。
+   ───────────────────────────────────────────────────── */
+function QuakeSearchPanel({ quakes, keyword, onChangeKeyword, colorScheme, onSelectQuake }) {
+  const trimmed = keyword.trim();
+  const results = trimmed
+    ? quakes.filter(q => (q.place || "").toLowerCase().includes(trimmed.toLowerCase()))
+    : [];
+
+  return (
+    <div>
+      {/* 検索入力欄 */}
+      <div style={{ padding: "2px 14px 10px" }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          background: "rgba(255,255,255,0.06)",
+          borderRadius: 12,
+          padding: "8px 12px",
+          boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.14)",
+        }}>
+          <SearchGlassIcon size={15}/>
+          <input
+            value={keyword}
+            onChange={e => onChangeKeyword(e.target.value)}
+            placeholder="地域名で検索（例: 石川県能登地方）"
+            style={{
+              flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none",
+              color: "#fff", fontSize: 13,
+            }}
+          />
+        </div>
+        <div style={{ padding: "6px 2px 0", fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          気象庁 震度データベースとの連携は準備中です。現在は取得済みの一覧から検索します。
+        </div>
+      </div>
+
+      {/* 検索結果 */}
+      {trimmed === "" ? (
+        <div style={{ padding: "18px 16px", textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+            地域名を入力して検索してください
+          </span>
+        </div>
+      ) : results.length === 0 ? (
+        <div style={{ padding: "18px 16px", textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+            該当する地震が見つかりませんでした
+          </span>
+        </div>
+      ) : (
+        results.map((q, i) => (
+          <QuakeListRow
+            key={q.id}
+            quake={q}
+            showDivider={i > 0}
+            colorScheme={colorScheme}
+            onSelect={() => onSelectQuake(q.id)}
+          />
+        ))
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   QUAKE LIST TOOLBAR
+   地震タブの一覧最上部（ハンドル直下）に固定表示するミニバー。
+   タブバー本体の「スライドするガラスのハイライトピル」と同じ視覚言語を、
+   2ボタン構成に縮小して踏襲している。
+   - リストボタン: 直近の地震一覧（既存のP2P地震情報フィード）を表示
+   - 検索ボタン:   気象庁 震度データベースの検索UIに切り替える
+   ───────────────────────────────────────────────────── */
+function QuakeListToolbar({ mode, onModeChange }) {
+  return (
+    <div style={{ flexShrink: 0, padding: "2px 14px 8px" }}>
+      <div
+        style={{
+          position: "relative",
+          display: "flex",
+          height: 34,
+          borderRadius: 999,
+          background: "rgba(255,255,255,0.05)",
+          boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.14)",
+          padding: 3,
+        }}
+      >
+        {/* スライドするハイライトピル */}
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            top: 3, bottom: 3, left: 3,
+            width: "calc(50% - 3px)",
+            borderRadius: 999,
+            background: "rgba(255,255,255,0.14)",
+            boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.45), inset 0 1px 0 rgba(255,255,255,0.55)",
+            transform: mode === "search" ? "translateX(100%)" : "translateX(0%)",
+            transition: "transform 0.32s cubic-bezier(.22,1,.36,1)",
+            pointerEvents: "none",
+          }}
+        />
+        <button
+          onClick={() => onModeChange("recent")}
+          aria-label="地震一覧"
+          style={{
+            position: "relative", zIndex: 1, flex: 1,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            border: "none", background: "transparent", borderRadius: 999,
+            cursor: "pointer",
+            color: mode === "recent" ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.5)",
+            transition: "color 0.15s",
+          }}
+        >
+          <ListViewIcon size={16}/>
+        </button>
+        <button
+          onClick={() => onModeChange("search")}
+          aria-label="地震検索"
+          style={{
+            position: "relative", zIndex: 1, flex: 1,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            border: "none", background: "transparent", borderRadius: 999,
+            cursor: "pointer",
+            color: mode === "search" ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.5)",
+            transition: "color 0.15s",
+          }}
+        >
+          <SearchGlassIcon size={16}/>
+        </button>
+      </div>
+    </div>
   );
 }
 
