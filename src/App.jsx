@@ -3231,15 +3231,108 @@ function QuakeSearchPanel({ quakes, keyword, onChangeKeyword, colorScheme, onSel
 /* ─────────────────────────────────────────────────────
    QUAKE LIST TOOLBAR
    地震タブの一覧最上部（ハンドル直下）に固定表示するミニバー。
-   タブバー本体の「スライドするガラスのハイライトピル」と同じ視覚言語を、
-   2ボタン構成に縮小して踏襲している。
+   ハイライトピルの動き(指の位置に連続追従するドラッグ、離した位置の
+   タブへスナップ、押している間のスケール膨張)は、ボトムドック本体の
+   ナビ行(NAVタブ)と全く同じロジックを2項目版として踏襲している。
    - リストボタン: 直近の地震一覧（既存のP2P地震情報フィード）を表示
    - 検索ボタン:   気象庁 震度データベースの検索UIに切り替える
    ───────────────────────────────────────────────────── */
+const QUAKE_TOOLBAR_ITEMS = [
+  { id: "recent", label: "地震一覧" },
+  { id: "search", label: "地震検索" },
+];
+
 function QuakeListToolbar({ mode, onModeChange }) {
+  // ナビ行と同じ %ベース連続追従方式。PAD_X はJSX側のpaddingと必ず一致させる。
+  const PAD_X = 3;
+  const rowRef      = useRef(null);
+  const pointerId    = useRef(null);
+  const moved        = useRef(false);
+  const startX       = useRef(0);
+  const N     = QUAKE_TOOLBAR_ITEMS.length;
+  const tabW  = 100 / N; // 1タブの幅[%]（内側領域基準）
+
+  const activeIndex = QUAKE_TOOLBAR_ITEMS.findIndex(item => item.id === mode);
+  const [highlightLeft, setHighlightLeft] = useState(activeIndex * tabW);
+  const [dragging,      setDragging]      = useState(false);
+  const [pressed,       setPressed]       = useState(false);
+  const [previewIdx,    setPreviewIdx]    = useState(null);
+
+  // mode が外部から変わった時（タップ以外の切替）にハイライトを追従させる
+  useEffect(() => {
+    if (!dragging) setHighlightLeft(activeIndex * tabW);
+  }, [activeIndex, dragging, tabW]);
+
+  function clientXToLeft(clientX) {
+    const row = rowRef.current;
+    if (!row) return activeIndex * tabW;
+    const { left, width } = row.getBoundingClientRect();
+    const innerLeft  = left + PAD_X;
+    const innerWidth = width - PAD_X * 2;
+    const ratio = Math.max(0, Math.min(1, (clientX - innerLeft) / innerWidth));
+    return ratio * 100;
+  }
+
+  function clientXToIndex(clientX) {
+    const pct = clientXToLeft(clientX);
+    return Math.max(0, Math.min(N - 1, Math.round(pct / tabW - 0.5)));
+  }
+
+  function handlePointerDown(e) {
+    pointerId.current = e.pointerId;
+    moved.current      = false;
+    startX.current     = e.clientX;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const idx = clientXToIndex(e.clientX);
+    setPreviewIdx(idx);
+    setPressed(true);
+    setHighlightLeft(idx * tabW);
+  }
+
+  function handlePointerMove(e) {
+    if (pointerId.current !== e.pointerId) return;
+    if (Math.abs(e.clientX - startX.current) > 3 && !moved.current) {
+      moved.current = true;
+      setDragging(true);
+    }
+    const idx = clientXToIndex(e.clientX);
+    setPreviewIdx(idx);
+    if (moved.current) {
+      const raw = clientXToLeft(e.clientX) - tabW / 2;
+      setHighlightLeft(Math.max(0, Math.min(100 - tabW, raw)));
+    } else {
+      setHighlightLeft(idx * tabW);
+    }
+  }
+
+  function handlePointerUp(e) {
+    if (pointerId.current !== e.pointerId) return;
+    pointerId.current = null;
+    const idx = clientXToIndex(e.clientX);
+    setDragging(false);
+    setPressed(false);
+    setPreviewIdx(null);
+    setHighlightLeft(idx * tabW);
+    onModeChange(QUAKE_TOOLBAR_ITEMS[idx].id);
+  }
+
+  function handleClick(id) {
+    if (moved.current) return; // ドラッグ完了後の二重発火を防ぐ
+    const idx = QUAKE_TOOLBAR_ITEMS.findIndex(item => item.id === id);
+    setHighlightLeft(idx * tabW);
+    onModeChange(id);
+  }
+
+  const displayIdx = dragging && previewIdx != null ? previewIdx : activeIndex;
+
   return (
     <div style={{ flexShrink: 0, padding: "2px 14px 8px" }}>
       <div
+        ref={rowRef}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         style={{
           position: "relative",
           display: "flex",
@@ -3247,52 +3340,59 @@ function QuakeListToolbar({ mode, onModeChange }) {
           borderRadius: 999,
           background: "rgba(255,255,255,0.05)",
           boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.14)",
-          padding: 3,
+          padding: PAD_X,
+          touchAction: "none",
+          userSelect: "none",
+          WebkitUserSelect: "none",
+          WebkitTouchCallout: "none",
+          WebkitTapHighlightColor: "transparent",
         }}
       >
-        {/* スライドするハイライトピル */}
+        {/* スライドするハイライトピル — ナビ行と同じ%ベースのleft/width計算 */}
         <div
           aria-hidden
           style={{
             position: "absolute",
-            top: 3, bottom: 3, left: 3,
-            width: "calc(50% - 3px)",
+            top: PAD_X, bottom: PAD_X,
+            left: `calc(${PAD_X}px + (100% - ${PAD_X * 2}px) * ${highlightLeft / 100})`,
+            width: `calc((100% - ${PAD_X * 2}px) * ${tabW / 100})`,
             borderRadius: 999,
             background: "rgba(255,255,255,0.14)",
             boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.45), inset 0 1px 0 rgba(255,255,255,0.55)",
-            transform: mode === "search" ? "translateX(100%)" : "translateX(0%)",
-            transition: "transform 0.32s cubic-bezier(.22,1,.36,1)",
+            transform: pressed ? "scale(1.16)" : "scale(1)",
+            transformOrigin: "center",
+            transition: dragging
+              ? "transform 0.18s cubic-bezier(.22,1,.36,1)"
+              : "left 0.38s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
             pointerEvents: "none",
+            zIndex: 0,
           }}
         />
-        <button
-          onClick={() => onModeChange("recent")}
-          aria-label="地震一覧"
-          style={{
-            position: "relative", zIndex: 1, flex: 1,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            border: "none", background: "transparent", borderRadius: 999,
-            cursor: "pointer",
-            color: mode === "recent" ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.5)",
-            transition: "color 0.15s",
-          }}
-        >
-          <ListViewIcon size={16}/>
-        </button>
-        <button
-          onClick={() => onModeChange("search")}
-          aria-label="地震検索"
-          style={{
-            position: "relative", zIndex: 1, flex: 1,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            border: "none", background: "transparent", borderRadius: 999,
-            cursor: "pointer",
-            color: mode === "search" ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.5)",
-            transition: "color 0.15s",
-          }}
-        >
-          <SearchGlassIcon size={16}/>
-        </button>
+        {QUAKE_TOOLBAR_ITEMS.map(({ id, label }, idx) => {
+          const isActive = idx === displayIdx;
+          return (
+            <button
+              key={id}
+              onClick={() => handleClick(id)}
+              aria-label={label}
+              style={{
+                position: "relative", zIndex: 1, flex: 1,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                border: "none", background: "transparent", borderRadius: 999,
+                cursor: "pointer",
+                color: isActive ? "rgba(255,255,255,1)" : "rgba(255,255,255,0.5)",
+                transition: "color 0.15s",
+                touchAction: "none",
+                userSelect: "none",
+                WebkitUserSelect: "none",
+                WebkitTouchCallout: "none",
+                WebkitTapHighlightColor: "transparent",
+              }}
+            >
+              {id === "recent" ? <ListViewIcon size={16}/> : <SearchGlassIcon size={16}/>}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
