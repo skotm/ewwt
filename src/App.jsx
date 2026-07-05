@@ -1903,7 +1903,13 @@ const EQDB_SORT_OPTIONS = [
 ];
 
 // 最小マグニチュードの選択肢("1.0"〜"9.9")
-const EQDB_MIN_MAG_OPTIONS = Array.from({ length: 90 }, (_, i) => ((i + 10) / 10).toFixed(1));
+const EQDB_MIN_MAG_OPTIONS = [
+  { value: "0.0", label: "指定なし" },
+  ...Array.from({ length: 90 }, (_, i) => {
+    const v = ((i + 10) / 10).toFixed(1);
+    return { value: v, label: `M${v}以上` };
+  }),
+];
 
 // "震度５弱"/"５弱"/"震度７" のような文字列(全角数字・「震度」接頭辞の有無を問わない)を
 // 10刻みのJMAスケール(10=震度1 ... 70=震度7、47=旧震度5、57=旧震度6)に変換する。
@@ -2594,8 +2600,10 @@ function BottomDock({
   const MID_FIXED     = 115 + HANDLE_HEIGHT_DELTA; // 「中」の固定高さ(px)
   // 「中中」の固定高さ(px)。「中」と「中高」の間に設ける中間スナップ。
   const MIDMID_FIXED = 200 + HANDLE_HEIGHT_DELTA;
-  // 「中高」の固定高さ(px)。設定タブのトップメニュー(ヘッダー+5項目のカード)が
-  // スクロールなしで丸ごと収まる高さを基準に調整している(旧: 222px)。
+  // 「中高」の固定高さ(px)。設定タブのトップメニュー(ヘッダー+5項目のカード)や、
+  // 地震タブの検索フォーム(検索ボタンまで)がスクロールなしで丸ごと収まる高さを
+  // 基準に調整している(旧: 222px)。検索フォーム側を見た目のバランスを保ちつつ
+  // コンパクトに詰めることで、この高さのまま検索ボタンまで収まるようにしている。
   const MIDHIGH_FIXED = 290 + HANDLE_HEIGHT_DELTA;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
   const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
@@ -3355,29 +3363,116 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
 /* ─────────────────────────────────────────────────────
    EQDB FORM FIELD — 検索フォームの1項目(ラベル+入力欄)の共通ラッパー
    ───────────────────────────────────────────────────── */
+// 開始日/終了日(input[type=date])・OptionPickerの見た目を統一するための共通スタイル。
+// 高さを固定(34px)して、日付欄とピッカー欄で縦の揃いがずれないようにする。
+// 「中高」パネル(290px固定)に検索ボタンまで収まるよう、あえて少しコンパクトにしている。
 const EQDB_INPUT_STYLE = {
-  width: "100%", background: "rgba(255,255,255,0.08)", color: "#fff",
+  width: "100%", height: 34, boxSizing: "border-box",
+  background: "rgba(255,255,255,0.08)", color: "#fff",
   border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8,
-  padding: "7px 8px", fontSize: 13, outline: "none", boxSizing: "border-box",
+  padding: "0 10px", fontSize: 13, outline: "none",
   colorScheme: "dark",
 };
 
 function EqdbFormField({ label, full, children }) {
   return (
     <div style={{ flex: full ? "1 1 100%" : 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-      <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>{label}</span>
+      <span style={{ fontSize: 9, fontWeight: 600, color: "rgba(255,255,255,0.5)", lineHeight: 1.2 }}>{label}</span>
       {children}
     </div>
   );
 }
 
-// 今日を基準に「開始日=1か月前・終了日=今日」を初期値にする
+// "YYYY-MM-DD" (input[type=date]の値形式)に整形する
+function eqdbDateValue(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// 終了日に指定できる最新日(=現在の2日前)。気象庁 震度データベースは直近の地震が
+// 登録されるまでにタイムラグがあるため、終了日はここより新しい日付を選べないようにする。
+function eqdbMaxEndDate() {
+  const d = new Date();
+  d.setDate(d.getDate() - 2);
+  return eqdbDateValue(d);
+}
+
+// 検索フォームの初期値。開始日=1か月前、終了日=選べる最新日(現在の2日前)。
 function defaultEqdbDateRange() {
-  const toValue = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
-  const end = new Date();
-  const start = new Date(end);
+  const start = new Date();
   start.setMonth(start.getMonth() - 1);
-  return { start: toValue(start), end: toValue(end) };
+  return { start: eqdbDateValue(start), end: eqdbMaxEndDate() };
+}
+
+// 下向き山形アイコン(OptionPickerの右端に置く。開いている間は上下反転する)
+function ChevronDownIcon({ open }) {
+  return (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+         stroke="rgba(255,255,255,0.45)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+         style={{ flexShrink: 0, marginLeft: 6, transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "none" }}>
+      <polyline points="6 9 12 15 18 9"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   OPTION PICKER
+   ネイティブの<select>はiOS Safariだと背景・高さを自前のCSSで統一できず、
+   日付欄など他の項目と見た目が揃わなくなる(白っぽいネイティブUIが出てしまう)ため、
+   代わりにこのアプリの他の設定画面と同じ「ボタン+SVGの山形アイコン」で
+   選択肢を開閉する自前のドロップダウンを使う。
+   ───────────────────────────────────────────────────── */
+function OptionPicker({ value, options, onChange }) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(o => o.value === value);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          ...EQDB_INPUT_STYLE,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          cursor: "pointer",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected?.label ?? value}
+        </span>
+        <ChevronDownIcon open={open}/>
+      </button>
+
+      {open && (
+        <>
+          {/* 背面タップで閉じるための透明オーバーレイ */}
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }}/>
+          <div style={{
+            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 61,
+            maxHeight: 220, overflowY: "auto",
+            borderRadius: 10,
+            background: "rgba(30,30,32,0.98)",
+            boxShadow: "0 10px 28px rgba(0,0,0,0.55), inset 0 0 0 0.5px rgba(255,255,255,0.14)",
+          }}>
+            {options.map((o, i) => (
+              <button
+                key={o.value}
+                type="button"
+                onClick={() => { onChange(o.value); setOpen(false); }}
+                style={{
+                  width: "100%", textAlign: "left", padding: "9px 12px",
+                  background: o.value === value ? "rgba(255,255,255,0.08)" : "transparent",
+                  border: "none", borderTop: i > 0 ? "0.5px solid rgba(255,255,255,0.08)" : "none",
+                  color: "#fff", fontSize: 13,
+                }}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 /* ─────────────────────────────────────────────────────
@@ -3389,6 +3484,8 @@ function defaultEqdbDateRange() {
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
 function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }) {
+  const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
+
   const [startDate, setStartDate] = useState(() => defaultEqdbDateRange().start);
   const [endDate,   setEndDate]   = useState(() => defaultEqdbDateRange().end);
   const [minMag,    setMinMag]    = useState("0.0");
@@ -3400,6 +3497,11 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
   const [hasSearched,  setHasSearched] = useState(false);
   const [results,     setResults]     = useState([]); // mode=searchの生データ一覧
   const [loadingId,   setLoadingId]   = useState(null); // 詳細取得中のeq.id
+
+  // 終了日は「現在の2日前」より新しい日付を選べないようにする
+  function handleChangeEndDate(next) {
+    setEndDate(next > maxEndDate ? maxEndDate : next);
+  }
 
   async function handleSearch() {
     if (isSearching) return;
@@ -3463,50 +3565,45 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
   return (
     <div>
       {/* 検索条件フォーム */}
-      <div style={{ padding: "2px 14px 10px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ padding: "2px 14px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
-            <input type="date" value={startDate} max={endDate || undefined}
+            <input type="date" value={startDate} max={endDate || maxEndDate}
               onChange={e => setStartDate(e.target.value)} style={EQDB_INPUT_STYLE}/>
           </EqdbFormField>
           <EqdbFormField label="終了日">
-            <input type="date" value={endDate} min={startDate || undefined}
-              onChange={e => setEndDate(e.target.value)} style={EQDB_INPUT_STYLE}/>
+            <input type="date" value={endDate} min={startDate || undefined} max={maxEndDate}
+              onChange={e => handleChangeEndDate(e.target.value)} style={EQDB_INPUT_STYLE}/>
           </EqdbFormField>
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="最小M">
-            <select value={minMag} onChange={e => setMinMag(e.target.value)} style={EQDB_INPUT_STYLE}>
-              <option value="0.0">指定なし</option>
-              {EQDB_MIN_MAG_OPTIONS.map(v => <option key={v} value={v}>{`M${v}以上`}</option>)}
-            </select>
+            <OptionPicker value={minMag} options={EQDB_MIN_MAG_OPTIONS} onChange={setMinMag}/>
           </EqdbFormField>
           <EqdbFormField label="最大震度">
-            <select value={maxInt} onChange={e => setMaxInt(e.target.value)} style={EQDB_INPUT_STYLE}>
-              {EQDB_MAX_INT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            <OptionPicker value={maxInt} options={EQDB_MAX_INT_OPTIONS} onChange={setMaxInt}/>
           </EqdbFormField>
         </div>
 
         <EqdbFormField label="並び順" full>
-          <select value={sort} onChange={e => setSort(e.target.value)} style={EQDB_INPUT_STYLE}>
-            {EQDB_SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <OptionPicker value={sort} options={EQDB_SORT_OPTIONS} onChange={setSort}/>
         </EqdbFormField>
 
         <button
           onClick={handleSearch}
           disabled={isSearching}
           style={{
-            marginTop: 2, padding: "10px 0", borderRadius: 10,
+            marginTop: 1, padding: "8px 0", borderRadius: 10,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
             border: "1px solid rgba(10,132,255,0.5)",
             background: "rgba(10,132,255,0.22)", color: "#64D2FF",
             fontSize: 14, fontWeight: 700,
             opacity: isSearching ? 0.5 : 1,
           }}
         >
-          {isSearching ? "検索中…" : "🔍 検索"}
+          <SearchGlassIcon size={15}/>
+          <span>{isSearching ? "検索中…" : "検索"}</span>
         </button>
 
         {status !== "" && (
