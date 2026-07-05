@@ -513,9 +513,6 @@ function MapCanvas({
             paint: {
               "fill-color": buildEstIntensityFillColorExpr(colorScheme),
               "fill-opacity": 0.75,
-              // 隣接するポリゴン同士(矩形統合しきれなかった境目)にGPU描画特有の
-              // 細い隙間(白線)が出るのを防ぐため、アンチエイリアスを無効化する。
-              "fill-antialias": false,
             },
           });
           map.addSource("est-intensity-line", {
@@ -754,26 +751,47 @@ function MapCanvas({
         if (!matched) { setEstIntensityLoading(false); return; }
 
         const baseUrl = `https://www.jma.go.jp/bosai/estimated_intensity_map/data/${matched.url}/`;
-        const allFillFeatures = [];
-        const allLineCoords = [];
 
-        // メッシュ(1次メッシュ画像)単位で処理する。1枚の取得・解析に失敗しても、
-        // 他のメッシュは表示できるよう、失敗はログに残すだけで処理を継続する。
-        // 1枚ごとに処理後わずかに間を空け(setTimeout 0)、ピクセル走査中もブラウザが
+        // フェーズ1: 全メッシュ画像を取得してピクセル解析し、格子(grid)だけ先に揃える。
+        // 境界線の判定で隣接メッシュの実データを参照できるようにするため、
+        // 先に全メッシュ分のgridを用意してから、フェーズ2で塗り・境界線を組み立てる。
+        // 1枚の取得・解析に失敗しても、他のメッシュは表示できるよう処理を継続する。
+        // 1枚ごとにわずかに間を空け(setTimeout 0)、ピクセル走査中もブラウザが
         // 操作やアニメーションに応答できるようにする(長時間のフリーズを避けるため)。
+        const gridsByMeshCode = new Map();
+        const boundsByMeshCode = new Map();
         for (const meshCode of matched.mesh_num) {
           if (isStale()) return;
           try {
             const bounds = meshCodeToBounds(meshCode);
             const img = await loadImageElement(`${baseUrl}${meshCode}.png`);
             if (isStale()) return;
-            const { fillFeatures, lineCoords } = buildEstIntensityFeaturesFromImage(img, bounds);
-            allFillFeatures.push(...fillFeatures);
-            allLineCoords.push(...lineCoords);
+            gridsByMeshCode.set(meshCode, buildEstIntensityGridFromImage(img));
+            boundsByMeshCode.set(meshCode, bounds);
             await new Promise(resolve => setTimeout(resolve, 0));
           } catch (err) {
             console.error(`推計震度分布メッシュ(${meshCode})の変換に失敗:`, err);
           }
+        }
+
+        if (isStale()) return;
+
+        // フェーズ2: 各メッシュの塗り・境界線を組み立てる。
+        // 境界線は、画像の端(1次メッシュの継ぎ目)で誤って線を引いてしまわないよう、
+        // 東隣・南隣のメッシュが取得できていれば、その実データを参照して判定する。
+        const allFillFeatures = [];
+        const allLineCoords = [];
+        for (const [meshCode, grid] of gridsByMeshCode) {
+          const bounds = boundsByMeshCode.get(meshCode);
+          allFillFeatures.push(...buildEstIntensityFillFeatures(grid, bounds));
+
+          const eastCode = offsetMeshCode(meshCode, 0, 1);
+          const southCode = offsetMeshCode(meshCode, -1, 0);
+          const neighborGrids = {
+            eastGrid: eastCode ? gridsByMeshCode.get(eastCode) : undefined,
+            southGrid: southCode ? gridsByMeshCode.get(southCode) : undefined,
+          };
+          allLineCoords.push(...buildEstIntensityLineCoords(grid, bounds, neighborGrids));
         }
 
         if (isStale()) return;
@@ -1467,10 +1485,19 @@ function loadImageElement(url) {
   });
 }
 
-// 1枚の推計震度分布画像(1次メッシュ分)を、250mメッシュ単位の格子に分解し、
-// 塗り用ポリゴン(fillFeatures)と、震度階級が変わる境目だけの線分(lineCoords)を作る。
-function buildEstIntensityFeaturesFromImage(img, meshBounds) {
-  const { latStart: lat, lonStart: lng, latEnd: lat2, lonEnd: lng2 } = meshBounds;
+// 気象庁の1次地域メッシュコードから、東隣・北隣など指定方向に1つずれたメッシュコードを計算する。
+// (上2桁=緯度方向のメッシュ番号、下2桁=経度方向のメッシュ番号。それぞれ±1が隣接メッシュにあたる)
+// 範囲外(0〜99を超える)になる場合はnullを返す。
+function offsetMeshCode(meshCode, dLatCode, dLonCode) {
+  const latCode = parseInt(meshCode.substring(0, 2), 10) + dLatCode;
+  const lonCode = parseInt(meshCode.substring(2, 4), 10) + dLonCode;
+  if (latCode < 0 || latCode > 99 || lonCode < 0 || lonCode > 99) return null;
+  return String(latCode).padStart(2, "0") + String(lonCode).padStart(2, "0");
+}
+
+// 1枚の推計震度分布画像(1次メッシュ分)を、250mメッシュ単位の格子(320×320、
+// grid[i][j] = 震度キー or 該当なしはnull)に分解する。
+function buildEstIntensityGridFromImage(img) {
   const GRID = EST_INTENSITY_GRID_SIZE;
 
   const canvas = document.createElement("canvas");
@@ -1481,7 +1508,6 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
   // (呼び出し側でtry/catchして「表示しない」扱いにフォールバックする)。
   const imgData = ctx.getImageData(0, 0, 800, 800).data;
 
-  // grid[i][j] = 判定された震度キー(該当なしはnull)。
   // アンチエイリアスの影響を受けない「元の色を完全に反映するピクセル」だけを
   // 参照する(x: 5n+1,5n+3 / y: 5m+1,5m+4 のパターンで交互に2px・3pxずつ進む)。
   const grid = Array.from({ length: GRID }, () => new Array(GRID).fill(null));
@@ -1497,14 +1523,20 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
     }
     y += (i % 2 === 0) ? 2 : 3;
   }
+  return grid;
+}
 
-  // ─ 塗り: 同じ震度階級が隣接するメッシュを1枚の四角形にまとめる(矩形統合)。
-  // 250mメッシュ1枚ごとにポリゴンを作ると(広い震度5弱の範囲などで)数万枚に
-  // なってしまい、MapLibre側の描画処理が重くフリーズの原因になる。また、
-  // 同じ色のポリゴン同士が隣接する境目にGPU描画特有の細い隙間(白線)が
-  // 見えてしまう問題もあるため、まとめて1枚にすることで両方を解消する。
+// 250mメッシュの格子(grid)から塗り用ポリゴンを作る。
+// 同じ震度階級が隣接するメッシュを1枚の四角形にまとめる(矩形統合)ことで、
+// 250mメッシュ1枚ごとにポリゴンを作った場合(広い震度5弱の範囲などで数万枚になり、
+// MapLibre側の描画処理が重くフリーズの原因になる)と比べ、ポリゴン数を大幅に減らす。
+// 同じ色のポリゴン同士が隣接する境目にGPU描画特有の細い隙間が出る問題もあわせて解消する。
+function buildEstIntensityFillFeatures(grid, meshBounds) {
+  const { latStart: lat, lonStart: lng, latEnd: lat2, lonEnd: lng2 } = meshBounds;
+  const GRID = EST_INTENSITY_GRID_SIZE;
+
   const rectangles = mergeGridIntoRectangles(grid, GRID);
-  const fillFeatures = rectangles.map(rect => {
+  return rectangles.map(rect => {
     const North = lat2 + ((lat - lat2) / GRID) * rect.i0;
     const South = lat2 + ((lat - lat2) / GRID) * (rect.i1 + 1);
     const West = lng + ((lng2 - lng) / GRID) * rect.j0;
@@ -1518,9 +1550,19 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
       },
     };
   });
+}
 
-  // ─ 境界線: 震度階級が変わる境目だけを抽出する(こちらは1メッシュ単位のまま判定してよい。
-  // 境界線分の本数はデータの輪郭部分のみに限られるため、塗りほどの負荷にはならない)。
+// 250mメッシュの格子(grid)から、震度階級が変わる境目だけの線分を作る。
+// 1次メッシュ画像は複数枚(mesh_num)を並べて1つの地震の範囲を表すため、画像の端(=1次メッシュの
+// 継ぎ目)をそのまま「データなし」として扱うと、実際は同じ震度が続いているだけの場所にも
+// 誤って境界線を引いてしまう(隣の画像との継ぎ目に黒い線が入って見える不具合の原因)。
+// これを避けるため、東隣・南隣のメッシュの格子(あれば)を渡してもらい、画像の端では
+// そちらの値を参照して判定する。
+function buildEstIntensityLineCoords(grid, meshBounds, neighborGrids = {}) {
+  const { latStart: lat, lonStart: lng, latEnd: lat2, lonEnd: lng2 } = meshBounds;
+  const GRID = EST_INTENSITY_GRID_SIZE;
+  const { eastGrid, southGrid } = neighborGrids;
+
   const lineCoords = [];
   for (let i = 0; i < GRID; i++) {
     for (let j = 0; j < GRID; j++) {
@@ -1532,18 +1574,21 @@ function buildEstIntensityFeaturesFromImage(img, meshBounds) {
       const West = lng + ((lng2 - lng) / GRID) * j;
       const East = lng + ((lng2 - lng) / GRID) * (j + 1);
 
-      // 右隣・下隣と震度階級が異なる(データ無しを含む)場合だけ、その辺を境界線にする。
-      // (全メッシュの外周を線にすると格子状にうるさくなるため、階級が変わる境目に限定)
-      if ((j + 1 < GRID ? grid[i][j + 1] : null) !== intensity) {
+      // 右隣: 同じ画像内ならgrid[i][j+1]、画像の右端(j+1がGRID)なら東隣メッシュの
+      // 同じ行・左端(列0)を参照する(東隣メッシュが無ければ本当にデータなし=null)。
+      const rightIntensity = j + 1 < GRID ? grid[i][j + 1] : (eastGrid ? eastGrid[i][0] : null);
+      if (rightIntensity !== intensity) {
         lineCoords.push([[East, North], [East, South]]);
       }
-      if ((i + 1 < GRID ? grid[i + 1][j] : null) !== intensity) {
+      // 下隣: 同じ画像内ならgrid[i+1][j]、画像の下端(i+1がGRID)なら南隣メッシュの
+      // 同じ列・上端(行0)を参照する(南隣メッシュが無ければ本当にデータなし=null)。
+      const bottomIntensity = i + 1 < GRID ? grid[i + 1][j] : (southGrid ? southGrid[0][j] : null);
+      if (bottomIntensity !== intensity) {
         lineCoords.push([[West, South], [East, South]]);
       }
     }
   }
-
-  return { fillFeatures, lineCoords };
+  return lineCoords;
 }
 
 // 格子(grid[i][j] = 震度キー or null)を、同じ震度階級が連続する矩形の集まりに変換する。
