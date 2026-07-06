@@ -1911,20 +1911,25 @@ const EQDB_MIN_MAG_OPTIONS = [
   }),
 ];
 
-// "震度５弱"/"５弱"/"震度７" のような文字列(全角数字・「震度」接頭辞の有無を問わない)を
-// 10刻みのJMAスケール(10=震度1 ... 70=震度7、47=旧震度5、57=旧震度6)に変換する。
+// "震度５弱"/"５弱"/"震度７"/"5弱(推定)" のような文字列(全角数字・「震度」接頭辞・
+// 前後の余分な文字の有無を問わない)を、10刻みのJMAスケール
+// (10=震度1 ... 70=震度7、47=旧震度5、57=旧震度6)に変換する。
+// 完全一致ではなく部分一致で判定しているのは、eqdb側が返す文字列に
+// "(推定)"などの注記が付くことがあり、完全一致だと本来有効な観測点まで
+// 判定漏れして震度の塗りつぶしから抜け落ちてしまうことがあったため。
 function eqdbIntensityStringToScale(raw) {
   if (!raw) return 0;
   const str = raw
     .replace(/震度/g, "")
-    .replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
-    .trim();
-  const map = {
-    "7": 70, "6強": 60, "6弱": 55, "6": 57,
-    "5強": 50, "5弱": 45, "5": 47,
-    "4": 40, "3": 30, "2": 20, "1": 10,
-  };
-  return map[str] || 0;
+    .replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+  if (str.includes("7")) return 70;
+  if (str.includes("6")) return str.includes("強") ? 60 : str.includes("弱") ? 55 : 57;
+  if (str.includes("5")) return str.includes("強") ? 50 : str.includes("弱") ? 45 : 47;
+  if (str.includes("4")) return 40;
+  if (str.includes("3")) return 30;
+  if (str.includes("2")) return 20;
+  if (str.includes("1")) return 10;
+  return 0;
 }
 
 // eqdbのid(dbid)は "YYYYMMDDHHMMSS..." 形式の発生時刻エンコード文字列。
@@ -1974,22 +1979,53 @@ async function fetchEqdbEvent(id) {
   return null;
 }
 
-// 観測点マスタ(stations)から同名の地点を探し、区域コード(area.code)をベストエフォートで補完する。
-// eqdbの観測点データには区域コードが無いため、区域単位の震度塗り分け(aggregateByArea)を
-// 使えるようにするための補助。同名地点が複数県にまたがる場合は、eqdbが返す緯度経度に
-// 最も近いものを採用することで、県名が分からなくても正しい地点を選べるようにしている。
+// 観測点マスタ(stations)から、eqdbの観測点名(name)に対応する地点を探し、
+// 区域コード(area.code)をベストエフォートで補完する。eqdbの観測点データには
+// 区域コードが無いため、区域単位の震度塗り分け(aggregateByArea)に使う。
+// 名前だけでは見つからない/複数ヒットするケースがあるため、次の順で絞り込む:
+//   1. 地点名が完全一致
+//   2. 見つからなければ、地点名が部分一致(どちらかがどちらかを含む)するもの
+//   3. それでも見つからなければ、緯度経度が最も近い観測点を採用する
+//      (eqdbは観測点の緯度経度を直接返してくるため、表記揺れがあっても
+//       座標さえあればほぼ一意に地点を特定できる。ただしあまりに離れた
+//       地点を誤って採用しないよう、約0.05度以内という上限を設ける)
+// 名前・部分一致で複数ヒットした場合も、同様に緯度経度が最も近いものを選ぶ。
 function findAreaCodeByStationName(stations, name, lat, lon) {
-  if (!stations || !name) return null;
-  const candidates = stations.filter(s => s.name === name);
-  if (candidates.length === 0) return null;
-  if (candidates.length === 1 || lat == null || lon == null) return candidates[0]?.area?.code || null;
-  let best = candidates[0], bestDist = Infinity;
+  if (!stations) return null;
+
+  let candidates = name ? stations.filter(s => s.name === name) : [];
+
+  if (candidates.length === 0 && name) {
+    candidates = stations.filter(s =>
+      s.name.includes(name) || name.includes(s.name) ||
+      (s.city && s.city.name && name.includes(s.city.name))
+    );
+  }
+
+  let fellBackToAll = false;
+  if (candidates.length === 0) {
+    if (lat == null || lon == null) return null;
+    candidates = stations;
+    fellBackToAll = true;
+  }
+
+  if (candidates.length === 1) return candidates[0]?.area?.code || null;
+  if (lat == null || lon == null) return candidates[0]?.area?.code || null;
+
+  let best = null, bestDist = Infinity;
   for (const c of candidates) {
-    const dLat = parseFloat(c.lat) - lat, dLon = parseFloat(c.lon) - lon;
+    const cLat = parseFloat(c.lat), cLon = parseFloat(c.lon);
+    if (!Number.isFinite(cLat) || !Number.isFinite(cLon)) continue;
+    const dLat = cLat - lat, dLon = cLon - lon;
     const dist = dLat * dLat + dLon * dLon;
     if (dist < bestDist) { bestDist = dist; best = c; }
   }
-  return best?.area?.code || null;
+  if (!best) return null;
+  if (fellBackToAll) {
+    const cLat = parseFloat(best.lat), cLon = parseFloat(best.lon);
+    if (Math.abs(cLat - lat) > 0.05 || Math.abs(cLon - lon) > 0.05) return null;
+  }
+  return best.area?.code || null;
 }
 
 // eqdbのmode=eventレスポンスを、アプリ内の「地震カード」共通形式に変換する。
