@@ -990,7 +990,7 @@ const ALERT_COLOR = {
    ───────────────────────────────────────────────────── */
 const INTENSITY_LABEL = {
   "0": "0", "1": "1", "2": "2", "3": "3", "4": "4",
-  "5-": "5弱", "5+": "5強", "6-": "6弱", "6+": "6強", "7": "7",
+  "5": "5", "5-": "5弱", "5+": "5強", "6": "6", "6-": "6弱", "6+": "6強", "7": "7",
   "?": "?", // 震度が取得できなかった場合(「0」と区別する)
 };
 
@@ -999,7 +999,7 @@ const INTENSITY_LABEL = {
 // 「丸+白フチ+震度番号」を1枚のbitmapとして事前にcanvasへ焼いておき、
 // addImageでMapLibreに登録する。text-fieldを使わないため、
 // スタイルにglyphs(フォント配信)を用意しなくても数字を表示できる。
-const STATION_ICON_KEYS = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7", "?"];
+const STATION_ICON_KEYS = ["0", "1", "2", "3", "4", "5", "5-", "5+", "6", "6-", "6+", "7", "?"];
 const STATION_ICON_BASE_RADIUS = 32; // bitmap側の半径(px)。icon-sizeで実際の大きさへスケールする。
 
 // withText=falseの場合は数字を描かない(低ズームで円が小さいときに文字が潰れるのを避けるため)。
@@ -1069,8 +1069,10 @@ const QUAKE_COLOR_SCHEMES = {
       "2":  { bg: "#0A84FF", fg: "#fff" },
       "3":  { bg: "#30D158", fg: "#0B0B0C" },
       "4":  { bg: "#FFD60A", fg: "#0B0B0C" },
+      "5":  { bg: "#FF9F0A", fg: "#0B0B0C" }, // 1996年10月改定前の「弱/強」区分が無い震度5
       "5-": { bg: "#FF9F0A", fg: "#0B0B0C" },
       "5+": { bg: "#FF453A", fg: "#fff" },
+      "6":  { bg: "#FF2D55", fg: "#fff" }, // 同上、震度6
       "6-": { bg: "#FF2D55", fg: "#fff" },
       "6+": { bg: "#BF5AF2", fg: "#fff" },
       "7":  { bg: "#5E5CE6", fg: "#fff" },
@@ -1089,8 +1091,10 @@ const QUAKE_COLOR_SCHEMES = {
       "2":  { bg: "#00AAFF", fg: "#0B0B0C" },
       "3":  { bg: "#0041FF", fg: "#fff" },
       "4":  { bg: "#FAE696", fg: "#0B0B0C" },
+      "5":  { bg: "#FFE600", fg: "#0B0B0C" }, // 1996年10月改定前の「弱/強」区分が無い震度5
       "5-": { bg: "#FFE600", fg: "#0B0B0C" },
       "5+": { bg: "#FF9900", fg: "#0B0B0C" },
+      "6":  { bg: "#FF2800", fg: "#fff" }, // 同上、震度6
       "6-": { bg: "#FF2800", fg: "#fff" },
       "6+": { bg: "#A50021", fg: "#fff" },
       "7":  { bg: "#B40068", fg: "#fff" },
@@ -1106,8 +1110,10 @@ const QUAKE_COLOR_SCHEMES = {
       "2":  { bg: "#3FA9E0", fg: "#0B0B0C" },
       "3":  { bg: "#4FBF67", fg: "#0B0B0C" },
       "4":  { bg: "#FFD60A", fg: "#0B0B0C" },
+      "5":  { bg: "#FF9F0A", fg: "#0B0B0C" }, // 1996年10月改定前の「弱/強」区分が無い震度5
       "5-": { bg: "#FF9F0A", fg: "#0B0B0C" },
       "5+": { bg: "#FF7A1A", fg: "#0B0B0C" },
+      "6":  { bg: "#E0342C", fg: "#fff" }, // 同上、震度6
       "6-": { bg: "#E0342C", fg: "#fff" },
       "6+": { bg: "#8A1518", fg: "#fff" },
       "7":  { bg: "#5C0F1F", fg: "#fff" },
@@ -1266,8 +1272,8 @@ function maxScaleToIntensityKey(maxScale) {
   const map = {
     "-1": "0", "0": "0",
     "10": "1", "20": "2", "30": "3", "40": "4",
-    "45": "5-", "50": "5+",
-    "55": "6-", "60": "6+",
+    "44": "5", "45": "5-", "50": "5+",
+    "54": "6", "55": "6-", "60": "6+",
     "70": "7",
   };
   return map[String(maxScale)] ?? "?";
@@ -1858,7 +1864,7 @@ function resolveStationPoints(points, stations) {
 // 各区域には、その区域内の観測点で観測された「最大震度」を割り当てる
 // (気象庁の震度分布図と同じ考え方: 区域内で一番揺れが大きかった地点の震度で塗る)。
 function aggregateByArea(resolvedPoints) {
-  const INTENSITY_ORDER = ["0","1","2","3","4","5-","5+","6-","6+","7"];
+  const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
   const maxByArea = new Map(); // areaCode -> intensityKey
 
   for (const p of resolvedPoints) {
@@ -1923,8 +1929,12 @@ function eqdbIntensityStringToScale(raw) {
     .replace(/震度/g, "")
     .replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
   if (str.includes("7")) return 70;
-  if (str.includes("6")) return str.includes("強") ? 60 : str.includes("弱") ? 55 : 57;
-  if (str.includes("5")) return str.includes("強") ? 50 : str.includes("弱") ? 45 : 47;
+  // 1996年10月の震度階級改定より前は「弱」「強」の区分が無く、単に「震度6」
+  // 「震度5」とだけ記録されている(旧震度階級)。これらは現在の「5弱」「6弱」とは
+  // 区別して、そのまま「5」「6」として表示したいので、専用のスケール値(44/54)を
+  // 割り当てる(45=5弱, 55=6弱と衝突しないようにするため)。
+  if (str.includes("6")) return str.includes("強") ? 60 : str.includes("弱") ? 55 : 54;
+  if (str.includes("5")) return str.includes("強") ? 50 : str.includes("弱") ? 45 : 44;
   if (str.includes("4")) return 40;
   if (str.includes("3")) return 30;
   if (str.includes("2")) return 20;
@@ -2332,7 +2342,7 @@ function StationPointsList({ points }) {
   // scale(10刻みのJMAコード)が大きい順 = 震度が大きい順
   const sorted = useMemo(() => {
     return [...points].sort((a, b) => {
-      const order = ["0","1","2","3","4","5-","5+","6-","6+","7"];
+      const order = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
       return order.indexOf(b.intensityKey) - order.indexOf(a.intensityKey);
     });
   }, [points]);
@@ -3342,7 +3352,7 @@ function BottomDock({
    選択中の地震の「震度1〜最大震度」までを縦並びで表示する凡例。
    最大震度のバッジだけ枠線で強調する。画面左上に浮かべて使う想定。
    ───────────────────────────────────────────────────── */
-const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
+const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5", "5-", "5+", "6", "6-", "6+", "7"];
 
 function QuakeIntensityLegend({ maxIntensity }) {
   const schemeId = useContext(QuakeColorSchemeContext);
