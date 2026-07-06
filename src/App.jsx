@@ -2027,6 +2027,7 @@ function buildEqdbQuakeCard(detail, listItem, stations) {
     place: hyp.name || listItem?.name || "震源地不明",
     maxIntensity: maxScaleToIntensityKey(maxScale),
     isForeign: false,
+    isEqdb: true, // 一覧表示で日時を「YYYY/MM/DD」形式にするための目印
     magnitude: Number.isFinite(mag) && mag > 0 ? mag : null,
     depth: Number.isFinite(depth) ? depth : null,
     longPeriod: null,
@@ -2054,6 +2055,7 @@ function eqdbListItemToPreview(eq) {
     isForeign: false,
     magnitude: Number.isFinite(mag) && mag > 0 ? mag : null,
     depth: depMatch ? parseInt(depMatch[0], 10) : null,
+    isEqdb: true, // 一覧表示で日時を「YYYY/MM/DD」形式にするための目印
   };
 }
 
@@ -3034,6 +3036,7 @@ function BottomDock({
                         onSelectQuake={(id) => { onSelectQuake(id); setSnapIndex(1); }}
                         search={eqdbSearch}
                         onChangeSearch={setEqdbSearch}
+                        onSearchExecuted={() => setSnapIndex(3)}
                       />
                     );
                   }
@@ -3371,7 +3374,7 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
           </span>
         )}
         <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-          {q.time?.slice(5, 16)}
+          {q.isEqdb ? q.time?.slice(0, 10) : q.time?.slice(5, 16)}
         </span>
       </button>
     </div>
@@ -3512,7 +3515,7 @@ function OptionPicker({ value, options, onChange, style }) {
    通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch }) {
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted }) {
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
 
   const {
@@ -3526,8 +3529,27 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     onChangeSearch(prev => ({ ...prev, ...p }));
   }
 
+  // 検索を実行したら、パネルの高さは「中高」のまま、結果一覧の先頭が
+  // パネル上部に来る位置までスクロールする。
+  // (「戻る」で選択解除された後の再マウント時など、ユーザー操作を伴わない
+  //  タイミングでは動かしたくないため、実際にhandleSearchが呼ばれた時だけ
+  //  フラグを立てて、検索が完了した瞬間(isSearchingがtrue→falseになった瞬間)に発火する)
+  const justSearchedRef = useRef(false);
+  const resultsAnchorRef = useRef(null);
+  useEffect(() => {
+    if (justSearchedRef.current && !isSearching) {
+      justSearchedRef.current = false;
+      onSearchExecuted?.();
+      // パネルの高さが変わるアニメーション(0.4s)が落ち着いてからスクロールする
+      setTimeout(() => {
+        resultsAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 420);
+    }
+  }, [isSearching, onSearchExecuted]);
+
   async function handleSearch() {
     if (isSearching) return;
+    justSearchedRef.current = true;
 
     // 検索前に、終了日が現在の2日前を超えていないか・開始日が終了日より後になって
     // いないかを念のため補正する(input[type=date]のmax/min属性で通常は防げるが、
@@ -3535,7 +3557,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     let effectiveEnd = endDate > maxEndDate ? maxEndDate : endDate;
     let effectiveStart = startDate > effectiveEnd ? effectiveEnd : startDate;
 
-    if (!effectiveStart || !effectiveEnd) { patch({ status: "開始日・終了日を指定してください" }); return; }
+    if (!effectiveStart || !effectiveEnd) { patch({ status: "開始日・終了日を指定してください" }); justSearchedRef.current = false; return; }
 
     patch({
       startDate: effectiveStart, endDate: effectiveEnd,
@@ -3643,7 +3665,8 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
         )}
       </div>
 
-      {/* 検索結果一覧 */}
+      {/* 検索結果一覧 — refは「検索」実行後にここまでスクロールするための目印 */}
+      <div ref={resultsAnchorRef}/>
       {!hasSearched ? (
         <div style={{ padding: "18px 16px", textAlign: "center" }}>
           <span style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
