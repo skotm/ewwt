@@ -3195,7 +3195,7 @@ function BottomDock({
                     return (
                       <div key={selected.id}>
                         <QuakeDetailCard quake={selected}/>
-                        <QuakeMessageCard quake={selected}/>
+                        {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints}/>
                         )}
@@ -3652,13 +3652,27 @@ function ChevronDownIcon({ open }) {
    ───────────────────────────────────────────────────── */
 function OptionPicker({ value, options, onChange, style }) {
   const [open, setOpen] = useState(false);
+  const [openUpward, setOpenUpward] = useState(false);
+  const wrapRef = useRef(null);
   const selected = options.find(o => o.value === value);
 
+  // 開く直前に、下方向にメニュー分の余白(見積り220px)があるか確認し、
+  // 無ければ上方向に展開する。ボトムシート下部にあるフィールドだと、
+  // 下に開くとシートの外にはみ出て隠れてしまうため。
+  function handleToggle() {
+    if (!open && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUpward(spaceBelow < 240 && rect.top > spaceBelow);
+    }
+    setOpen(o => !o);
+  }
+
   return (
-    <div style={{ position: "relative" }}>
+    <div ref={wrapRef} style={{ position: "relative" }}>
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={handleToggle}
         style={{
           ...EQDB_INPUT_STYLE, ...style,
           display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -3676,7 +3690,9 @@ function OptionPicker({ value, options, onChange, style }) {
           {/* 背面タップで閉じるための透明オーバーレイ */}
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }}/>
           <div style={{
-            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 61,
+            position: "absolute",
+            ...(openUpward ? { bottom: "calc(100% + 4px)" } : { top: "calc(100% + 4px)" }),
+            left: 0, right: 0, zIndex: 61,
             maxHeight: 220, overflowY: "auto",
             borderRadius: 10,
             background: "rgba(30,30,32,0.98)",
