@@ -3409,6 +3409,10 @@ function eqdbDateValue(d) {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 }
 
+// 開始日に指定できる最も古い日付。気象庁 震度データベースの対象期間が
+// 1919年1月1日以降のため、これより前は選べないようにする。
+const EQDB_MIN_DATE = "1919-01-01";
+
 // 終了日に指定できる最新日(=現在の2日前)。気象庁 震度データベースは直近の地震が
 // 登録されるまでにタイムラグがあるため、終了日はここより新しい日付を選べないようにする。
 function eqdbMaxEndDate() {
@@ -3551,11 +3555,12 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     if (isSearching) return;
     justSearchedRef.current = true;
 
-    // 検索前に、終了日が現在の2日前を超えていないか・開始日が終了日より後になって
-    // いないかを念のため補正する(input[type=date]のmax/min属性で通常は防げるが、
-    // 念のためここでも二重にチェックしておく)。
+    // 検索前に、終了日が現在の2日前を超えていないか・開始日が終了日より後や
+    // 1919年1月1日より前になっていないかを念のため補正する
+    // (input[type=date]のmax/min属性で通常は防げるが、念のためここでも二重にチェックしておく)。
     let effectiveEnd = endDate > maxEndDate ? maxEndDate : endDate;
     let effectiveStart = startDate > effectiveEnd ? effectiveEnd : startDate;
+    if (effectiveStart < EQDB_MIN_DATE) effectiveStart = EQDB_MIN_DATE;
 
     if (!effectiveStart || !effectiveEnd) { patch({ status: "開始日・終了日を指定してください" }); justSearchedRef.current = false; return; }
 
@@ -3620,11 +3625,11 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
       <div style={{ padding: "2px 14px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
-            <input type="date" value={startDate} max={endDate || maxEndDate}
-              onChange={e => patch({ startDate: e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
+            <input type="date" value={startDate} min={EQDB_MIN_DATE} max={endDate || maxEndDate}
+              onChange={e => patch({ startDate: e.target.value < EQDB_MIN_DATE ? EQDB_MIN_DATE : e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
           </EqdbFormField>
           <EqdbFormField label="終了日">
-            <input type="date" value={endDate} min={startDate || undefined} max={maxEndDate}
+            <input type="date" value={endDate} min={startDate || EQDB_MIN_DATE} max={maxEndDate}
               onChange={e => patch({ endDate: e.target.value > maxEndDate ? maxEndDate : e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
           </EqdbFormField>
         </div>
