@@ -3410,8 +3410,6 @@ function defaultEqdbDateRange() {
 const EQDB_DATE_INPUT_STYLE = {
   ...EQDB_INPUT_STYLE,
   fontSize: 16,
-  width: "88%",       // 隣の枠とぶつからないよう、あえて欄の横幅を100%より狭くしている
-  padding: "0 6px",
   WebkitAppearance: "none",
   appearance: "none",
 };
@@ -3586,7 +3584,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
     <div>
       {/* 検索条件フォーム */}
       <div style={{ padding: "2px 14px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
-        <div style={{ display: "flex", gap: 14 }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
             <input type="date" value={startDate} max={endDate || maxEndDate}
               onChange={e => setStartDate(e.target.value)} style={EQDB_DATE_INPUT_STYLE}/>
