@@ -2128,11 +2128,18 @@ function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
     };
   }).filter(Boolean);
 
+  // 1996年10月の震度階級改定(弱/強区分の導入)より前の地震かどうか。
+  // 震度7の地震であっても、旧震度階級の期間のものは内部の5・6も区分の無い
+  // 「5」「6」のはずなので、凡例側で5弱/5強・6弱/6強を出さないための目印にする。
+  const eventDateStr = (listItem?.id || "").slice(0, 8);
+  const legacyIntensityScale = eventDateStr.length === 8 && eventDateStr < "19961001";
+
   return {
     id: `eqdb_${listItem?.id || hyp.name}`,
     time: eqdbIdToTimeDisplay(listItem?.id) || (listItem?.ot || ""),
     place: hyp.name || listItem?.name || "震源地不明",
     maxIntensity: maxScaleToIntensityKey(maxScale),
+    legacyIntensityScale,
     isForeign: false,
     isEqdb: true, // 一覧表示で日時を「YYYY/MM/DD」形式にするための目印
     magnitude: Number.isFinite(mag) && mag > 0 ? mag : null,
@@ -3367,7 +3374,7 @@ function BottomDock({
    ───────────────────────────────────────────────────── */
 const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
-function QuakeIntensityLegend({ maxIntensity }) {
+function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
 
@@ -3376,11 +3383,15 @@ function QuakeIntensityLegend({ maxIntensity }) {
   // 隣り合って重複しているように見えてしまう。そのため通常の並び順には含めず、
   // 震度4(または5強)までの並びに続けて、単独の「5」または「6」バーで
   // 打ち切る形にする。
+  // 震度7の場合も、旧震度階級の期間の地震なら5弱/5強・6弱/6強の区別は
+  // 存在しないはずなので、legacyIntensityScaleを見て同様に単純化する。
   let levels;
   if (maxIntensity === "5") {
     levels = ["1", "2", "3", "4", "5"];
   } else if (maxIntensity === "6") {
     levels = ["1", "2", "3", "4", "5", "6"];
+  } else if (maxIntensity === "7" && legacyIntensityScale) {
+    levels = ["1", "2", "3", "4", "5", "6", "7"];
   } else {
     const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(maxIntensity);
     if (maxIdx < 0) return null; // 震度0や不明("?")の場合は凡例を出さない
@@ -4602,7 +4613,7 @@ export default function App() {
             right: 16,
             zIndex: 30,
           }}>
-            <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity}/>
+            <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity} legacyIntensityScale={selectedQuake.legacyIntensityScale}/>
           </div>
         )}
 
