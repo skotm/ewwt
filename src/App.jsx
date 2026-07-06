@@ -3403,31 +3403,13 @@ function defaultEqdbDateRange() {
   return { start: eqdbDateValue(start), end: eqdbMaxEndDate() };
 }
 
-// "YYYY-MM-DD" ⇄ { y, m, d } の相互変換。
-// 年・月・日をそれぞれ独立した数値入力欄(自由に入力できるテキスト欄)で
-// 扱うために使う。
-function splitDateValue(v) {
-  const [y, m, d] = (v || "").split("-");
-  return { y: y || "", m: m || "", d: d || "" };
-}
-function joinDateValue(y, m, d) {
-  return `${y}-${m}-${d}`;
-}
-
-// 数字だけを残し、min〜maxの範囲に丸めてdigits桁の0埋め文字列にする
-// (入力欄からフォーカスが外れた時の確定処理に使う)。
-function clampDatePart(raw, min, max, digits) {
-  const digitsOnly = (raw || "").replace(/[^0-9]/g, "");
-  if (digitsOnly === "") return String(min).padStart(digits, "0");
-  const n = Math.min(max, Math.max(min, parseInt(digitsOnly, 10)));
-  return String(n).padStart(digits, "0");
-}
-
-// 年月日入力欄の共通スタイル(EQDB_INPUT_STYLEを流用し、中央寄せ・狭幅用に調整)
-const EQDB_DATE_PART_INPUT_STYLE = {
+// input[type=date](ネイティブのカレンダーから選ぶ方式)専用のスタイル。
+// フォントサイズを16px未満にすると、iOSがフォーカス時に画面を自動的に拡大し、
+// そのまま(user-scalable=noのため)手動で縮小できなくなる不具合があるため、
+// 必ず16px以上にする。
+const EQDB_DATE_INPUT_STYLE = {
   ...EQDB_INPUT_STYLE,
-  padding: "0 2px",
-  textAlign: "center",
+  fontSize: 16,
 };
 
 // 下向き山形アイコン(OptionPickerの右端に置く。開いている間は上下反転する)
@@ -3502,37 +3484,6 @@ function OptionPicker({ value, options, onChange, style }) {
   );
 }
 
-// 年月日をそれぞれ独立したOptionPicker(狭幅版)で選ぶ複合コンポーネント。
-// 年:月:日の横幅比は 1.5:1:1 (年は4桁で少し幅が要るため)。
-// 入力中は数字だけ許可してそのまま表示し、フォーカスが外れた時点で
-// 範囲内(月1〜12・日1〜31など)に丸めて2桁/4桁に揃える。
-function EqdbDatePicker({ y, m, d, onChangeY, onChangeM, onChangeD }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-      <input
-        type="tel" inputMode="numeric" value={y} placeholder="YYYY"
-        onChange={e => onChangeY(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
-        onBlur={e => onChangeY(clampDatePart(e.target.value, 1919, 2100, 4))}
-        style={{ ...EQDB_DATE_PART_INPUT_STYLE, flex: 1.5 }}
-      />
-      <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>/</span>
-      <input
-        type="tel" inputMode="numeric" value={m} placeholder="MM"
-        onChange={e => onChangeM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
-        onBlur={e => onChangeM(clampDatePart(e.target.value, 1, 12, 2))}
-        style={{ ...EQDB_DATE_PART_INPUT_STYLE, flex: 1 }}
-      />
-      <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>/</span>
-      <input
-        type="tel" inputMode="numeric" value={d} placeholder="DD"
-        onChange={e => onChangeD(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
-        onBlur={e => onChangeD(clampDatePart(e.target.value, 1, 31, 2))}
-        style={{ ...EQDB_DATE_PART_INPUT_STYLE, flex: 1 }}
-      />
-    </div>
-  );
-}
-
 /* ─────────────────────────────────────────────────────
    QUAKE SEARCH PANEL
    「検索」モードの中身。気象庁 震度データベース(eqdb)を期間・マグニチュード・
@@ -3543,17 +3494,10 @@ function EqdbDatePicker({ y, m, d, onChangeY, onChangeM, onChangeD }) {
    ───────────────────────────────────────────────────── */
 function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }) {
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
-  const defaultRange = defaultEqdbDateRange();
 
-  // 開始日・終了日は、それぞれ年/月/日を独立した「入力できる」テキスト欄で持つ
-  // (input[type=date]はiOS Safariでネイティブのピル状UIが被さって見える不具合が
-  // あったため、自前の数値入力欄に置き換えている)。
-  const [startY, setStartY] = useState(() => splitDateValue(defaultRange.start).y);
-  const [startM, setStartM] = useState(() => splitDateValue(defaultRange.start).m);
-  const [startD, setStartD] = useState(() => splitDateValue(defaultRange.start).d);
-  const [endY,   setEndY]   = useState(() => splitDateValue(defaultRange.end).y);
-  const [endM,   setEndM]   = useState(() => splitDateValue(defaultRange.end).m);
-  const [endD,   setEndD]   = useState(() => splitDateValue(defaultRange.end).d);
+  // 開始日・終了日はカレンダーから選ぶ(input[type=date])。
+  const [startDate, setStartDate] = useState(() => defaultEqdbDateRange().start);
+  const [endDate,   setEndDate]   = useState(() => defaultEqdbDateRange().end);
 
   const [minMag,    setMinMag]    = useState("0.0");
   const [maxInt,    setMaxInt]    = useState("1");
@@ -3568,24 +3512,15 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
   async function handleSearch() {
     if (isSearching) return;
 
-    // 検索前に、各欄の値を確定させる(入力途中で未確定のまま検索された場合の保険)。
-    // ここで丸めることで、「終了日は現在の2日前まで」「開始日は終了日より後にしない」を
-    // 入力のたびに割り込んで書き換えるのではなく、検索の瞬間だけ強制する。
-    const y1 = clampDatePart(startY, 1919, 2100, 4);
-    const m1 = clampDatePart(startM, 1, 12, 2);
-    const d1 = clampDatePart(startD, 1, 31, 2);
-    const y2 = clampDatePart(endY, 1919, 2100, 4);
-    const m2 = clampDatePart(endM, 1, 12, 2);
-    const d2 = clampDatePart(endD, 1, 31, 2);
+    // 検索前に、終了日が現在の2日前を超えていないか・開始日が終了日より後になって
+    // いないかを念のため補正する(input[type=date]のmax/min属性で通常は防げるが、
+    // 念のためここでも二重にチェックしておく)。
+    let effectiveEnd = endDate > maxEndDate ? maxEndDate : endDate;
+    let effectiveStart = startDate > effectiveEnd ? effectiveEnd : startDate;
+    if (effectiveEnd !== endDate) setEndDate(effectiveEnd);
+    if (effectiveStart !== startDate) setStartDate(effectiveStart);
 
-    let effectiveEnd = joinDateValue(y2, m2, d2);
-    if (effectiveEnd > maxEndDate) effectiveEnd = maxEndDate;
-    let effectiveStart = joinDateValue(y1, m1, d1);
-    if (effectiveStart > effectiveEnd) effectiveStart = effectiveEnd;
-
-    // 補正した値を画面にも反映しておく
-    { const c = splitDateValue(effectiveStart); setStartY(c.y); setStartM(c.m); setStartD(c.d); }
-    { const c = splitDateValue(effectiveEnd);   setEndY(c.y);   setEndM(c.m);   setEndD(c.d); }
+    if (!effectiveStart || !effectiveEnd) { setStatus("開始日・終了日を指定してください"); return; }
 
     setIsSearching(true);
     setHasSearched(true);
@@ -3649,12 +3584,12 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
       <div style={{ padding: "2px 14px 6px", display: "flex", flexDirection: "column", gap: 5 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
-            <EqdbDatePicker y={startY} m={startM} d={startD}
-              onChangeY={setStartY} onChangeM={setStartM} onChangeD={setStartD}/>
+            <input type="date" value={startDate} max={endDate || maxEndDate}
+              onChange={e => setStartDate(e.target.value)} style={EQDB_DATE_INPUT_STYLE}/>
           </EqdbFormField>
           <EqdbFormField label="終了日">
-            <EqdbDatePicker y={endY} m={endM} d={endD}
-              onChangeY={setEndY} onChangeM={setEndM} onChangeD={setEndD}/>
+            <input type="date" value={endDate} min={startDate || undefined} max={maxEndDate}
+              onChange={e => setEndDate(e.target.value > maxEndDate ? maxEndDate : e.target.value)} style={EQDB_DATE_INPUT_STYLE}/>
           </EqdbFormField>
         </div>
 
