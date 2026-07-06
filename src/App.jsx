@@ -3228,7 +3228,7 @@ function BottomDock({
                             stations={stations}
                             colorScheme={colorScheme}
                             onFoundQuake={onFoundSearchQuake}
-                            onSelectQuake={handleSelectQuakeForScroll}
+                            onSelectQuake={(id) => { setNearbyQuakeFor(null); handleSelectQuakeForScroll(id); }}
                           />
                         </div>
                       );
