@@ -2578,7 +2578,7 @@ function BottomDock({
   // スクロール位置を先頭へ戻す(=常にカードが先頭に見えるようにする)。
   useLayoutEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = 0;
-  }, [active, selectedQuakeId]);
+  }, [active, selectedQuakeId, quakeViewMode]);
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
