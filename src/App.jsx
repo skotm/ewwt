@@ -2776,7 +2776,11 @@ function BottomDock({
     // 近傍地震選択や近傍一覧の開閉のように選択中の地震IDやタブが変わらない
     // ケースでは作り直されないため、明示的に解除しないとスクロールできない
     // ままになる。
-    scrollRef.current.style.overflow = "";
+    // 注意: overflow(ショートハンド)を""にクリアするだけだと、個別に設定していた
+    // overflowY/overflowXの値ごと消えてしまい、スクロール自体ができなくなる。
+    // 必ず本来の値(overflowY: auto / overflowX: hidden)を明示的に指定し直す。
+    scrollRef.current.style.overflowY = "auto";
+    scrollRef.current.style.overflowX = "hidden";
     scrollRef.current.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
     prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
   }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor]);
