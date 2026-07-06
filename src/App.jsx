@@ -1979,18 +1979,66 @@ async function fetchEqdbEvent(id) {
   return null;
 }
 
+// 点(lat,lon)が、GeoJSONのリング(座標配列 [[lon,lat], ...])の内側にあるかどうかを
+// レイキャスティング法で判定する。
+function isPointInRing(lat, lon, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect = ((yi > lat) !== (yj > lat)) &&
+      (lon < (xj - xi) * (lat - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+// 点(lat,lon)が、Polygon/MultiPolygonジオメトリの内側(穴を除く)にあるかどうかを判定する。
+function isPointInPolygonGeometry(lat, lon, geometry) {
+  if (!geometry) return false;
+  const testRings = (rings) => {
+    if (!rings.length || !isPointInRing(lat, lon, rings[0])) return false;
+    for (let k = 1; k < rings.length; k++) {
+      if (isPointInRing(lat, lon, rings[k])) return false; // 穴の内側
+    }
+    return true;
+  };
+  if (geometry.type === "Polygon") return testRings(geometry.coordinates);
+  if (geometry.type === "MultiPolygon") return geometry.coordinates.some(testRings);
+  return false;
+}
+
+// 細分区域(areasGeoJSON=細分区域.json)のポリゴンを実際に走査し、点(lat,lon)を
+// 含む区域のcode(properties.code)を返す。名前によるあいまい照合と違い、
+// 区域境界そのものに基づく判定なので、表記揺れや同名地点による誤判定が起きない。
+function findAreaCodeByPoint(areasGeoJSON, lat, lon) {
+  if (!areasGeoJSON || !Array.isArray(areasGeoJSON.features) || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  for (const feature of areasGeoJSON.features) {
+    if (isPointInPolygonGeometry(lat, lon, feature.geometry)) {
+      return feature.properties?.code ?? null;
+    }
+  }
+  return null;
+}
+
 // 観測点マスタ(stations)から、eqdbの観測点名(name)に対応する地点を探し、
-// 区域コード(area.code)をベストエフォートで補完する。eqdbの観測点データには
-// 区域コードが無いため、区域単位の震度塗り分け(aggregateByArea)に使う。
-// 名前だけでは見つからない/複数ヒットするケースがあるため、次の順で絞り込む:
+// 区域コード(area.code)を補完する。
+// eqdbは観測点の緯度経度(lat/lon)を直接返してくるため、まずareasGeoJSON(細分区域の
+// ポリゴン)に対する点-in-多角形判定で区域を確定させる。これは区域境界そのものに
+// 基づく判定なので、観測点名の表記揺れや同名地点があっても誤判定しない。
+// (以前は観測点マスタとの名前照合だけで区域を推定しており、名前が一致しない/
+//  複数の地点に一致してしまうケースで「区域が塗られない」「違う区域の色が塗られる」
+//  ことがあった。)
+// areasGeoJSONが無い、または該当ポリゴンが見つからない場合のみ、次点として
+// 観測点マスタとの名前照合(ベストエフォート)にフォールバックする:
 //   1. 地点名が完全一致
 //   2. 見つからなければ、地点名が部分一致(どちらかがどちらかを含む)するもの
 //   3. それでも見つからなければ、緯度経度が最も近い観測点を採用する
-//      (eqdbは観測点の緯度経度を直接返してくるため、表記揺れがあっても
-//       座標さえあればほぼ一意に地点を特定できる。ただしあまりに離れた
-//       地点を誤って採用しないよう、約0.05度以内という上限を設ける)
-// 名前・部分一致で複数ヒットした場合も、同様に緯度経度が最も近いものを選ぶ。
-function findAreaCodeByStationName(stations, name, lat, lon) {
+//      (ただしあまりに離れた地点を誤って採用しないよう、約0.05度以内という上限を設ける)
+function findAreaCodeByStationName(stations, name, lat, lon, areasGeoJSON) {
+  const byPoint = findAreaCodeByPoint(areasGeoJSON, lat, lon);
+  if (byPoint) return byPoint;
+
   if (!stations) return null;
 
   let candidates = name ? stations.filter(s => s.name === name) : [];
@@ -2032,7 +2080,7 @@ function findAreaCodeByStationName(stations, name, lat, lon) {
 // P2P地震情報由来のカードと違い、resolvedPointsとして緯度経度・震度キーまで
 // 解決済みの状態を直接持たせる。selectedQuakePoints側は、resolvedPointsが
 // あればそれをそのまま使い、無ければ従来通り観測点マスタで解決する。
-function buildEqdbQuakeCard(detail, listItem, stations) {
+function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
   const hyp = detail.hyp[0];
   const intPoints = Array.isArray(detail.int) ? detail.int : [];
 
@@ -2053,7 +2101,7 @@ function buildEqdbQuakeCard(detail, listItem, stations) {
       intensityKey: maxScaleToIntensityKey(scale),
       latitude: Number.isFinite(pLat) ? pLat : null,
       longitude: Number.isFinite(pLon) ? pLon : null,
-      areaCode: findAreaCodeByStationName(stations, pt.name, pLat, pLon),
+      areaCode: findAreaCodeByStationName(stations, pt.name, pLat, pLon, areasGeoJSON),
     };
   }).filter(Boolean);
 
@@ -3659,12 +3707,12 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     if (loadingId) return;
     patch({ loadingId: eq.id, status: `「${eq.name}」の震度データを取得中…` });
     try {
-      const detail = await fetchEqdbEvent(eq.id);
+      const [detail, geo] = await Promise.all([fetchEqdbEvent(eq.id), loadGeoData()]);
       if (!detail) {
         patch({ status: "詳細データの取得に失敗しました" });
         return;
       }
-      const card = buildEqdbQuakeCard(detail, eq, stations);
+      const card = buildEqdbQuakeCard(detail, eq, stations, geo?.areas);
       onFoundQuake(card);
       onSelectQuake(card.id);
     } catch (e) {
