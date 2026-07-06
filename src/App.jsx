@@ -2647,10 +2647,16 @@ function BottomDock({
   // 地震タブの表示モード。"recent" = 直近の地震一覧(P2P地震情報フィード)、
   // "search" = 気象庁 震度データベースを検索するUI。
   // タブを離れたら次に開いた時は必ず「一覧」から始まるようにリセットする。
+  // ただし、検索結果から地震を選択して詳細カードを表示している間に他のタブへ
+  // 移動した場合はリセットしない。ここでリセットしてしまうと、タブを行き来して
+  // 地震タブに戻ってきた時点では detail カードがそのまま表示され続けるため
+  // 気づきにくいが、その後「戻る」を押した瞬間にquakeViewModeが既に"recent"に
+  // 書き換わっており、本来戻るべき検索結果ではなく直近一覧に戻ってしまう
+  // (=検索経由で選択→他タブ→戻る→「戻る」ボタンでリストタブになる不具合)。
   const [quakeViewMode, setQuakeViewMode] = useState("recent"); // "recent" | "search"
   useEffect(() => {
-    if (active !== "quake") setQuakeViewMode("recent");
-  }, [active]);
+    if (active !== "quake" && selectedQuakeId == null) setQuakeViewMode("recent");
+  }, [active, selectedQuakeId]);
 
   // 気象庁 震度データベース検索フォーム・結果一覧の状態。
   // QuakeSearchPanel自身の内部state(useState)ではなくここに持たせているのは、
@@ -2668,12 +2674,37 @@ function BottomDock({
     };
   });
 
-  // タブ切り替え、または選択中の地震が変わった際に表示中身が変わると、
-  // ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
-  // カードやヘッダーが隠れて見えることがあるため、そのたびに明示的に
-  // スクロール位置を先頭へ戻す(=常にカードが先頭に見えるようにする)。
+  // 一覧(未選択状態)のスクロール位置を覚えておくためのref。
+  // 地震を選択するとカード表示に排他的に切り替わり(keyが変わり)一覧側のDOM要素
+  // ごと作り直されるため、選択した瞬間のスクロール位置を保存しておかないと、
+  // 「戻る」で一覧に戻った時に必ず先頭に戻ってしまう。選択操作の直前
+  // (handleSelectQuakeForScroll)で保存し、選択解除(戻る)で復元する。
+  const listScrollTopRef = useRef(0);
+  function handleSelectQuakeForScroll(id) {
+    if (scrollRef.current) listScrollTopRef.current = scrollRef.current.scrollTop;
+    killScrollMomentum();
+    onSelectQuake(id);
+    setSnapIndex(1);
+  }
+
+  // タブ切り替え、一覧⇄検索モードの切り替え、地震の選択/選択解除で表示中身が
+  // 変わるたびに、ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
+  // カードやヘッダーが隠れて見えることがあるため、そのたびに明示的にスクロール
+  // 位置を調整する。
+  // ただし「戻る」ボタンで選択解除して一覧に戻っただけ(タブ・モードは変わって
+  // いない)場合は、先頭に戻すのではなく選択前のスクロール位置を復元する
+  // (=一覧を下の方までスクロールして地震を選んだ後、戻ったら同じ場所に
+  //  留まってほしい、という自然な挙動にするため)。
+  const prevScrollDepsRef = useRef({ active, quakeViewMode, selectedQuakeId });
   useLayoutEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    if (!scrollRef.current) return;
+    const prev = prevScrollDepsRef.current;
+    const onlyDeselected =
+      prev.active === active && prev.quakeViewMode === quakeViewMode &&
+      prev.selectedQuakeId != null && selectedQuakeId == null;
+
+    scrollRef.current.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
+    prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
   }, [active, selectedQuakeId, quakeViewMode]);
 
 
@@ -3136,7 +3167,7 @@ function BottomDock({
                         stations={stations}
                         colorScheme={colorScheme}
                         onFoundQuake={onFoundSearchQuake}
-                        onSelectQuake={(id) => { killScrollMomentum(); onSelectQuake(id); setSnapIndex(1); }}
+                        onSelectQuake={handleSelectQuakeForScroll}
                         search={eqdbSearch}
                         onChangeSearch={setEqdbSearch}
                         onSearchExecuted={() => setSnapIndex(3)}
@@ -3152,7 +3183,7 @@ function BottomDock({
                           quake={q}
                           showDivider={i > 0}
                           colorScheme={colorScheme}
-                          onSelect={() => { killScrollMomentum(); onSelectQuake(q.id); setSnapIndex(1); }}
+                          onSelect={() => handleSelectQuakeForScroll(q.id)}
                         />
                       ))}
                     </>
