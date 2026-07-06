@@ -2718,8 +2718,12 @@ function BottomDock({
   // 代わりにNearbyQuakesPanelを表示する。選択解除(戻るボタンで一覧に戻る等)
   // されたら一緒に閉じる。
   const [nearbyQuakeFor, setNearbyQuakeFor] = useState(null);
+  // 近傍地震一覧から地震を選んだ場合、その一覧に「戻る」を押した時に戻れるよう、
+  // 一覧を開いていた震源地名を覚えておく(nearbyQuakeFor自体は選択と同時に
+  // 閉じてしまうため、別の変数で覚えておく必要がある)。
+  const [nearbyOrigin, setNearbyOrigin] = useState(null);
   useEffect(() => {
-    if (selectedQuakeId == null) setNearbyQuakeFor(null);
+    if (selectedQuakeId == null) { setNearbyQuakeFor(null); setNearbyOrigin(null); }
   }, [selectedQuakeId]);
 
   // 気象庁 震度データベース検索フォーム・結果一覧の状態。
@@ -2767,9 +2771,15 @@ function BottomDock({
       prev.active === active && prev.quakeViewMode === quakeViewMode &&
       prev.selectedQuakeId != null && selectedQuakeId == null;
 
+    // killScrollMomentum()が付けたoverflow:hiddenの上書きを解除する。
+    // 以前はコンテナがDOMごと作り直される(key変更)ことで自然に消えていたが、
+    // 近傍地震選択や近傍一覧の開閉のように選択中の地震IDやタブが変わらない
+    // ケースでは作り直されないため、明示的に解除しないとスクロールできない
+    // ままになる。
+    scrollRef.current.style.overflow = "";
     scrollRef.current.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
     prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
-  }, [active, selectedQuakeId, quakeViewMode]);
+  }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor]);
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
@@ -3089,9 +3099,10 @@ function BottomDock({
             onClick={() => {
               killScrollMomentum();
               if (nearbyQuakeFor) { setNearbyQuakeFor(null); return; }
+              if (nearbyOrigin) { setNearbyQuakeFor(nearbyOrigin); setNearbyOrigin(null); return; }
               onSelectQuake(null);
             }}
-            label={nearbyQuakeFor ? "地震の詳細に戻る" : "地震一覧に戻る"}
+            label={nearbyQuakeFor ? "地震の詳細に戻る" : nearbyOrigin ? "近傍地震一覧に戻る" : "地震一覧に戻る"}
           />
         </div>
       )}
@@ -3228,7 +3239,11 @@ function BottomDock({
                             stations={stations}
                             colorScheme={colorScheme}
                             onFoundQuake={onFoundSearchQuake}
-                            onSelectQuake={(id) => { setNearbyQuakeFor(null); handleSelectQuakeForScroll(id); }}
+                            onSelectQuake={(id) => {
+                              setNearbyOrigin(nearbyQuakeFor);
+                              setNearbyQuakeFor(null);
+                              handleSelectQuakeForScroll(id);
+                            }}
                           />
                         </div>
                       );
