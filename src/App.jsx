@@ -2537,6 +2537,18 @@ function BottomDock({
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
                             // 引き渡す(onHandoffToPanelDrag)ため、ハンドル自体を広げる必要はない。
   const scrollRef = useRef(null);
+
+  // 一覧⇄検索の切り替えや地震の選択/選択解除など、表示中身が切り替わって
+  // scrollRef自体がkeyごと作り直される直前に呼ぶ。「勢いよくスクロールした
+  // 直後に切り替える」と、iOSの慣性スクロール(フリック後の減速アニメーション)が
+  // 古い要素に対してまだ動いている場合があり、key変更によるDOM要素の作り直しが
+  // 1フレーム遅れるだけでも新しい要素側に慣性が乗り移って見えることがあるため、
+  // 切り替えの直前にoverflowをhiddenにして慣性スクロールを即座に断ち切っておく
+  // (新しい要素はstyle指定で改めてoverflow: autoになるので支障はない)。
+  function killScrollMomentum() {
+    if (scrollRef.current) scrollRef.current.style.overflow = "hidden";
+  }
+
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
 
@@ -2894,7 +2906,7 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
-          <BackToListButton onClick={() => onSelectQuake(null)}/>
+          <BackToListButton onClick={() => { killScrollMomentum(); onSelectQuake(null); }}/>
         </div>
       )}
 
@@ -2968,7 +2980,7 @@ function BottomDock({
         {active === "quake" && selectedQuakeId == null && (
           <QuakeListToolbar
             mode={quakeViewMode}
-            onModeChange={setQuakeViewMode}
+            onModeChange={(mode) => { killScrollMomentum(); setQuakeViewMode(mode); }}
             onHandoffToPanelDrag={handlePointerDown}
           />
         )}
@@ -2976,8 +2988,15 @@ function BottomDock({
         {/* スクロール可能な本体 — ヘッダー・レイヤー一覧だけがここでスクロールする。
             overflowAnchor: "none" は、タブ切り替えで中身の高さが変わった際に
             ブラウザのスクロールアンカリングがスクロール位置を勝手にずらし、
-            ヘッダーや先頭行が隠れて見える不具合を防ぐため。 */}
+            ヘッダーや先頭行が隠れて見える不具合を防ぐため。
+            key で active/quakeViewMode ごとに別のDOM要素にしているのは、
+            scrollTop=0を後から代入するだけだと、iOSの慣性スクロール(勢いよく
+            フリックした後の減速アニメーション)が同じ要素に対して裏側で動き続け、
+            切り替え直後にリセットしてもすぐ上書きされて別タブ側まで動いてしまう
+            ため。要素ごと作り直すことで、古い要素に紐づく慣性スクロールを
+            物理的に断ち切る。 */}
         <div
+          key={`${active}:${quakeViewMode}:${selectedQuakeId != null}`}
           ref={scrollRef}
           style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none" }}
         >
@@ -3033,7 +3052,7 @@ function BottomDock({
                         stations={stations}
                         colorScheme={colorScheme}
                         onFoundQuake={onFoundSearchQuake}
-                        onSelectQuake={(id) => { onSelectQuake(id); setSnapIndex(1); }}
+                        onSelectQuake={(id) => { killScrollMomentum(); onSelectQuake(id); setSnapIndex(1); }}
                         search={eqdbSearch}
                         onChangeSearch={setEqdbSearch}
                         onSearchExecuted={() => setSnapIndex(3)}
@@ -3049,7 +3068,7 @@ function BottomDock({
                           quake={q}
                           showDivider={i > 0}
                           colorScheme={colorScheme}
-                          onSelect={() => { onSelectQuake(q.id); setSnapIndex(1); }}
+                          onSelect={() => { killScrollMomentum(); onSelectQuake(q.id); setSnapIndex(1); }}
                         />
                       ))}
                     </>
