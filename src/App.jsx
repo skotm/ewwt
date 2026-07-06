@@ -1849,6 +1849,10 @@ function matchStation(stations, point) {
 function resolveStationPoints(points, stations) {
   return points.map(p => {
     const station = matchStation(stations, p);
+    if (!station) {
+      // eslint-disable-next-line no-console
+      console.warn(`[観測点マスタ未一致] ${p.pref} ${p.addr} — stations_with_amp_revised.jsonに追加が必要かもしれません`);
+    }
     return {
       pref: p.pref,
       addr: p.addr,
@@ -2372,14 +2376,23 @@ function StationPointsList({ points }) {
   const VISIBLE_COUNT = 10;
   const visible = expanded ? sorted : sorted.slice(0, VISIBLE_COUNT);
   const hasMore = sorted.length > VISIBLE_COUNT;
+  // 観測点マスタに見つからず、緯度経度が引けなかった(=地図上には表示されていない)観測点の数。
+  // 地図上で「無いことに気づけない」状態を防ぐため、ここで件数を明示しておく。
+  const unmappedCount = sorted.filter(p => p.latitude == null || p.longitude == null).length;
 
   return (
     <div style={{ margin: "2px 14px 8px" }}>
       <div style={{
         padding: "6px 2px",
         fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)",
+        display: "flex", alignItems: "baseline", gap: 6,
       }}>
-        各地の震度
+        <span>各地の震度</span>
+        {unmappedCount > 0 && (
+          <span style={{ fontWeight: 500, color: "rgba(255,255,255,0.35)" }}>
+            (うち{unmappedCount}件は観測点マスタに無く、地図には非表示)
+          </span>
+        )}
       </div>
 
       <div style={{
