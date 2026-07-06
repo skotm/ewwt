@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, createContext, forwardRef } from "react";
+import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
    TRUE LIQUID GLASS
@@ -3652,27 +3653,47 @@ function ChevronDownIcon({ open }) {
    ───────────────────────────────────────────────────── */
 function OptionPicker({ value, options, onChange, style }) {
   const [open, setOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
-  const wrapRef = useRef(null);
+  const [menuRect, setMenuRect] = useState(null); // {left, width, top?, bottom?}
+  const btnRef = useRef(null);
   const selected = options.find(o => o.value === value);
 
-  // 開く直前に、下方向にメニュー分の余白(見積り220px)があるか確認し、
-  // 無ければ上方向に展開する。ボトムシート下部にあるフィールドだと、
-  // 下に開くとシートの外にはみ出て隠れてしまうため。
-  function handleToggle() {
-    if (!open && wrapRef.current) {
-      const rect = wrapRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUpward(spaceBelow < 240 && rect.top > spaceBelow);
-    }
-    setOpen(o => !o);
+  // ボトムシートは自身のスクロール領域でoverflowを切っているため、通常の
+  // position:absoluteな子要素だと上下どちらに開いてもシートの外にはみ出た分が
+  // 見切れてしまう。それを避けるため、メニュー自体はdocument.bodyへportalし、
+  // position:fixedでボタンの実際の画面上の位置から浮かせて表示する
+  // (=シートのoverflowに一切影響されない)。
+  function computeAndOpen() {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (!rect) { setOpen(true); return; }
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const openUpward = spaceBelow < 240 && spaceAbove > spaceBelow;
+    setMenuRect({
+      left: rect.left, width: rect.width,
+      ...(openUpward ? { bottom: window.innerHeight - rect.top + 4 } : { top: rect.bottom + 4 }),
+    });
+    setOpen(true);
   }
 
+  // 開いている間にシートやページがスクロールされると、固定座標がボタンと
+  // ずれてしまうため、その場合はメニューを閉じる。
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
+
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div style={{ position: "relative" }}>
       <button
+        ref={btnRef}
         type="button"
-        onClick={handleToggle}
+        onClick={() => (open ? setOpen(false) : computeAndOpen())}
         style={{
           ...EQDB_INPUT_STYLE, ...style,
           display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -3685,14 +3706,15 @@ function OptionPicker({ value, options, onChange, style }) {
         <ChevronDownIcon open={open}/>
       </button>
 
-      {open && (
+      {open && menuRect && createPortal(
         <>
           {/* 背面タップで閉じるための透明オーバーレイ */}
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 60 }}/>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }}/>
           <div style={{
-            position: "absolute",
-            ...(openUpward ? { bottom: "calc(100% + 4px)" } : { top: "calc(100% + 4px)" }),
-            left: 0, right: 0, zIndex: 61,
+            position: "fixed",
+            left: menuRect.left, width: menuRect.width,
+            ...(menuRect.top != null ? { top: menuRect.top } : { bottom: menuRect.bottom }),
+            zIndex: 9999,
             maxHeight: 220, overflowY: "auto",
             borderRadius: 10,
             background: "rgba(30,30,32,0.98)",
@@ -3714,7 +3736,8 @@ function OptionPicker({ value, options, onChange, style }) {
               </button>
             ))}
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );
