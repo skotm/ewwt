@@ -3404,9 +3404,8 @@ function defaultEqdbDateRange() {
 }
 
 // "YYYY-MM-DD" ⇄ { y, m, d } の相互変換。
-// input[type=date]はiOS Safariだと自前CSSで見た目を統一できず(ネイティブの
-// ピル状UIが被さって見える不具合があった)、年・月・日をそれぞれ独立した
-// OptionPicker(自前ドロップダウン)で選ぶ方式に置き換えるために使う。
+// 年・月・日をそれぞれ独立した数値入力欄(自由に入力できるテキスト欄)で
+// 扱うために使う。
 function splitDateValue(v) {
   const [y, m, d] = (v || "").split("-");
   return { y: y || "", m: m || "", d: d || "" };
@@ -3415,24 +3414,21 @@ function joinDateValue(y, m, d) {
   return `${y}-${m}-${d}`;
 }
 
-const EQDB_CURRENT_YEAR = new Date().getFullYear();
-// 年の選択肢(今年〜1919年)。1919年より前は気象庁 震度データベースの対象外。
-const EQDB_YEAR_OPTIONS = Array.from(
-  { length: EQDB_CURRENT_YEAR - 1919 + 1 },
-  (_, i) => { const y = String(EQDB_CURRENT_YEAR - i); return { value: y, label: y }; }
-);
-const EQDB_MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => {
-  const v = String(i + 1).padStart(2, "0");
-  return { value: v, label: v };
-});
-const EQDB_DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => {
-  const v = String(i + 1).padStart(2, "0");
-  return { value: v, label: v };
-});
+// 数字だけを残し、min〜maxの範囲に丸めてdigits桁の0埋め文字列にする
+// (入力欄からフォーカスが外れた時の確定処理に使う)。
+function clampDatePart(raw, min, max, digits) {
+  const digitsOnly = (raw || "").replace(/[^0-9]/g, "");
+  if (digitsOnly === "") return String(min).padStart(digits, "0");
+  const n = Math.min(max, Math.max(min, parseInt(digitsOnly, 10)));
+  return String(n).padStart(digits, "0");
+}
 
-// 年月日ピッカー用の狭い専用スタイル(EQDB_INPUT_STYLEより横幅が狭いため
-// パディング・文字サイズを詰めている)
-const EQDB_DATE_PART_STYLE = { padding: "0 4px", fontSize: 12 };
+// 年月日入力欄の共通スタイル(EQDB_INPUT_STYLEを流用し、中央寄せ・狭幅用に調整)
+const EQDB_DATE_PART_INPUT_STYLE = {
+  ...EQDB_INPUT_STYLE,
+  padding: "0 2px",
+  textAlign: "center",
+};
 
 // 下向き山形アイコン(OptionPickerの右端に置く。開いている間は上下反転する)
 function ChevronDownIcon({ open }) {
@@ -3507,19 +3503,32 @@ function OptionPicker({ value, options, onChange, style }) {
 }
 
 // 年月日をそれぞれ独立したOptionPicker(狭幅版)で選ぶ複合コンポーネント。
-// 年:月:日の横幅比は 1.35:1:1 (年は4桁で少し幅が要るため)。
+// 年:月:日の横幅比は 1.5:1:1 (年は4桁で少し幅が要るため)。
+// 入力中は数字だけ許可してそのまま表示し、フォーカスが外れた時点で
+// 範囲内(月1〜12・日1〜31など)に丸めて2桁/4桁に揃える。
 function EqdbDatePicker({ y, m, d, onChangeY, onChangeM, onChangeD }) {
   return (
-    <div style={{ display: "flex", gap: 4 }}>
-      <div style={{ flex: 1.35, minWidth: 0 }}>
-        <OptionPicker value={y} options={EQDB_YEAR_OPTIONS} onChange={onChangeY} style={EQDB_DATE_PART_STYLE}/>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <OptionPicker value={m} options={EQDB_MONTH_OPTIONS} onChange={onChangeM} style={EQDB_DATE_PART_STYLE}/>
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <OptionPicker value={d} options={EQDB_DAY_OPTIONS} onChange={onChangeD} style={EQDB_DATE_PART_STYLE}/>
-      </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
+      <input
+        type="tel" inputMode="numeric" value={y} placeholder="YYYY"
+        onChange={e => onChangeY(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+        onBlur={e => onChangeY(clampDatePart(e.target.value, 1919, 2100, 4))}
+        style={{ ...EQDB_DATE_PART_INPUT_STYLE, flex: 1.5 }}
+      />
+      <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>/</span>
+      <input
+        type="tel" inputMode="numeric" value={m} placeholder="MM"
+        onChange={e => onChangeM(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+        onBlur={e => onChangeM(clampDatePart(e.target.value, 1, 12, 2))}
+        style={{ ...EQDB_DATE_PART_INPUT_STYLE, flex: 1 }}
+      />
+      <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>/</span>
+      <input
+        type="tel" inputMode="numeric" value={d} placeholder="DD"
+        onChange={e => onChangeD(e.target.value.replace(/[^0-9]/g, "").slice(0, 2))}
+        onBlur={e => onChangeD(clampDatePart(e.target.value, 1, 31, 2))}
+        style={{ ...EQDB_DATE_PART_INPUT_STYLE, flex: 1 }}
+      />
     </div>
   );
 }
@@ -3536,16 +3545,15 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
   const defaultRange = defaultEqdbDateRange();
 
-  // 開始日・終了日は、それぞれ年/月/日を独立したstateで持つ
-  // (input[type=date]のネイティブUIの不具合を避けるため、自前のOptionPickerで選ぶ)。
+  // 開始日・終了日は、それぞれ年/月/日を独立した「入力できる」テキスト欄で持つ
+  // (input[type=date]はiOS Safariでネイティブのピル状UIが被さって見える不具合が
+  // あったため、自前の数値入力欄に置き換えている)。
   const [startY, setStartY] = useState(() => splitDateValue(defaultRange.start).y);
   const [startM, setStartM] = useState(() => splitDateValue(defaultRange.start).m);
   const [startD, setStartD] = useState(() => splitDateValue(defaultRange.start).d);
   const [endY,   setEndY]   = useState(() => splitDateValue(defaultRange.end).y);
   const [endM,   setEndM]   = useState(() => splitDateValue(defaultRange.end).m);
   const [endD,   setEndD]   = useState(() => splitDateValue(defaultRange.end).d);
-  const startDate = joinDateValue(startY, startM, startD);
-  const endDate   = joinDateValue(endY, endM, endD);
 
   const [minMag,    setMinMag]    = useState("0.0");
   const [maxInt,    setMaxInt]    = useState("1");
@@ -3557,32 +3565,34 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
   const [results,     setResults]     = useState([]); // mode=searchの生データ一覧
   const [loadingId,   setLoadingId]   = useState(null); // 詳細取得中のeq.id
 
-  // 終了日は「現在の2日前」より新しい日付を選べないようにする
-  useEffect(() => {
-    if (endDate > maxEndDate) {
-      const c = splitDateValue(maxEndDate);
-      setEndY(c.y); setEndM(c.m); setEndD(c.d);
-    }
-  }, [endDate, maxEndDate]);
-
-  // 開始日は終了日より後にならないようにする
-  useEffect(() => {
-    if (startDate > endDate) {
-      const c = splitDateValue(endDate);
-      setStartY(c.y); setStartM(c.m); setStartD(c.d);
-    }
-  }, [startDate, endDate]);
-
-
   async function handleSearch() {
     if (isSearching) return;
-    if (!startDate || !endDate) { setStatus("開始日・終了日を指定してください"); return; }
+
+    // 検索前に、各欄の値を確定させる(入力途中で未確定のまま検索された場合の保険)。
+    // ここで丸めることで、「終了日は現在の2日前まで」「開始日は終了日より後にしない」を
+    // 入力のたびに割り込んで書き換えるのではなく、検索の瞬間だけ強制する。
+    const y1 = clampDatePart(startY, 1919, 2100, 4);
+    const m1 = clampDatePart(startM, 1, 12, 2);
+    const d1 = clampDatePart(startD, 1, 31, 2);
+    const y2 = clampDatePart(endY, 1919, 2100, 4);
+    const m2 = clampDatePart(endM, 1, 12, 2);
+    const d2 = clampDatePart(endD, 1, 31, 2);
+
+    let effectiveEnd = joinDateValue(y2, m2, d2);
+    if (effectiveEnd > maxEndDate) effectiveEnd = maxEndDate;
+    let effectiveStart = joinDateValue(y1, m1, d1);
+    if (effectiveStart > effectiveEnd) effectiveStart = effectiveEnd;
+
+    // 補正した値を画面にも反映しておく
+    { const c = splitDateValue(effectiveStart); setStartY(c.y); setStartM(c.m); setStartD(c.d); }
+    { const c = splitDateValue(effectiveEnd);   setEndY(c.y);   setEndM(c.m);   setEndD(c.d); }
+
     setIsSearching(true);
     setHasSearched(true);
     setStatus("気象庁 震度データベースを検索中…");
     try {
       const minMagNum = parseFloat(minMag) || 0;
-      const { list, errMsg, summary } = await fetchEqdbSearch({ startDate, endDate, minMag: minMagNum, maxInt, sort });
+      const { list, errMsg, summary } = await fetchEqdbSearch({ startDate: effectiveStart, endDate: effectiveEnd, minMag: minMagNum, maxInt, sort });
       if (errMsg) {
         setStatus(`⚠ ${errMsg}`);
         setResults([]);
