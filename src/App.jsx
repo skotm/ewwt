@@ -1919,6 +1919,17 @@ function eqdbIntensityThresholdScale(raw) {
 
 const EQDB_MAX_INT_SCALE = { "1": 10, "2": 20, "3": 30, "4": 40, "A": 45, "B": 50, "C": 55, "D": 60, "7": 70 };
 
+// 「この震源の近傍で発生した地震」ボタンを出す条件。
+// P2P地震情報(リアルタイム)側の地震のみが対象で、震度5弱以上(旧震度階級の
+// 「5」も含む)またはマグニチュード6.0以上の場合に表示する。
+const NEARBY_QUAKE_MIN_INTENSITY_KEYS = new Set(["5", "5-", "5+", "6", "6-", "6+", "7"]);
+function shouldShowNearbyQuakeButton(quake) {
+  if (!quake || quake.isEqdb) return false;
+  const intOk = NEARBY_QUAKE_MIN_INTENSITY_KEYS.has(quake.maxIntensity);
+  const magOk = Number.isFinite(quake.magnitude) && quake.magnitude >= 6.0;
+  return intOk || magOk;
+}
+
 const EQDB_SORT_OPTIONS = [
   { value: "S0", label: "新しい順" },
   { value: "S1", label: "古い順" },
@@ -2702,6 +2713,15 @@ function BottomDock({
     if (active !== "quake" && selectedQuakeId == null) setQuakeViewMode("recent");
   }, [active, selectedQuakeId]);
 
+  // 「この震源の近傍で発生した地震」パネルを開いている場合の、震源地名。
+  // nullなら通常の地震詳細カードを表示し、震源地名(文字列)が入っている間は
+  // 代わりにNearbyQuakesPanelを表示する。選択解除(戻るボタンで一覧に戻る等)
+  // されたら一緒に閉じる。
+  const [nearbyQuakeFor, setNearbyQuakeFor] = useState(null);
+  useEffect(() => {
+    if (selectedQuakeId == null) setNearbyQuakeFor(null);
+  }, [selectedQuakeId]);
+
   // 気象庁 震度データベース検索フォーム・結果一覧の状態。
   // QuakeSearchPanel自身の内部state(useState)ではなくここに持たせているのは、
   // 地震を選択すると一覧側(QuakeSearchPanel)がいったんアンマウントされるため
@@ -3065,7 +3085,14 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
-          <BackToListButton onClick={() => { killScrollMomentum(); onSelectQuake(null); }}/>
+          <BackToListButton
+            onClick={() => {
+              killScrollMomentum();
+              if (nearbyQuakeFor) { setNearbyQuakeFor(null); return; }
+              onSelectQuake(null);
+            }}
+            label={nearbyQuakeFor ? "地震の詳細に戻る" : "地震一覧に戻る"}
+          />
         </div>
       )}
 
@@ -3193,10 +3220,44 @@ function BottomDock({
 
                   // 選択中は「カード(+各地の震度)のみ」、未選択は「一覧のみ」の排他表示。
                   if (selected) {
+                    if (nearbyQuakeFor) {
+                      return (
+                        <div key={`${selected.id}:nearby`}>
+                          <NearbyQuakesPanel
+                            place={nearbyQuakeFor}
+                            stations={stations}
+                            colorScheme={colorScheme}
+                            onFoundQuake={onFoundSearchQuake}
+                            onSelectQuake={handleSelectQuakeForScroll}
+                          />
+                        </div>
+                      );
+                    }
                     return (
                       <div key={selected.id}>
                         <QuakeDetailCard quake={selected}/>
                         {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
+                        {shouldShowNearbyQuakeButton(selected) && (
+                          <div style={{ margin: "2px 14px 8px" }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (scrollRef.current) scrollRef.current.scrollTop = 0;
+                                setNearbyQuakeFor(selected.place);
+                              }}
+                              style={{
+                                width: "100%", padding: "10px 12px", borderRadius: 12,
+                                border: "none", cursor: "pointer",
+                                background: "rgba(255,255,255,0.08)",
+                                boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.14)",
+                                color: "#fff", fontSize: 13, fontWeight: 600,
+                                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                              }}
+                            >
+                              この震源の近傍で発生した地震
+                            </button>
+                          </div>
+                        )}
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints}/>
                         )}
@@ -3748,6 +3809,139 @@ function OptionPicker({ value, options, onChange, style }) {
         </>,
         document.body
       )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   NEARBY QUAKES PANEL
+   「この震源の近傍で発生した地震」。選択中のP2P地震情報(リアルタイム)の
+   震源地名と同じ震源地名を持つ地震を、気象庁 震度データベース(eqdb)全期間から
+   検索して一覧表示する。eqdbの検索APIには震央地名そのものを条件にする項目が
+   無い(震央地域はコード化された階層選択のみ)ため、期間全体を対象に検索した
+   上で、返ってきた各件の震源地名(name)が選択中の地震の震源地名と完全一致する
+   ものだけをクライアント側で絞り込む。
+   ───────────────────────────────────────────────────── */
+const NEARBY_SORT_BUTTONS = [
+  { key: "time", label: "日時" },
+  { key: "mag", label: "M" },
+  { key: "maxInt", label: "最大震度" },
+  { key: "depth", label: "深さ" },
+];
+
+function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake }) {
+  const [status, setStatus] = useState("loading"); // loading | error | done
+  const [results, setResults] = useState([]);
+  const [sortKey, setSortKey] = useState("maxInt");
+  const [sortDesc, setSortDesc] = useState(true);
+  const [loadingId, setLoadingId] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setStatus("loading");
+      try {
+        const { list, errMsg } = await fetchEqdbSearch({
+          startDate: EQDB_MIN_DATE, endDate: eqdbMaxEndDate(),
+          minMag: 0, maxInt: "1", sort: "S1",
+        });
+        if (cancelled) return;
+        if (errMsg) { setStatus("error"); setResults([]); return; }
+        setResults(list.filter(eq => (eq.name || "") === place));
+        setStatus("done");
+      } catch (e) {
+        if (!cancelled) { setStatus("error"); setResults([]); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [place]);
+
+  const sorted = useMemo(() => {
+    const arr = [...results];
+    const valueOf = (eq) => {
+      if (sortKey === "time") return eq.id || "";
+      if (sortKey === "mag") return parseFloat(eq.mag) || 0;
+      if (sortKey === "depth") return parseInt((eq.dep || "").match(/\d+/)?.[0] || "0", 10);
+      return eqdbIntensityStringToScale(eq.maxI || "");
+    };
+    arr.sort((a, b) => {
+      const av = valueOf(a), bv = valueOf(b);
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return sortDesc ? -cmp : cmp;
+    });
+    return arr;
+  }, [results, sortKey, sortDesc]);
+
+  function handleSortTap(key) {
+    if (sortKey === key) { setSortDesc(d => !d); return; }
+    setSortKey(key);
+    setSortDesc(true);
+  }
+
+  async function handlePick(eq) {
+    if (loadingId) return;
+    setLoadingId(eq.id);
+    try {
+      const [detail, geo] = await Promise.all([fetchEqdbEvent(eq.id), loadGeoData()]);
+      if (!detail) return;
+      const card = buildEqdbQuakeCard(detail, eq, stations, geo?.areas);
+      onFoundQuake(card);
+      onSelectQuake(card.id);
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  return (
+    <div>
+      <div style={{ padding: "10px 14px 2px" }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
+          この震源({place})の近傍で発生した地震
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, padding: "8px 14px 10px", flexWrap: "wrap" }}>
+        {NEARBY_SORT_BUTTONS.map(b => (
+          <button
+            key={b.key}
+            type="button"
+            onClick={() => handleSortTap(b.key)}
+            style={{
+              padding: "5px 10px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+              border: "none", cursor: "pointer",
+              background: sortKey === b.key ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.06)",
+              color: sortKey === b.key ? "#fff" : "rgba(255,255,255,0.6)",
+            }}
+          >
+            {b.label}{sortKey === b.key ? (sortDesc ? " ↓" : " ↑") : ""}
+          </button>
+        ))}
+      </div>
+
+      {status === "loading" && (
+        <div style={{ padding: "18px 0", textAlign: "center", color: "rgba(255,255,255,0.45)", fontSize: 12 }}>
+          検索中…
+        </div>
+      )}
+      {status === "error" && (
+        <div style={{ padding: "18px 16px", textAlign: "center", color: "rgba(255,140,140,0.9)", fontSize: 12 }}>
+          取得に失敗しました
+        </div>
+      )}
+      {status === "done" && sorted.length === 0 && (
+        <div style={{ padding: "18px 16px", textAlign: "center", color: "rgba(255,255,255,0.45)", fontSize: 12 }}>
+          同じ震源地の地震は見つかりませんでした
+        </div>
+      )}
+      {status === "done" && sorted.map((eq, i) => (
+        <QuakeListRow
+          key={eq.id}
+          quake={eqdbListItemToPreview(eq)}
+          showDivider={i > 0}
+          colorScheme={colorScheme}
+          onSelect={() => handlePick(eq)}
+        />
+      ))}
     </div>
   );
 }
