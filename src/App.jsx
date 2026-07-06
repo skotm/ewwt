@@ -3380,7 +3380,7 @@ function QuakeIntensityLegend({ maxIntensity }) {
   if (maxIntensity === "5") {
     levels = ["1", "2", "3", "4", "5"];
   } else if (maxIntensity === "6") {
-    levels = ["1", "2", "3", "4", "5-", "5+", "6"];
+    levels = ["1", "2", "3", "4", "5", "6"];
   } else {
     const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(maxIntensity);
     if (maxIdx < 0) return null; // 震度0や不明("?")の場合は凡例を出さない
