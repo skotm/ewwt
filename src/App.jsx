@@ -1899,6 +1899,19 @@ const EQDB_MAX_INT_OPTIONS = [
   { value: "D", label: "震度6強以上" },
   { value: "7", label: "震度7" },
 ];
+// 検索の「震度◯以上」フィルターで比較する際に使うスケール値。
+// eqdbIntensityStringToScale()は表示用に、旧震度階級(弱/強の区分が無い震度5・6)を
+// 現行の5弱(45)/6弱(55)とは別のスケール値(44/54)として返すが、そのままだと
+// 「5弱以上」「6弱以上」で検索した際に旧震度階級の地震がヒットしなくなってしまう。
+// 実際の震度は5弱〜5強(または6弱〜6強)のいずれかだったはずなので、
+// 「◯弱以上」の条件は満たすとみなして45/55に読み替える。
+function eqdbIntensityThresholdScale(raw) {
+  const scale = eqdbIntensityStringToScale(raw);
+  if (scale === 44) return 45;
+  if (scale === 54) return 55;
+  return scale;
+}
+
 const EQDB_MAX_INT_SCALE = { "1": 10, "2": 20, "3": 30, "4": 40, "A": 45, "B": 50, "C": 55, "D": 60, "7": 70 };
 
 const EQDB_SORT_OPTIONS = [
@@ -3352,15 +3365,27 @@ function BottomDock({
    選択中の地震の「震度1〜最大震度」までを縦並びで表示する凡例。
    最大震度のバッジだけ枠線で強調する。画面左上に浮かべて使う想定。
    ───────────────────────────────────────────────────── */
-const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5", "5-", "5+", "6", "6-", "6+", "7"];
+const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
 function QuakeIntensityLegend({ maxIntensity }) {
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
-  const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(maxIntensity);
-  if (maxIdx < 0) return null; // 震度0や不明("?")の場合は凡例を出さない
 
-  const levels = INTENSITY_LEGEND_ORDER.slice(0, maxIdx + 1);
+  // 旧震度階級(弱/強の区分が無い震度5・6)は、5弱/6弱と同じ色を使っているため、
+  // 通常の並び順にそのまま追加すると「5」と「5弱」のように同じ色のバーが
+  // 隣り合って重複しているように見えてしまう。そのため通常の並び順には含めず、
+  // 震度4(または5強)までの並びに続けて、単独の「5」または「6」バーで
+  // 打ち切る形にする。
+  let levels;
+  if (maxIntensity === "5") {
+    levels = ["1", "2", "3", "4", "5"];
+  } else if (maxIntensity === "6") {
+    levels = ["1", "2", "3", "4", "5-", "5+", "6"];
+  } else {
+    const maxIdx = INTENSITY_LEGEND_ORDER.indexOf(maxIntensity);
+    if (maxIdx < 0) return null; // 震度0や不明("?")の場合は凡例を出さない
+    levels = INTENSITY_LEGEND_ORDER.slice(0, maxIdx + 1);
+  }
 
   return (
     <Glass
@@ -3723,7 +3748,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
       const maxIntScale = EQDB_MAX_INT_SCALE[maxInt] || 10;
       const filtered = list.filter(eq => {
         const magOk = minMagNum <= 0 || parseFloat(eq.mag) >= minMagNum;
-        const intOk = maxInt === "1" || eqdbIntensityStringToScale(eq.maxI || "") >= maxIntScale;
+        const intOk = maxInt === "1" || eqdbIntensityThresholdScale(eq.maxI || "") >= maxIntScale;
         return magOk && intOk;
       });
       if (sort === "S2") {
