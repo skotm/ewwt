@@ -2554,6 +2554,22 @@ function BottomDock({
     if (active !== "quake") setQuakeViewMode("recent");
   }, [active]);
 
+  // 気象庁 震度データベース検索フォーム・結果一覧の状態。
+  // QuakeSearchPanel自身の内部state(useState)ではなくここに持たせているのは、
+  // 地震を選択すると一覧側(QuakeSearchPanel)がいったんアンマウントされるため
+  // (選択中は代わりにQuakeDetailCard等を表示する排他表示になっている)。
+  // 「戻る」ボタンで選択解除して一覧に戻った時に、検索結果や入力条件が
+  // 消えてしまわないよう、アンマウントされないBottomDock側で保持する。
+  const [eqdbSearch, setEqdbSearch] = useState(() => {
+    const { start, end } = defaultEqdbDateRange();
+    return {
+      startDate: start, endDate: end,
+      minMag: "0.0", maxInt: "1", sort: "S0",
+      status: "", isSearching: false, hasSearched: false,
+      results: [], loadingId: null,
+    };
+  });
+
   // タブ切り替え、または選択中の地震が変わった際に表示中身が変わると、
   // ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
   // カードやヘッダーが隠れて見えることがあるため、そのたびに明示的に
@@ -3016,6 +3032,8 @@ function BottomDock({
                         colorScheme={colorScheme}
                         onFoundQuake={onFoundSearchQuake}
                         onSelectQuake={(id) => { onSelectQuake(id); setSnapIndex(1); }}
+                        search={eqdbSearch}
+                        onChangeSearch={setEqdbSearch}
                       />
                     );
                   }
@@ -3494,22 +3512,19 @@ function OptionPicker({ value, options, onChange, style }) {
    通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }) {
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch }) {
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
 
-  // 開始日・終了日はカレンダーから選ぶ(input[type=date])。
-  const [startDate, setStartDate] = useState(() => defaultEqdbDateRange().start);
-  const [endDate,   setEndDate]   = useState(() => defaultEqdbDateRange().end);
+  const {
+    startDate, endDate, minMag, maxInt, sort,
+    status, isSearching, hasSearched, results, loadingId,
+  } = search;
 
-  const [minMag,    setMinMag]    = useState("0.0");
-  const [maxInt,    setMaxInt]    = useState("1");
-  const [sort,      setSort]      = useState("S0");
-
-  const [status,      setStatus]      = useState("");
-  const [isSearching, setIsSearching] = useState(false);
-  const [hasSearched,  setHasSearched] = useState(false);
-  const [results,     setResults]     = useState([]); // mode=searchの生データ一覧
-  const [loadingId,   setLoadingId]   = useState(null); // 詳細取得中のeq.id
+  // 検索条件・結果一覧の状態は、選択解除で再マウントされても消えないよう
+  // 親(BottomDock)側で保持している。ここでは差分だけをマージして書き戻す。
+  function patch(p) {
+    onChangeSearch(prev => ({ ...prev, ...p }));
+  }
 
   async function handleSearch() {
     if (isSearching) return;
@@ -3519,20 +3534,19 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
     // 念のためここでも二重にチェックしておく)。
     let effectiveEnd = endDate > maxEndDate ? maxEndDate : endDate;
     let effectiveStart = startDate > effectiveEnd ? effectiveEnd : startDate;
-    if (effectiveEnd !== endDate) setEndDate(effectiveEnd);
-    if (effectiveStart !== startDate) setStartDate(effectiveStart);
 
-    if (!effectiveStart || !effectiveEnd) { setStatus("開始日・終了日を指定してください"); return; }
+    if (!effectiveStart || !effectiveEnd) { patch({ status: "開始日・終了日を指定してください" }); return; }
 
-    setIsSearching(true);
-    setHasSearched(true);
-    setStatus("気象庁 震度データベースを検索中…");
+    patch({
+      startDate: effectiveStart, endDate: effectiveEnd,
+      isSearching: true, hasSearched: true,
+      status: "気象庁 震度データベースを検索中…",
+    });
     try {
       const minMagNum = parseFloat(minMag) || 0;
       const { list, errMsg, summary } = await fetchEqdbSearch({ startDate: effectiveStart, endDate: effectiveEnd, minMag: minMagNum, maxInt, sort });
       if (errMsg) {
-        setStatus(`⚠ ${errMsg}`);
-        setResults([]);
+        patch({ status: `⚠ ${errMsg}`, results: [] });
         return;
       }
       const maxIntScale = EQDB_MAX_INT_SCALE[maxInt] || 10;
@@ -3546,37 +3560,35 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
       } else if (sort === "S3") {
         filtered.sort((a, b) => parseFloat(b.mag) - parseFloat(a.mag) || eqdbIntensityStringToScale(b.maxI || "") - eqdbIntensityStringToScale(a.maxI || ""));
       }
-      setResults(filtered);
-      setStatus(
-        filtered.length !== list.length
+      patch({
+        results: filtered,
+        status: filtered.length !== list.length
           ? `${filtered.length}件（取得${list.length}件からM${minMagNum.toFixed(1)}以上でフィルター）`
-          : (summary || `${filtered.length}件`)
-      );
+          : (summary || `${filtered.length}件`),
+      });
     } catch (e) {
-      setStatus(`検索中にエラーが発生しました: ${e.message}`);
-      setResults([]);
+      patch({ status: `検索中にエラーが発生しました: ${e.message}`, results: [] });
     } finally {
-      setIsSearching(false);
+      patch({ isSearching: false });
     }
   }
 
   async function handleSelect(eq) {
     if (loadingId) return;
-    setLoadingId(eq.id);
-    setStatus(`「${eq.name}」の震度データを取得中…`);
+    patch({ loadingId: eq.id, status: `「${eq.name}」の震度データを取得中…` });
     try {
       const detail = await fetchEqdbEvent(eq.id);
       if (!detail) {
-        setStatus("詳細データの取得に失敗しました");
+        patch({ status: "詳細データの取得に失敗しました" });
         return;
       }
       const card = buildEqdbQuakeCard(detail, eq, stations);
       onFoundQuake(card);
       onSelectQuake(card.id);
     } catch (e) {
-      setStatus(`詳細データの取得に失敗しました: ${e.message}`);
+      patch({ status: `詳細データの取得に失敗しました: ${e.message}` });
     } finally {
-      setLoadingId(null);
+      patch({ loadingId: null });
     }
   }
 
@@ -3587,25 +3599,25 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake }
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
             <input type="date" value={startDate} max={endDate || maxEndDate}
-              onChange={e => setStartDate(e.target.value)} style={EQDB_DATE_INPUT_STYLE}/>
+              onChange={e => patch({ startDate: e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
           </EqdbFormField>
           <EqdbFormField label="終了日">
             <input type="date" value={endDate} min={startDate || undefined} max={maxEndDate}
-              onChange={e => setEndDate(e.target.value > maxEndDate ? maxEndDate : e.target.value)} style={EQDB_DATE_INPUT_STYLE}/>
+              onChange={e => patch({ endDate: e.target.value > maxEndDate ? maxEndDate : e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
           </EqdbFormField>
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="最小M">
-            <OptionPicker value={minMag} options={EQDB_MIN_MAG_OPTIONS} onChange={setMinMag}/>
+            <OptionPicker value={minMag} options={EQDB_MIN_MAG_OPTIONS} onChange={v => patch({ minMag: v })}/>
           </EqdbFormField>
           <EqdbFormField label="最大震度">
-            <OptionPicker value={maxInt} options={EQDB_MAX_INT_OPTIONS} onChange={setMaxInt}/>
+            <OptionPicker value={maxInt} options={EQDB_MAX_INT_OPTIONS} onChange={v => patch({ maxInt: v })}/>
           </EqdbFormField>
         </div>
 
         <EqdbFormField label="並び順" full>
-          <OptionPicker value={sort} options={EQDB_SORT_OPTIONS} onChange={setSort}/>
+          <OptionPicker value={sort} options={EQDB_SORT_OPTIONS} onChange={v => patch({ sort: v })}/>
         </EqdbFormField>
 
         <button
