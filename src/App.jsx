@@ -3655,6 +3655,7 @@ function OptionPicker({ value, options, onChange, style }) {
   const [open, setOpen] = useState(false);
   const [menuRect, setMenuRect] = useState(null); // {left, width, top?, bottom?}
   const btnRef = useRef(null);
+  const menuRef = useRef(null);
   const selected = options.find(o => o.value === value);
 
   // ボトムシートは自身のスクロール領域でoverflowを切っているため、通常の
@@ -3679,7 +3680,12 @@ function OptionPicker({ value, options, onChange, style }) {
   // ずれてしまうため、その場合はメニューを閉じる。
   useEffect(() => {
     if (!open) return;
-    const close = () => setOpen(false);
+    const close = (e) => {
+      // メニュー自身(選択肢一覧)のスクロールでは閉じない。ボトムシート側など
+      // 外側のスクロールでボタンとメニューの位置がずれた場合だけ閉じる。
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      setOpen(false);
+    };
     window.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     return () => {
@@ -3710,16 +3716,19 @@ function OptionPicker({ value, options, onChange, style }) {
         <>
           {/* 背面タップで閉じるための透明オーバーレイ */}
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }}/>
-          <div style={{
-            position: "fixed",
-            left: menuRect.left, width: menuRect.width,
-            ...(menuRect.top != null ? { top: menuRect.top } : { bottom: menuRect.bottom }),
-            zIndex: 9999,
-            maxHeight: 220, overflowY: "auto",
-            borderRadius: 10,
-            background: "rgba(30,30,32,0.98)",
-            boxShadow: "0 10px 28px rgba(0,0,0,0.55), inset 0 0 0 0.5px rgba(255,255,255,0.14)",
-          }}>
+          <div
+            ref={menuRef}
+            style={{
+              position: "fixed",
+              left: menuRect.left, width: menuRect.width,
+              ...(menuRect.top != null ? { top: menuRect.top } : { bottom: menuRect.bottom }),
+              zIndex: 9999,
+              maxHeight: 220, overflowY: "auto",
+              borderRadius: 10,
+              background: "rgba(30,30,32,0.98)",
+              boxShadow: "0 10px 28px rgba(0,0,0,0.55), inset 0 0 0 0.5px rgba(255,255,255,0.14)",
+            }}
+          >
             {options.map((o, i) => (
               <button
                 key={o.value}
