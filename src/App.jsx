@@ -2585,50 +2585,57 @@ const NAV_ICONS = {
    (PC・タブレットでは横スワイプよりクリック/タップの方が自然なため)。
    他のフローティングUI(ボトムドック等)と同じGlass(Liquid Glass)で
    統一し、細い縦長カプセルとして画面左端に浮かせる。
+   幅・高さとも画面サイズに応じてclamp()で伸縮する
+   (固定pxではなく画面の縦幅に対する比率で決まるので、狭い画面では
+   コンパクトに、広い画面では長く・見やすくなる)。
    ───────────────────────────────────────────────────── */
-const SIDE_RAIL_WIDTH = 56;
+const SIDE_RAIL_WIDTH_CSS = "clamp(40px, 4vw, 48px)"; // 横幅(細め、画面幅に応じて微調整)
+const SIDE_RAIL_HEIGHT_CSS = "clamp(320px, 62vh, 640px)"; // 縦の全長(画面の高さに応じて伸縮)
 
 function SideNavRail({ active, onNav }) {
-  const RAIL_PAD_Y = 10;   // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
-  const ITEM_HEIGHT = 52;  // 1ボタンの高さ[px]
-  const ITEM_GAP = 4;      // ボタン間の隙間[px]
-  const STEP = ITEM_HEIGHT + ITEM_GAP; // 1タブぶんのピッチ[px]
+  const RAIL_PAD_Y = 10; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
   const N = NAV.length;
+  const tabH = 100 / N;  // 1タブぶんの高さ[%](内側領域基準)
   const activeIndex = Math.max(0, NAV.findIndex(n => n.id === active));
 
-  // 縦画面のナビ行(%ベースで指に連続追従するハイライト)と全く同じ挙動を、
-  // ここでは縦方向・pxベースで再現する。
+  // 縦画面のナビ行(%ベースで指に連続追従するハイライト)と全く同じ考え方を、
+  // 横→縦の軸を入れ替えて再現する。バーの全長自体がclamp(vh)で画面サイズに
+  // 応じて伸縮するため、pxではなく%で管理する(そうしないと画面サイズが
+  // 変わった時にハイライトの位置・サイズがずれてしまう)。
   const contentRef    = useRef(null);
   const pointerIdRef  = useRef(null);
   const movedRef      = useRef(false);
   const startYRef     = useRef(0);
-  const [highlightTop, setHighlightTop] = useState(RAIL_PAD_Y + activeIndex * STEP);
+  const [highlightTop, setHighlightTop] = useState(activeIndex * tabH); // %
   const [dragging,     setDragging]     = useState(false);
   const [pressed,      setPressed]      = useState(false); // 指が触れている間ずっとtrue
   const [previewIdx,   setPreviewIdx]   = useState(null);
 
   // active が外部から変わった時(タップ以外の切替)にハイライトを追従させる
   useEffect(() => {
-    if (!dragging) setHighlightTop(RAIL_PAD_Y + activeIndex * STEP);
-  }, [activeIndex, dragging, STEP]);
+    if (!dragging) setHighlightTop(activeIndex * tabH);
+  }, [activeIndex, dragging, tabH]);
 
-  // clientY → CSSのtopにそのまま使える位置[px](コンテナのpadding edge基準)。
-  // 絶対配置の子要素はpadding edgeを基準に位置決めされるため、内側領域での
-  // 計算結果にRAIL_PAD_Yを足し戻す必要がある(これを忘れるとハイライトが
-  // 常にRAIL_PAD_Yぶん上にずれる)。
+  // clientY → 内側領域(上下RAIL_PAD_Y除外)を基準にした正規化top [%]
   function clientYToTop(clientY) {
     const el = contentRef.current;
-    if (!el) return RAIL_PAD_Y + activeIndex * STEP;
-    const { top } = el.getBoundingClientRect();
-    const innerTop = top + RAIL_PAD_Y;
-    const raw = clientY - innerTop - ITEM_HEIGHT / 2;
-    return RAIL_PAD_Y + Math.max(0, Math.min((N - 1) * STEP, raw));
+    if (!el) return activeIndex * tabH;
+    const { top, height } = el.getBoundingClientRect();
+    const innerTop    = top + RAIL_PAD_Y;
+    const innerHeight = height - RAIL_PAD_Y * 2;
+    const ratio = Math.max(0, Math.min(1, (clientY - innerTop) / innerHeight));
+    return Math.max(0, Math.min(100 - tabH, ratio * 100 - tabH / 2));
   }
 
   // clientY に最も近いタブのindexを返す
   function clientYToIndex(clientY) {
-    const t = clientYToTop(clientY) - RAIL_PAD_Y;
-    return Math.max(0, Math.min(N - 1, Math.round(t / STEP)));
+    const el = contentRef.current;
+    if (!el) return activeIndex;
+    const { top, height } = el.getBoundingClientRect();
+    const innerTop    = top + RAIL_PAD_Y;
+    const innerHeight = height - RAIL_PAD_Y * 2;
+    const ratio = Math.max(0, Math.min(1, (clientY - innerTop) / innerHeight));
+    return Math.max(0, Math.min(N - 1, Math.round(ratio * 100 / tabH - 0.5)));
   }
 
   function handlePointerDown(e) {
@@ -2641,7 +2648,7 @@ function SideNavRail({ active, onNav }) {
     setPressed(true);
     // タップの可能性がある間はtransitionを効かせたまま、目的のタブへ
     // スライドするアニメーションを見せる(縦画面版と同じ考え方)。
-    setHighlightTop(RAIL_PAD_Y + idx * STEP);
+    setHighlightTop(idx * tabH);
   }
 
   function handlePointerMove(e) {
@@ -2655,7 +2662,7 @@ function SideNavRail({ active, onNav }) {
     if (movedRef.current) {
       setHighlightTop(clientYToTop(e.clientY)); // 指の連続位置に追従
     } else {
-      setHighlightTop(RAIL_PAD_Y + idx * STEP);
+      setHighlightTop(idx * tabH);
     }
   }
 
@@ -2666,14 +2673,14 @@ function SideNavRail({ active, onNav }) {
     setDragging(false);
     setPressed(false);
     setPreviewIdx(null);
-    setHighlightTop(RAIL_PAD_Y + idx * STEP);
+    setHighlightTop(idx * tabH);
     onNav(NAV[idx].id);
   }
 
   function handleClick(id) {
     if (movedRef.current) return; // ドラッグ完了後の二重発火を防ぐ
     const idx = NAV.findIndex(n => n.id === id);
-    setHighlightTop(RAIL_PAD_Y + idx * STEP);
+    setHighlightTop(idx * tabH);
     onNav(id);
   }
 
@@ -2693,7 +2700,7 @@ function SideNavRail({ active, onNav }) {
           下にはみ出て見切れる)。なので登場アニメーションは内側の別要素に
           かけて分離する。 */}
       <div style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
-        <Glass radius={SIDE_RAIL_WIDTH / 2} style={{ width: SIDE_RAIL_WIDTH }}>
+        <Glass radius={999} style={{ width: SIDE_RAIL_WIDTH_CSS, height: SIDE_RAIL_HEIGHT_CSS }}>
           <div
             ref={contentRef}
             onPointerDown={handlePointerDown}
@@ -2702,10 +2709,10 @@ function SideNavRail({ active, onNav }) {
             onPointerCancel={handlePointerUp}
             style={{
               position: "relative",
+              height: "100%",
               display: "flex", flexDirection: "column",
-              alignItems: "center",
-              padding: `${RAIL_PAD_Y}px 6px`,
-              gap: ITEM_GAP,
+              alignItems: "stretch",
+              padding: `${RAIL_PAD_Y}px 5px`,
               touchAction: "none",
               userSelect: "none",
               WebkitUserSelect: "none",
@@ -2713,14 +2720,16 @@ function SideNavRail({ active, onNav }) {
             }}
           >
             {/* ガラスのハイライトピル — 縦画面のナビ行と全く同じ見た目・挙動
-                (完全な丸ピル、指に連続追従、押し込むと少し膨らむ)。 */}
+                (完全な丸ピル、指に連続追従、押し込むと少し膨らむ)。
+                バーの全長がclamp(vh)で伸縮するため、位置・高さとも%で
+                管理し、画面サイズが変わっても常に正しい位置に来るようにする。 */}
             <div
               aria-hidden
               style={{
                 position: "absolute",
-                left: 2, right: 2,
-                top: highlightTop,
-                height: ITEM_HEIGHT,
+                left: 3, right: 3,
+                top: `calc(${RAIL_PAD_Y}px + (100% - ${RAIL_PAD_Y * 2}px) * ${highlightTop / 100})`,
+                height: `calc((100% - ${RAIL_PAD_Y * 2}px) * ${tabH / 100})`,
                 borderRadius: 999,
                 background: "rgba(255,255,255,0.13)",
                 boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.45), inset 0 1px 0 rgba(255,255,255,0.55)",
@@ -2743,7 +2752,7 @@ function SideNavRail({ active, onNav }) {
                   onClick={() => handleClick(id)}
                   style={{
                     position: "relative", zIndex: 1,
-                    width: SIDE_RAIL_WIDTH - 12, height: ITEM_HEIGHT,
+                    flex: 1, minHeight: 0, width: "100%",
                     display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center",
                     gap: 1,
@@ -2757,7 +2766,7 @@ function SideNavRail({ active, onNav }) {
                     WebkitTouchCallout: "none",
                   }}
                 >
-                  <span style={{ transform: "scale(0.74)" }}>{NAV_ICONS[id]}</span>
+                  <span style={{ transform: "scale(0.7)" }}>{NAV_ICONS[id]}</span>
                   <span style={{ fontSize: 9, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1 }}>
                     {label}
                   </span>
@@ -5211,7 +5220,7 @@ export default function App() {
         <div style={{
           position: "absolute",
           bottom: "calc(16px + env(safe-area-inset-bottom))",
-          left: isWide ? SIDE_RAIL_WIDTH + 24 : 0, right: 0,
+          left: isWide ? 88 : 0, right: 0,
           display: "flex", justifyContent: "center", alignItems: "flex-end",
           zIndex: 40, padding: "0 16px",
         }}>
