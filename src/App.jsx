@@ -2592,7 +2592,89 @@ function SideNavRail({ active, onNav }) {
   const RAIL_PAD_Y = 10;   // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
   const ITEM_HEIGHT = 52;  // 1ボタンの高さ[px]
   const ITEM_GAP = 4;      // ボタン間の隙間[px]
+  const STEP = ITEM_HEIGHT + ITEM_GAP; // 1タブぶんのピッチ[px]
+  const N = NAV.length;
   const activeIndex = Math.max(0, NAV.findIndex(n => n.id === active));
+
+  // 縦画面のナビ行(%ベースで指に連続追従するハイライト)と全く同じ挙動を、
+  // ここでは縦方向・pxベースで再現する。
+  const contentRef    = useRef(null);
+  const pointerIdRef  = useRef(null);
+  const movedRef      = useRef(false);
+  const startYRef     = useRef(0);
+  const [highlightTop, setHighlightTop] = useState(activeIndex * STEP);
+  const [dragging,     setDragging]     = useState(false);
+  const [pressed,      setPressed]      = useState(false); // 指が触れている間ずっとtrue
+  const [previewIdx,   setPreviewIdx]   = useState(null);
+
+  // active が外部から変わった時(タップ以外の切替)にハイライトを追従させる
+  useEffect(() => {
+    if (!dragging) setHighlightTop(activeIndex * STEP);
+  }, [activeIndex, dragging, STEP]);
+
+  // clientY → 内側領域(上下RAIL_PAD_Y除外)を基準にした連続的なtop位置[px]
+  function clientYToTop(clientY) {
+    const el = contentRef.current;
+    if (!el) return activeIndex * STEP;
+    const { top } = el.getBoundingClientRect();
+    const innerTop = top + RAIL_PAD_Y;
+    const raw = clientY - innerTop - ITEM_HEIGHT / 2;
+    return Math.max(0, Math.min((N - 1) * STEP, raw));
+  }
+
+  // clientY に最も近いタブのindexを返す
+  function clientYToIndex(clientY) {
+    const t = clientYToTop(clientY);
+    return Math.max(0, Math.min(N - 1, Math.round(t / STEP)));
+  }
+
+  function handlePointerDown(e) {
+    pointerIdRef.current = e.pointerId;
+    movedRef.current = false;
+    startYRef.current = e.clientY;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const idx = clientYToIndex(e.clientY);
+    setPreviewIdx(idx);
+    setPressed(true);
+    // タップの可能性がある間はtransitionを効かせたまま、目的のタブへ
+    // スライドするアニメーションを見せる(縦画面版と同じ考え方)。
+    setHighlightTop(idx * STEP);
+  }
+
+  function handlePointerMove(e) {
+    if (pointerIdRef.current !== e.pointerId) return;
+    if (Math.abs(e.clientY - startYRef.current) > 3 && !movedRef.current) {
+      movedRef.current = true;
+      setDragging(true);
+    }
+    const idx = clientYToIndex(e.clientY);
+    setPreviewIdx(idx);
+    if (movedRef.current) {
+      setHighlightTop(clientYToTop(e.clientY)); // 指の連続位置に追従
+    } else {
+      setHighlightTop(idx * STEP);
+    }
+  }
+
+  function handlePointerUp(e) {
+    if (pointerIdRef.current !== e.pointerId) return;
+    pointerIdRef.current = null;
+    const idx = clientYToIndex(e.clientY);
+    setDragging(false);
+    setPressed(false);
+    setPreviewIdx(null);
+    setHighlightTop(idx * STEP);
+    onNav(NAV[idx].id);
+  }
+
+  function handleClick(id) {
+    if (movedRef.current) return; // ドラッグ完了後の二重発火を防ぐ
+    const idx = NAV.findIndex(n => n.id === id);
+    setHighlightTop(idx * STEP);
+    onNav(id);
+  }
+
+  const displayIdx = dragging && previewIdx != null ? previewIdx : activeIndex;
 
   return (
     <div style={{
@@ -2609,48 +2691,67 @@ function SideNavRail({ active, onNav }) {
           かけて分離する。 */}
       <div style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
         <Glass radius={SIDE_RAIL_WIDTH / 2} style={{ width: SIDE_RAIL_WIDTH }}>
-          <div style={{
-            position: "relative",
-            display: "flex", flexDirection: "column",
-            alignItems: "center",
-            padding: `${RAIL_PAD_Y}px 6px`,
-            gap: ITEM_GAP,
-          }}>
-            {/* ガラスのハイライトピル — 縦画面のナビ行と全く同じ見た目・挙動。
-                pxベースで位置を管理し、タブが変わるたびに滑らかにスライドする。 */}
+          <div
+            ref={contentRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+            style={{
+              position: "relative",
+              display: "flex", flexDirection: "column",
+              alignItems: "center",
+              padding: `${RAIL_PAD_Y}px 6px`,
+              gap: ITEM_GAP,
+              touchAction: "none",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              WebkitTouchCallout: "none",
+            }}
+          >
+            {/* ガラスのハイライトピル — 縦画面のナビ行と全く同じ見た目・挙動
+                (完全な丸ピル、指に連続追従、押し込むと少し膨らむ)。 */}
             <div
               aria-hidden
               style={{
                 position: "absolute",
                 left: 6, right: 6,
-                top: RAIL_PAD_Y + activeIndex * (ITEM_HEIGHT + ITEM_GAP),
+                top: highlightTop,
                 height: ITEM_HEIGHT,
-                borderRadius: 14,
+                borderRadius: 999,
                 background: "rgba(255,255,255,0.13)",
                 boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.45), inset 0 1px 0 rgba(255,255,255,0.55)",
-                transition: "top 0.38s cubic-bezier(.22,1,.36,1)",
+                transform: pressed ? "scale(1.08)" : "scale(1)",
+                transformOrigin: "center",
+                transition: dragging
+                  ? "transform 0.18s cubic-bezier(.22,1,.36,1)"
+                  : "top 0.38s cubic-bezier(.22,1,.36,1), transform 0.18s cubic-bezier(.22,1,.36,1)",
                 pointerEvents: "none",
                 zIndex: 0,
               }}
             />
 
-            {NAV.map(({ id, label }) => {
-              const isActive = id === active;
+            {NAV.map(({ id, label }, idx) => {
+              const isActive = idx === displayIdx;
               return (
                 <button
                   key={id}
                   type="button"
-                  onClick={() => onNav(id)}
+                  onClick={() => handleClick(id)}
                   style={{
                     position: "relative", zIndex: 1,
                     width: SIDE_RAIL_WIDTH - 12, height: ITEM_HEIGHT,
                     display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center",
-                    gap: 3,
-                    borderRadius: 14, border: "none", cursor: "pointer",
+                    gap: 1,
+                    borderRadius: 999, border: "none", cursor: "pointer",
                     background: "transparent",
                     color: isActive ? "#fff" : "rgba(255,255,255,0.6)",
                     transition: "color 0.15s",
+                    touchAction: "none",
+                    userSelect: "none",
+                    WebkitUserSelect: "none",
+                    WebkitTouchCallout: "none",
                   }}
                 >
                   <span style={{ transform: "scale(0.74)" }}>{NAV_ICONS[id]}</span>
