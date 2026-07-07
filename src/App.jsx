@@ -2,6 +2,35 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, crea
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
+   RESPONSIVE LAYOUT
+   スマホ縦持ちでは「下部タブバー + 下からドラッグして開くボトムシート」、
+   横画面スマホ・タブレット・PCなど横幅が十分ある場合は「左端の縦タブバー
+   (レール) + 常に画面右側に居るパネル」に切り替える。
+   ここではその判定(=isWideLayout)だけを提供する。実際のレイアウト分岐は
+   BottomDock側で行う。
+   ───────────────────────────────────────────────────── */
+const WIDE_LAYOUT_MIN_WIDTH = 720; // これ未満は常にスマホ縦持ち相当の下部タブバーを使う
+
+function useIsWideLayout() {
+  const [isWide, setIsWide] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth >= WIDE_LAYOUT_MIN_WIDTH
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${WIDE_LAYOUT_MIN_WIDTH}px)`);
+    const update = () => setIsWide(mq.matches);
+    update();
+    // Safari旧バージョン対応でaddListener/removeListenerもフォールバックしておく
+    if (mq.addEventListener) mq.addEventListener("change", update);
+    else mq.addListener(update);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", update);
+      else mq.removeListener(update);
+    };
+  }, []);
+  return isWide;
+}
+
+/* ─────────────────────────────────────────────────────
    TRUE LIQUID GLASS
    
    Apple iOS 26 の物理モデル:
@@ -2549,6 +2578,59 @@ const NAV_ICONS = {
 };
 
 /* ─────────────────────────────────────────────────────
+   SIDE NAV RAIL
+   広い画面(isWide)用の、左端に固定した縦タブバー。スマホ縦持ち用の
+   ナビ行(スワイプでタブを切り替えられるガラスの足元)とは違い、
+   ドラッグ操作は無く、単純なクリックだけでタブを切り替える
+   (PC・タブレットでは横スワイプよりクリック/タップの方が自然なため)。
+   ───────────────────────────────────────────────────── */
+const SIDE_RAIL_WIDTH = 88;
+
+function SideNavRail({ active, onNav }) {
+  return (
+    <div style={{
+      position: "fixed",
+      left: 0, top: 0, bottom: 0,
+      width: SIDE_RAIL_WIDTH,
+      zIndex: 20,
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
+      gap: 6,
+      background: "rgba(28,28,30,0.72)",
+      backdropFilter: "blur(20px)",
+      WebkitBackdropFilter: "blur(20px)",
+      borderRight: "0.5px solid rgba(255,255,255,0.14)",
+    }}>
+      {NAV.map(({ id, label }) => {
+        const isActive = id === active;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onNav(id)}
+            style={{
+              width: SIDE_RAIL_WIDTH - 16, height: 58,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              gap: 4,
+              borderRadius: 14, border: "none", cursor: "pointer",
+              background: isActive ? "rgba(255,255,255,0.14)" : "transparent",
+              color: isActive ? "#fff" : "rgba(255,255,255,0.6)",
+              transition: "background 0.15s, color 0.15s",
+            }}
+          >
+            {NAV_ICONS[id]}
+            <span style={{ fontSize: 11, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1 }}>
+              {label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    useSnapDrag
    ハンドルをドラッグして、高さを複数のスナップ位置のどれかに
    固定できるようにする汎用フック。UIロジックを切り離してあるので、
@@ -2689,6 +2771,7 @@ function BottomDock({
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
                             // 引き渡す(onHandoffToPanelDrag)ため、ハンドル自体を広げる必要はない。
+  const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
   const scrollRef = useRef(null);
 
   // 一覧⇄検索の切り替えや地震の選択/選択解除など、表示中身が切り替わって
@@ -3117,6 +3200,8 @@ function BottomDock({
 
   return (
     <>
+      {isWide && <SideNavRail active={active} onNav={onNav}/>}
+
       {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
           Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
           (ドラッグ含む)にそのまま追従できるようにしている。 */}
@@ -3422,7 +3507,9 @@ function BottomDock({
 
       {/* ナビ行 — 常に表示される、ガラスの“足元”。
           Liquid Glassのハイライトが指の位置に連続追従し、なぞるだけで
-          タブを選べる。タップのみの操作もそのまま機能する。 */}
+          タブを選べる。タップのみの操作もそのまま機能する。
+          広い画面(isWide)では、代わりに左端のSideNavRailを使うのでここでは出さない。 */}
+      {!isWide && (
       <div
         ref={navRowRef}
         onPointerDown={handleNavPointerDown}
@@ -3509,6 +3596,7 @@ function BottomDock({
           );
         })}
       </div>
+      )}
       </Glass>
     </>
   );
@@ -4743,6 +4831,7 @@ export default function App() {
   const [layers,    setLayers]    = useState(LAYERS);
   const [layerOpen, setLayerOpen] = useState(false);
   const [map,       setMap]       = useState(null);
+  const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
 
   // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
@@ -4981,7 +5070,7 @@ export default function App() {
         <div style={{
           position: "absolute",
           bottom: "calc(16px + env(safe-area-inset-bottom))",
-          left: 0, right: 0,
+          left: isWide ? SIDE_RAIL_WIDTH : 0, right: 0,
           display: "flex", justifyContent: "center", alignItems: "flex-end",
           zIndex: 40, padding: "0 16px",
         }}>
