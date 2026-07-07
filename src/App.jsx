@@ -2718,7 +2718,7 @@ function SideNavRail({ active, onNav }) {
               aria-hidden
               style={{
                 position: "absolute",
-                left: 6, right: 6,
+                left: 2, right: 2,
                 top: highlightTop,
                 height: ITEM_HEIGHT,
                 borderRadius: 999,
