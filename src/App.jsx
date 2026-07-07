@@ -5220,9 +5220,11 @@ export default function App() {
         <div style={{
           position: "absolute",
           bottom: "calc(16px + env(safe-area-inset-bottom))",
-          left: isWide ? 88 : 0, right: 0,
-          display: "flex", justifyContent: "center", alignItems: "flex-end",
-          zIndex: 40, padding: "0 16px",
+          left: isWide ? 68 : 0, right: 0,
+          display: "flex",
+          justifyContent: isWide ? "flex-start" : "center",
+          alignItems: "flex-end",
+          zIndex: 40, padding: isWide ? "0 0 0 16px" : "0 16px",
         }}>
           <BottomDock
             active={activeNav}
