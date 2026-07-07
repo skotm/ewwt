@@ -423,7 +423,7 @@ function buildMapStyle({ world, prefectures, areas }) {
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
 function MapCanvas({
-  onReady, stationPoints, hypocenter,
+  onReady, stationPoints, hypocenters,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
 }) {
   const containerRef = useRef(null);
@@ -677,31 +677,35 @@ function MapCanvas({
     paintedAreaCodesRef.current = codes;
   }, [stationPoints, status, colorScheme, areaFillEnabled]);
 
-  // 選択中の地震(hypocenter)が変わるたびに、震源のバツ印マーカーを更新し、
-  // 震源+周辺の観測点がちょうど収まる範囲へズームする。
+  // 選択中の地震(hypocenters)が変わるたびに、震源のバツ印マーカーを更新し、
+  // 震源(複数の場合は全件)+周辺の観測点がちょうど収まる範囲へズームする。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     const source = map.getSource("hypocenter-point");
     if (!source) return;
 
-    if (!hypocenter || hypocenter.latitude == null || hypocenter.longitude == null) {
+    const validHypocenters = (hypocenters || [])
+      .filter(h => h && h.latitude != null && h.longitude != null);
+
+    if (validHypocenters.length === 0) {
       source.setData({ type: "FeatureCollection", features: [] });
       return;
     }
 
     source.setData({
       type: "FeatureCollection",
-      features: [{
+      features: validHypocenters.map(h => ({
         type: "Feature",
-        geometry: { type: "Point", coordinates: [hypocenter.longitude, hypocenter.latitude] },
+        geometry: { type: "Point", coordinates: [h.longitude, h.latitude] },
         properties: {},
-      }],
+      })),
     });
 
-    // 震源 + 観測点(緯度経度が引けたもの)が全部収まるbounding boxを作ってfitBoundsする。
-    // 観測点が1件も無い(マッチできなかった)場合は、震源を中心にほどよいズームへ寄せる。
-    const coords = [[hypocenter.longitude, hypocenter.latitude]];
+    // 震源(複数あれば全件) + 観測点(緯度経度が引けたもの)が全部収まる
+    // bounding boxを作ってfitBoundsする。観測点が1件も無い(マッチできなかった)
+    // 場合は、震源(複数なら重心)を中心にほどよいズームへ寄せる。
+    const coords = validHypocenters.map(h => [h.longitude, h.latitude]);
     (stationPoints || []).forEach(p => {
       if (p.latitude != null && p.longitude != null) coords.push([p.longitude, p.latitude]);
     });
@@ -718,9 +722,10 @@ function MapCanvas({
         duration: 800,
       });
     } else {
-      map.flyTo({ center: [hypocenter.longitude, hypocenter.latitude], zoom: 7, duration: 800 });
+      const [lon, lat] = coords[0];
+      map.flyTo({ center: [lon, lat], zoom: 7, duration: 800 });
     }
-  }, [hypocenter, stationPoints, status]);
+  }, [hypocenters, stationPoints, status]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -2123,6 +2128,14 @@ function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
   const hyp = detail.hyp[0];
   const intPoints = Array.isArray(detail.int) ? detail.int : [];
 
+  // ごく稀に、1つの地震(event)に対して震源が複数記録されていることがある
+  // (例: 群発地震をまとめて1件として扱っている場合など)。detail.hypは配列な
+  // ので、先頭だけでなく全件を拾って地図上にバツ印を複数表示できるようにする。
+  // 代表値(震源地名・M・深さなど)は従来通り先頭(hyp = detail.hyp[0])を使う。
+  const hypocenters = detail.hyp
+    .map(h => ({ latitude: parseFloat(h.lat), longitude: parseFloat(h.lon) }))
+    .filter(h => Number.isFinite(h.latitude) && Number.isFinite(h.longitude));
+
   const lat = parseFloat(hyp.lat);
   const lon = parseFloat(hyp.lon);
   const mag = parseFloat(hyp.mag);
@@ -2163,6 +2176,7 @@ function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
     longPeriod: null,
     latitude: Number.isFinite(lat) ? lat : null,
     longitude: Number.isFinite(lon) ? lon : null,
+    hypocenters, // 複数震源対応。地図には1件以上のバツ印として全て表示する。
     points: [],
     resolvedPoints,
     // eqdbには津波情報が含まれないため、津波の心配なし文言をデフォルトにしておく
@@ -4770,10 +4784,16 @@ export default function App() {
     return resolveStationPoints(selectedQuake.points, stations);
   }, [selectedQuake, stations]);
 
-  // 震源(バツ印表示・ズーム用)。緯度経度が無い地震(震源不明)ではnullのまま。
-  const selectedHypocenter = useMemo(() => {
-    if (!selectedQuake || selectedQuake.latitude == null || selectedQuake.longitude == null) return null;
-    return { latitude: selectedQuake.latitude, longitude: selectedQuake.longitude };
+  // 震源(バツ印表示・ズーム用)。複数震源(eqdbのhypocenters)があればその全件、
+  // 無ければ従来通り単一のlatitude/longitudeを1件だけの配列にして使う。
+  // 緯度経度が無い地震(震源不明)では空配列のまま。
+  const selectedHypocenters = useMemo(() => {
+    if (!selectedQuake) return [];
+    if (Array.isArray(selectedQuake.hypocenters) && selectedQuake.hypocenters.length > 0) {
+      return selectedQuake.hypocenters;
+    }
+    if (selectedQuake.latitude == null || selectedQuake.longitude == null) return [];
+    return [{ latitude: selectedQuake.latitude, longitude: selectedQuake.longitude }];
   }, [selectedQuake]);
 
   // 起動時に /history で最新一覧を1回だけ取得し、以降はWebSocketで新着分を随時追加する。
@@ -4872,7 +4892,7 @@ export default function App() {
         <MapCanvas
           onReady={setMap}
           stationPoints={selectedQuakePoints}
-          hypocenter={selectedHypocenter}
+          hypocenters={selectedHypocenters}
           quakeTimeStr={selectedQuake?.time}
           maxIntensityKey={selectedQuake?.maxIntensity}
           estIntensityEnabled={estIntensityEnabled}
