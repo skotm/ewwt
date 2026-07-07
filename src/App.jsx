@@ -2602,29 +2602,32 @@ function SideNavRail({ active, onNav }) {
   const pointerIdRef  = useRef(null);
   const movedRef      = useRef(false);
   const startYRef     = useRef(0);
-  const [highlightTop, setHighlightTop] = useState(activeIndex * STEP);
+  const [highlightTop, setHighlightTop] = useState(RAIL_PAD_Y + activeIndex * STEP);
   const [dragging,     setDragging]     = useState(false);
   const [pressed,      setPressed]      = useState(false); // 指が触れている間ずっとtrue
   const [previewIdx,   setPreviewIdx]   = useState(null);
 
   // active が外部から変わった時(タップ以外の切替)にハイライトを追従させる
   useEffect(() => {
-    if (!dragging) setHighlightTop(activeIndex * STEP);
+    if (!dragging) setHighlightTop(RAIL_PAD_Y + activeIndex * STEP);
   }, [activeIndex, dragging, STEP]);
 
-  // clientY → 内側領域(上下RAIL_PAD_Y除外)を基準にした連続的なtop位置[px]
+  // clientY → CSSのtopにそのまま使える位置[px](コンテナのpadding edge基準)。
+  // 絶対配置の子要素はpadding edgeを基準に位置決めされるため、内側領域での
+  // 計算結果にRAIL_PAD_Yを足し戻す必要がある(これを忘れるとハイライトが
+  // 常にRAIL_PAD_Yぶん上にずれる)。
   function clientYToTop(clientY) {
     const el = contentRef.current;
-    if (!el) return activeIndex * STEP;
+    if (!el) return RAIL_PAD_Y + activeIndex * STEP;
     const { top } = el.getBoundingClientRect();
     const innerTop = top + RAIL_PAD_Y;
     const raw = clientY - innerTop - ITEM_HEIGHT / 2;
-    return Math.max(0, Math.min((N - 1) * STEP, raw));
+    return RAIL_PAD_Y + Math.max(0, Math.min((N - 1) * STEP, raw));
   }
 
   // clientY に最も近いタブのindexを返す
   function clientYToIndex(clientY) {
-    const t = clientYToTop(clientY);
+    const t = clientYToTop(clientY) - RAIL_PAD_Y;
     return Math.max(0, Math.min(N - 1, Math.round(t / STEP)));
   }
 
@@ -2638,7 +2641,7 @@ function SideNavRail({ active, onNav }) {
     setPressed(true);
     // タップの可能性がある間はtransitionを効かせたまま、目的のタブへ
     // スライドするアニメーションを見せる(縦画面版と同じ考え方)。
-    setHighlightTop(idx * STEP);
+    setHighlightTop(RAIL_PAD_Y + idx * STEP);
   }
 
   function handlePointerMove(e) {
@@ -2652,7 +2655,7 @@ function SideNavRail({ active, onNav }) {
     if (movedRef.current) {
       setHighlightTop(clientYToTop(e.clientY)); // 指の連続位置に追従
     } else {
-      setHighlightTop(idx * STEP);
+      setHighlightTop(RAIL_PAD_Y + idx * STEP);
     }
   }
 
@@ -2663,14 +2666,14 @@ function SideNavRail({ active, onNav }) {
     setDragging(false);
     setPressed(false);
     setPreviewIdx(null);
-    setHighlightTop(idx * STEP);
+    setHighlightTop(RAIL_PAD_Y + idx * STEP);
     onNav(NAV[idx].id);
   }
 
   function handleClick(id) {
     if (movedRef.current) return; // ドラッグ完了後の二重発火を防ぐ
     const idx = NAV.findIndex(n => n.id === id);
-    setHighlightTop(idx * STEP);
+    setHighlightTop(RAIL_PAD_Y + idx * STEP);
     onNav(id);
   }
 
