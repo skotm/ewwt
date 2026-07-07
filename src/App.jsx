@@ -2579,53 +2579,59 @@ const NAV_ICONS = {
 
 /* ─────────────────────────────────────────────────────
    SIDE NAV RAIL
-   広い画面(isWide)用の、左端に固定した縦タブバー。スマホ縦持ち用の
+   広い画面(isWide)用の、左端に浮かぶ縦タブバー。スマホ縦持ち用の
    ナビ行(スワイプでタブを切り替えられるガラスの足元)とは違い、
    ドラッグ操作は無く、単純なクリックだけでタブを切り替える
    (PC・タブレットでは横スワイプよりクリック/タップの方が自然なため)。
+   他のフローティングUI(ボトムドック等)と同じGlass(Liquid Glass)で
+   統一し、細い縦長カプセルとして画面左端に浮かせる。
    ───────────────────────────────────────────────────── */
-const SIDE_RAIL_WIDTH = 88;
+const SIDE_RAIL_WIDTH = 56;
 
 function SideNavRail({ active, onNav }) {
   return (
     <div style={{
       position: "fixed",
-      left: 0, top: 0, bottom: 0,
-      width: SIDE_RAIL_WIDTH,
+      left: 12,
+      top: "50%",
+      transform: "translateY(-50%)",
       zIndex: 20,
-      display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center",
-      gap: 6,
-      background: "rgba(28,28,30,0.72)",
-      backdropFilter: "blur(20px)",
-      WebkitBackdropFilter: "blur(20px)",
-      borderRight: "0.5px solid rgba(255,255,255,0.14)",
+      animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
     }}>
-      {NAV.map(({ id, label }) => {
-        const isActive = id === active;
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => onNav(id)}
-            style={{
-              width: SIDE_RAIL_WIDTH - 16, height: 58,
-              display: "flex", flexDirection: "column",
-              alignItems: "center", justifyContent: "center",
-              gap: 4,
-              borderRadius: 14, border: "none", cursor: "pointer",
-              background: isActive ? "rgba(255,255,255,0.14)" : "transparent",
-              color: isActive ? "#fff" : "rgba(255,255,255,0.6)",
-              transition: "background 0.15s, color 0.15s",
-            }}
-          >
-            {NAV_ICONS[id]}
-            <span style={{ fontSize: 11, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1 }}>
-              {label}
-            </span>
-          </button>
-        );
-      })}
+      <Glass radius={SIDE_RAIL_WIDTH / 2} style={{ width: SIDE_RAIL_WIDTH }}>
+        <div style={{
+          display: "flex", flexDirection: "column",
+          alignItems: "center",
+          padding: "10px 6px",
+          gap: 4,
+        }}>
+          {NAV.map(({ id, label }) => {
+            const isActive = id === active;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onNav(id)}
+                style={{
+                  width: SIDE_RAIL_WIDTH - 12, height: 52,
+                  display: "flex", flexDirection: "column",
+                  alignItems: "center", justifyContent: "center",
+                  gap: 3,
+                  borderRadius: 14, border: "none", cursor: "pointer",
+                  background: isActive ? "rgba(255,255,255,0.16)" : "transparent",
+                  color: isActive ? "#fff" : "rgba(255,255,255,0.6)",
+                  transition: "background 0.15s, color 0.15s",
+                }}
+              >
+                <span style={{ transform: "scale(0.74)" }}>{NAV_ICONS[id]}</span>
+                <span style={{ fontSize: 9, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1 }}>
+                  {label}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Glass>
     </div>
   );
 }
@@ -5070,7 +5076,7 @@ export default function App() {
         <div style={{
           position: "absolute",
           bottom: "calc(16px + env(safe-area-inset-bottom))",
-          left: isWide ? SIDE_RAIL_WIDTH : 0, right: 0,
+          left: isWide ? SIDE_RAIL_WIDTH + 24 : 0, right: 0,
           display: "flex", justifyContent: "center", alignItems: "flex-end",
           zIndex: 40, padding: "0 16px",
         }}>
