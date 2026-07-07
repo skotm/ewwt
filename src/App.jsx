@@ -2589,6 +2589,11 @@ const NAV_ICONS = {
 const SIDE_RAIL_WIDTH = 56;
 
 function SideNavRail({ active, onNav }) {
+  const RAIL_PAD_Y = 10;   // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
+  const ITEM_HEIGHT = 52;  // 1ボタンの高さ[px]
+  const ITEM_GAP = 4;      // ボタン間の隙間[px]
+  const activeIndex = Math.max(0, NAV.findIndex(n => n.id === active));
+
   return (
     <div style={{
       position: "fixed",
@@ -2605,11 +2610,30 @@ function SideNavRail({ active, onNav }) {
       <div style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
         <Glass radius={SIDE_RAIL_WIDTH / 2} style={{ width: SIDE_RAIL_WIDTH }}>
           <div style={{
+            position: "relative",
             display: "flex", flexDirection: "column",
             alignItems: "center",
-            padding: "10px 6px",
-            gap: 4,
+            padding: `${RAIL_PAD_Y}px 6px`,
+            gap: ITEM_GAP,
           }}>
+            {/* ガラスのハイライトピル — 縦画面のナビ行と全く同じ見た目・挙動。
+                pxベースで位置を管理し、タブが変わるたびに滑らかにスライドする。 */}
+            <div
+              aria-hidden
+              style={{
+                position: "absolute",
+                left: 6, right: 6,
+                top: RAIL_PAD_Y + activeIndex * (ITEM_HEIGHT + ITEM_GAP),
+                height: ITEM_HEIGHT,
+                borderRadius: 14,
+                background: "rgba(255,255,255,0.13)",
+                boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.45), inset 0 1px 0 rgba(255,255,255,0.55)",
+                transition: "top 0.38s cubic-bezier(.22,1,.36,1)",
+                pointerEvents: "none",
+                zIndex: 0,
+              }}
+            />
+
             {NAV.map(({ id, label }) => {
               const isActive = id === active;
               return (
@@ -2618,8 +2642,8 @@ function SideNavRail({ active, onNav }) {
                   type="button"
                   onClick={() => onNav(id)}
                   style={{
-                    position: "relative",
-                    width: SIDE_RAIL_WIDTH - 12, height: 52,
+                    position: "relative", zIndex: 1,
+                    width: SIDE_RAIL_WIDTH - 12, height: ITEM_HEIGHT,
                     display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center",
                     gap: 3,
@@ -2629,22 +2653,8 @@ function SideNavRail({ active, onNav }) {
                     transition: "color 0.15s",
                   }}
                 >
-                  {/* アクティブ時のハイライト。フラットな半透明塗りではなく、
-                      他のガラスUIと同じ屈折+rim lightの見た目にするため
-                      Glassを重ねる(絶対配置で背面に敷く)。 */}
-                  {isActive && (
-                    <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-                      <Glass radius={14} filterSize="sm" blur={8}
-                        style={{ width: "100%", height: "100%" }}/>
-                    </div>
-                  )}
-                  <span style={{ position: "relative", zIndex: 1, transform: "scale(0.74)" }}>
-                    {NAV_ICONS[id]}
-                  </span>
-                  <span style={{
-                    position: "relative", zIndex: 1,
-                    fontSize: 9, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1,
-                  }}>
+                  <span style={{ transform: "scale(0.74)" }}>{NAV_ICONS[id]}</span>
+                  <span style={{ fontSize: 9, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1 }}>
                     {label}
                   </span>
                 </button>
