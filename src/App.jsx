@@ -2732,12 +2732,13 @@ function BottomDock({
   // 代わりにNearbyQuakesPanelを表示する。選択解除(戻るボタンで一覧に戻る等)
   // されたら一緒に閉じる。
   const [nearbyQuakeFor, setNearbyQuakeFor] = useState(null);
-  // 近傍地震一覧から地震を選んだ場合、その一覧に「戻る」を押した時に戻れるよう、
-  // 一覧を開いていた震源地名を覚えておく(nearbyQuakeFor自体は選択と同時に
-  // 閉じてしまうため、別の変数で覚えておく必要がある)。
-  const [nearbyOrigin, setNearbyOrigin] = useState(null);
+  // 「近傍で発生した地震」ボタンを押した、元の地震のID。
+  // 近傍一覧から別の地震を選んで詳細を見た後、一覧に「戻る」時にはこのIDの地震を
+  // 選択し直す(=一覧を開いていた時点の地震に選択・観測点・凡例を揃える)ために使う。
+  // 一覧自体から「戻る」を押して元の地震の詳細に戻ったらクリアする。
+  const [nearbyOriginId, setNearbyOriginId] = useState(null);
   useEffect(() => {
-    if (selectedQuakeId == null) { setNearbyQuakeFor(null); setNearbyOrigin(null); }
+    if (selectedQuakeId == null) { setNearbyQuakeFor(null); setNearbyOriginId(null); }
   }, [selectedQuakeId]);
 
   // 気象庁 震度データベース検索フォーム・結果一覧の状態。
@@ -3116,11 +3117,32 @@ function BottomDock({
           <BackToListButton
             onClick={() => {
               killScrollMomentum();
-              if (nearbyQuakeFor) { setNearbyQuakeFor(null); setSnapIndex(2); return; }
-              if (nearbyOrigin) { setNearbyQuakeFor(nearbyOrigin); setNearbyOrigin(null); setSnapIndex(3); return; }
+              if (nearbyQuakeFor) {
+                // 一覧を閉じて、元の地震(nearbyOriginId)の詳細に戻る。
+                setNearbyQuakeFor(null);
+                setNearbyOriginId(null);
+                setSnapIndex(2);
+                return;
+              }
+              if (nearbyOriginId) {
+                // 近傍一覧から選んだ地震の詳細から、一覧に戻る。
+                // 選択自体も元の地震に戻すことで、観測点・凡例・地図上のバツ印を
+                // 一覧を開いていた時点の地震に揃える(戻さないと、一覧の裏で
+                // 選んだ地震のデータがそのまま残ってしまう)。
+                const originQuake = quakes.find(q => q.id === nearbyOriginId)
+                  || (searchQuake && searchQuake.id === nearbyOriginId ? searchQuake : null);
+                if (originQuake) {
+                  onSelectQuake(nearbyOriginId);
+                  setNearbyQuakeFor(originQuake.place);
+                } else {
+                  setNearbyOriginId(null);
+                }
+                setSnapIndex(3);
+                return;
+              }
               onSelectQuake(null);
             }}
-            label={nearbyQuakeFor ? "地震の詳細に戻る" : nearbyOrigin ? "近傍地震一覧に戻る" : "地震一覧に戻る"}
+            label={nearbyQuakeFor ? "地震の詳細に戻る" : nearbyOriginId ? "近傍地震一覧に戻る" : "地震一覧に戻る"}
           />
         </div>
       )}
@@ -3258,7 +3280,6 @@ function BottomDock({
                             colorScheme={colorScheme}
                             onFoundQuake={onFoundSearchQuake}
                             onSelectQuake={(id) => {
-                              setNearbyOrigin(nearbyQuakeFor);
                               setNearbyQuakeFor(null);
                               handleSelectQuakeForScroll(id);
                             }}
@@ -3276,6 +3297,7 @@ function BottomDock({
                               type="button"
                               onClick={() => {
                                 if (scrollRef.current) scrollRef.current.scrollTop = 0;
+                                setNearbyOriginId(selected.id);
                                 setNearbyQuakeFor(selected.place);
                                 setSnapIndex(3);
                               }}
