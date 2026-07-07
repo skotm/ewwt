@@ -3116,8 +3116,8 @@ function BottomDock({
           <BackToListButton
             onClick={() => {
               killScrollMomentum();
-              if (nearbyQuakeFor) { setNearbyQuakeFor(null); return; }
-              if (nearbyOrigin) { setNearbyQuakeFor(nearbyOrigin); setNearbyOrigin(null); return; }
+              if (nearbyQuakeFor) { setNearbyQuakeFor(null); setSnapIndex(2); return; }
+              if (nearbyOrigin) { setNearbyQuakeFor(nearbyOrigin); setNearbyOrigin(null); setSnapIndex(3); return; }
               onSelectQuake(null);
             }}
             label={nearbyQuakeFor ? "地震の詳細に戻る" : nearbyOrigin ? "近傍地震一覧に戻る" : "地震一覧に戻る"}
@@ -3277,6 +3277,7 @@ function BottomDock({
                               onClick={() => {
                                 if (scrollRef.current) scrollRef.current.scrollTop = 0;
                                 setNearbyQuakeFor(selected.place);
+                                setSnapIndex(3);
                               }}
                               style={{
                                 width: "100%", padding: "10px 12px", borderRadius: 12,
