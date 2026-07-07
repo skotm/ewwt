@@ -3135,7 +3135,7 @@ function BottomDock({
                 // 一覧を閉じて、元の地震(nearbyOriginId)の詳細に戻る。
                 setNearbyQuakeFor(null);
                 setNearbyOriginId(null);
-                setSnapIndex(2);
+                setSnapIndex(1);
                 return;
               }
               if (nearbyOriginId) {
