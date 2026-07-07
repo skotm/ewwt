@@ -5219,11 +5219,13 @@ export default function App() {
             ナビバーの内側からパネルが伸びて生まれてくるように見せる */}
         <div style={{
           position: "absolute",
-          bottom: "calc(16px + env(safe-area-inset-bottom))",
+          ...(isWide
+            ? { top: "50%", transform: "translateY(-50%)" }
+            : { bottom: "calc(16px + env(safe-area-inset-bottom))" }),
           left: isWide ? 68 : 0, right: 0,
           display: "flex",
           justifyContent: isWide ? "flex-start" : "center",
-          alignItems: "flex-end",
+          alignItems: isWide ? "center" : "flex-end",
           zIndex: 40, padding: isWide ? "0 0 0 16px" : "0 16px",
         }}>
           <BottomDock
