@@ -2596,42 +2596,63 @@ function SideNavRail({ active, onNav }) {
       top: "50%",
       transform: "translateY(-50%)",
       zIndex: 20,
-      animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
     }}>
-      <Glass radius={SIDE_RAIL_WIDTH / 2} style={{ width: SIDE_RAIL_WIDTH }}>
-        <div style={{
-          display: "flex", flexDirection: "column",
-          alignItems: "center",
-          padding: "10px 6px",
-          gap: 4,
-        }}>
-          {NAV.map(({ id, label }) => {
-            const isActive = id === active;
-            return (
-              <button
-                key={id}
-                type="button"
-                onClick={() => onNav(id)}
-                style={{
-                  width: SIDE_RAIL_WIDTH - 12, height: 52,
-                  display: "flex", flexDirection: "column",
-                  alignItems: "center", justifyContent: "center",
-                  gap: 3,
-                  borderRadius: 14, border: "none", cursor: "pointer",
-                  background: isActive ? "rgba(255,255,255,0.16)" : "transparent",
-                  color: isActive ? "#fff" : "rgba(255,255,255,0.6)",
-                  transition: "background 0.15s, color 0.15s",
-                }}
-              >
-                <span style={{ transform: "scale(0.74)" }}>{NAV_ICONS[id]}</span>
-                <span style={{ fontSize: 9, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1 }}>
-                  {label}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </Glass>
+      {/* 位置決め(fixed + translateY(-50%))と登場アニメーションを同じ要素の
+          transformに同居させると、キーフレーム側のtransformが常に優先されて
+          translateY(-50%)が丸ごと無視されてしまう(=中央揃えが効かず、
+          下にはみ出て見切れる)。なので登場アニメーションは内側の別要素に
+          かけて分離する。 */}
+      <div style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
+        <Glass radius={SIDE_RAIL_WIDTH / 2} style={{ width: SIDE_RAIL_WIDTH }}>
+          <div style={{
+            display: "flex", flexDirection: "column",
+            alignItems: "center",
+            padding: "10px 6px",
+            gap: 4,
+          }}>
+            {NAV.map(({ id, label }) => {
+              const isActive = id === active;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => onNav(id)}
+                  style={{
+                    position: "relative",
+                    width: SIDE_RAIL_WIDTH - 12, height: 52,
+                    display: "flex", flexDirection: "column",
+                    alignItems: "center", justifyContent: "center",
+                    gap: 3,
+                    borderRadius: 14, border: "none", cursor: "pointer",
+                    background: "transparent",
+                    color: isActive ? "#fff" : "rgba(255,255,255,0.6)",
+                    transition: "color 0.15s",
+                  }}
+                >
+                  {/* アクティブ時のハイライト。フラットな半透明塗りではなく、
+                      他のガラスUIと同じ屈折+rim lightの見た目にするため
+                      Glassを重ねる(絶対配置で背面に敷く)。 */}
+                  {isActive && (
+                    <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
+                      <Glass radius={14} filterSize="sm" blur={8}
+                        style={{ width: "100%", height: "100%" }}/>
+                    </div>
+                  )}
+                  <span style={{ position: "relative", zIndex: 1, transform: "scale(0.74)" }}>
+                    {NAV_ICONS[id]}
+                  </span>
+                  <span style={{
+                    position: "relative", zIndex: 1,
+                    fontSize: 9, fontWeight: isActive ? 700 : 500, letterSpacing: -0.1,
+                  }}>
+                    {label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </Glass>
+      </div>
     </div>
   );
 }
