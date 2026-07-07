@@ -2770,6 +2770,15 @@ function BottomDock({
     setSnapIndex(1);
   }
 
+  // 近傍地震一覧のスクロール位置。一覧→他の地震の詳細→一覧、と行き来する際、
+  // NearbyQuakesPanel自体はDOMごと作り直される(=スクロール位置は自然には
+  // 残らない)ため、一覧から離れる直前に保存しておき、一覧に戻ってきた時だけ
+  // 復元する。pendingNearbyScrollRestoreRefは「次にスクロール位置を調整する
+  // タイミングでは、0にリセットするのではなくこちらを復元してほしい」という
+  // 1回限りの合図。
+  const nearbyListScrollTopRef = useRef(0);
+  const pendingNearbyScrollRestoreRef = useRef(false);
+
   // タブ切り替え、一覧⇄検索モードの切り替え、地震の選択/選択解除で表示中身が
   // 変わるたびに、ブラウザのスクロールアンカリングによりscrollTopが勝手に動き、
   // カードやヘッダーが隠れて見えることがあるため、そのたびに明示的にスクロール
@@ -2796,7 +2805,12 @@ function BottomDock({
     // 必ず本来の値(overflowY: auto / overflowX: hidden)を明示的に指定し直す。
     scrollRef.current.style.overflowY = "auto";
     scrollRef.current.style.overflowX = "hidden";
-    scrollRef.current.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
+    if (pendingNearbyScrollRestoreRef.current) {
+      scrollRef.current.scrollTop = nearbyListScrollTopRef.current;
+      pendingNearbyScrollRestoreRef.current = false;
+    } else {
+      scrollRef.current.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
+    }
     prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
   }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor]);
 
@@ -3132,6 +3146,7 @@ function BottomDock({
                 const originQuake = quakes.find(q => q.id === nearbyOriginId)
                   || (searchQuake && searchQuake.id === nearbyOriginId ? searchQuake : null);
                 if (originQuake) {
+                  pendingNearbyScrollRestoreRef.current = true;
                   onSelectQuake(nearbyOriginId);
                   setNearbyQuakeFor(originQuake.place);
                 } else {
@@ -3280,6 +3295,7 @@ function BottomDock({
                             colorScheme={colorScheme}
                             onFoundQuake={onFoundSearchQuake}
                             onSelectQuake={(id) => {
+                              if (scrollRef.current) nearbyListScrollTopRef.current = scrollRef.current.scrollTop;
                               setNearbyQuakeFor(null);
                               handleSelectQuakeForScroll(id);
                             }}
@@ -3885,14 +3901,23 @@ const NEARBY_SORT_BUTTONS = [
   { key: "depth", label: "深さ" },
 ];
 
+// 近傍地震一覧の検索結果キャッシュ(震源地名→結果一覧)。
+// NearbyQuakesPanelは、近傍一覧→他の地震の詳細→近傍一覧、と行き来するたびに
+// (selectedQuakeIdの変化でキーが変わるため)Reactコンポーネントとしては毎回
+// 作り直される。componentのstateはその度に失われるので、再訪問時に検索し直さず
+// 済むよう、コンポーネントの外(モジュールスコープ)にキャッシュを持たせる。
+const nearbyQuakeSearchCache = new Map();
+
 function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake }) {
-  const [status, setStatus] = useState("loading"); // loading | error | done
-  const [results, setResults] = useState([]);
+  const cached = nearbyQuakeSearchCache.get(place);
+  const [status, setStatus] = useState(cached ? "done" : "loading"); // loading | error | done
+  const [results, setResults] = useState(cached || []);
   const [sortKey, setSortKey] = useState("maxInt");
   const [sortDesc, setSortDesc] = useState(true);
   const [loadingId, setLoadingId] = useState(null);
 
   useEffect(() => {
+    if (nearbyQuakeSearchCache.has(place)) return; // キャッシュ済みなら検索し直さない
     let cancelled = false;
     (async () => {
       setStatus("loading");
@@ -3903,6 +3928,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
         });
         if (cancelled) return;
         if (errMsg) { setStatus("error"); setResults([]); return; }
+        nearbyQuakeSearchCache.set(place, list);
         setResults(list);
         setStatus("done");
       } catch (e) {
