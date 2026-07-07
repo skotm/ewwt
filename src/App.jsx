@@ -1925,14 +1925,9 @@ function eqdbIntensityThresholdScale(raw) {
 const EQDB_MAX_INT_SCALE = { "1": 10, "2": 20, "3": 30, "4": 40, "A": 45, "B": 50, "C": 55, "D": 60, "7": 70 };
 
 // 「この震源の近傍で発生した地震」ボタンを出す条件。
-// P2P地震情報(リアルタイム)側の地震のみが対象で、震度5弱以上(旧震度階級の
-// 「5」も含む)またはマグニチュード6.0以上の場合に表示する。
-const NEARBY_QUAKE_MIN_INTENSITY_KEYS = new Set(["5", "5-", "5+", "6", "6-", "6+", "7"]);
+// P2P地震情報(リアルタイム)側の地震であれば、震度・マグニチュードに関わらず表示する。
 function shouldShowNearbyQuakeButton(quake) {
-  if (!quake || quake.isEqdb) return false;
-  const intOk = NEARBY_QUAKE_MIN_INTENSITY_KEYS.has(quake.maxIntensity);
-  const magOk = Number.isFinite(quake.magnitude) && quake.magnitude >= 6.0;
-  return intOk || magOk;
+  return !!quake && !quake.isEqdb;
 }
 
 const EQDB_SORT_OPTIONS = [
@@ -1983,16 +1978,21 @@ function eqdbIdToTimeDisplay(id) {
   return `${id.slice(0,4)}/${id.slice(4,6)}/${id.slice(6,8)} ${id.slice(8,10)}:${id.slice(10,12)}:${id.slice(12,14)}`;
 }
 
-// mode=search: 期間・M・最大震度で地震を検索する。観測点別の詳細は含まない一覧のみを返す。
-async function fetchEqdbSearch({ startDate, endDate, minMag, maxInt, sort }) {
-  const isFiltered = minMag > 0 || maxInt !== "1";
+// mode=search: 期間・M・最大震度・(任意で)震央地名で地震を検索する。
+// 観測点別の詳細は含まない一覧のみを返す。
+// epi: 震央地名(例:"神奈川県西部")をそのまま渡すと、サーバー側でその震央地名に
+// 完全一致する地震だけに絞り込んで返してくれる(実際のeqdb検索フォームの挙動と同じ)。
+// 指定が無い場合は"99"(絞り込みなし)を使う。
+async function fetchEqdbSearch({ startDate, endDate, minMag, maxInt, sort, epi }) {
+  const epiValue = epi || "99";
+  const isFiltered = minMag > 0 || maxInt !== "1" || epiValue !== "99";
   const fd = new FormData();
   fd.append("mode", "search");
   fd.append("dateTimeF[]", startDate); fd.append("dateTimeF[]", "00:00");
   fd.append("dateTimeT[]", endDate);   fd.append("dateTimeT[]", "23:59");
   fd.append("mag[]", minMag.toFixed(1)); fd.append("mag[]", "9.9");
   fd.append("dep[]", "000"); fd.append("dep[]", "999");
-  fd.append("epi[]", "99"); fd.append("pref[]", "99"); fd.append("city[]", "99"); fd.append("station[]", "99");
+  fd.append("epi[]", epiValue); fd.append("pref[]", "99"); fd.append("city[]", "99"); fd.append("station[]", "99");
   fd.append("obsInt", "1");
   fd.append("maxInt", maxInt);
   fd.append("additionalC", isFiltered ? "true" : "false");
@@ -3876,11 +3876,11 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
       try {
         const { list, errMsg } = await fetchEqdbSearch({
           startDate: EQDB_MIN_DATE, endDate: eqdbMaxEndDate(),
-          minMag: 0, maxInt: "1", sort: "S1",
+          minMag: 0, maxInt: "1", sort: "S0", epi: place,
         });
         if (cancelled) return;
         if (errMsg) { setStatus("error"); setResults([]); return; }
-        setResults(list.filter(eq => (eq.name || "") === place));
+        setResults(list);
         setStatus("done");
       } catch (e) {
         if (!cancelled) { setStatus("error"); setResults([]); }
