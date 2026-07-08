@@ -2579,14 +2579,17 @@ const NAV_ICONS = {
 
 /* ─────────────────────────────────────────────────────
    SIDE NAV RAIL
-   広い画面(isWide)用の、画面左端に張り付く縦タブバー。ドラッグ操作は無く、
+   広い画面(isWide)用の、画面左上に浮かぶ縦タブバー。ドラッグ操作は無く、
    単純なクリックだけでタブを切り替える(PC・タブレットでは横スワイプより
    クリック/タップの方が自然なため)。
-   フローティングパネル(BottomDockの中身)とすぐ右に隙間無く並べて、
-   角丸を触れ合う面だけ0にすることで、1枚の連続したガラスに見えるように
-   している(実体は2つのGlassだが、継ぎ目を無くして一体化して見せる)。
+   縦画面のフローティングパネルと同じGlass技法(角丸+backdrop blur+
+   縁のrim light)を使い、画面いっぱいに伸ばした四角ではなく、
+   コンパクトな丸みのあるカードとして浮かせる。フローティングパネルとは
+   隙間を空けた別カードにする(継ぎ目を無くす一体化はしない)。
    ───────────────────────────────────────────────────── */
-const WIDE_RAIL_WIDTH = 84; // 横幅[px]。画面左端に固定なので画面幅依存では伸縮させない
+const WIDE_RAIL_WIDTH = 76;      // 横幅[px]
+const WIDE_RAIL_TOP = 16;        // 画面上端からの余白[px]。フローティングパネルと揃える
+const WIDE_RAIL_RADIUS = 28;     // 角丸[px]
 
 function SideNavRail({ active, onNav }) {
   const RAIL_PAD_Y = 14; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
@@ -2685,19 +2688,21 @@ function SideNavRail({ active, onNav }) {
   return (
     <div style={{
       position: "fixed",
-      left: 0, top: 0, bottom: 0,
+      left: 12,
+      top: WIDE_RAIL_TOP,
+      bottom: 16,
       zIndex: 20,
+      animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
     }}>
-      <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
-        <Glass radius={0} style={{ width: WIDE_RAIL_WIDTH, height: "100%" }}>
-          <div
-            ref={contentRef}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={handlePointerUp}
-            onPointerCancel={handlePointerUp}
-            style={{
-              position: "relative",
+      <Glass radius={WIDE_RAIL_RADIUS} style={{ width: WIDE_RAIL_WIDTH, height: "100%" }}>
+        <div
+          ref={contentRef}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          style={{
+            position: "relative",
               height: "100%",
               display: "flex", flexDirection: "column",
               alignItems: "stretch",
@@ -2764,7 +2769,6 @@ function SideNavRail({ active, onNav }) {
             })}
           </div>
         </Glass>
-      </div>
     </div>
   );
 }
@@ -3408,7 +3412,7 @@ function BottomDock({
       style={isWide ? {
         width: 380,
         height: "100%",
-        borderRadius: "0 24px 24px 0",
+        borderRadius: 28,
         overflow: "hidden",
       } : {
         width: "100%",
@@ -5219,13 +5223,13 @@ export default function App() {
         <div style={{
           position: "absolute",
           ...(isWide
-            ? { top: 0, bottom: 0 }
+            ? { top: 16, bottom: 16 }
             : { bottom: "calc(16px + env(safe-area-inset-bottom))" }),
-          left: isWide ? WIDE_RAIL_WIDTH : 0, right: 0,
+          left: isWide ? WIDE_RAIL_WIDTH + 12 + 16 : 0, right: 0,
           display: "flex",
           justifyContent: isWide ? "flex-start" : "center",
-          alignItems: isWide ? "stretch" : "flex-end",
-          zIndex: 40, padding: isWide ? 0 : "0 16px",
+          alignItems: "stretch",
+          zIndex: 40, padding: isWide ? "0 16px 0 0" : "0 16px",
         }}>
           <BottomDock
             active={activeNav}
