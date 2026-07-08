@@ -2579,21 +2579,17 @@ const NAV_ICONS = {
 
 /* ─────────────────────────────────────────────────────
    SIDE NAV RAIL
-   広い画面(isWide)用の、左端に浮かぶ縦タブバー。スマホ縦持ち用の
-   ナビ行(スワイプでタブを切り替えられるガラスの足元)とは違い、
-   ドラッグ操作は無く、単純なクリックだけでタブを切り替える
-   (PC・タブレットでは横スワイプよりクリック/タップの方が自然なため)。
-   他のフローティングUI(ボトムドック等)と同じGlass(Liquid Glass)で
-   統一し、細い縦長カプセルとして画面左端に浮かせる。
-   幅・高さとも画面サイズに応じてclamp()で伸縮する
-   (固定pxではなく画面の縦幅に対する比率で決まるので、狭い画面では
-   コンパクトに、広い画面では長く・見やすくなる)。
+   広い画面(isWide)用の、画面左端に張り付く縦タブバー。ドラッグ操作は無く、
+   単純なクリックだけでタブを切り替える(PC・タブレットでは横スワイプより
+   クリック/タップの方が自然なため)。
+   フローティングパネル(BottomDockの中身)とすぐ右に隙間無く並べて、
+   角丸を触れ合う面だけ0にすることで、1枚の連続したガラスに見えるように
+   している(実体は2つのGlassだが、継ぎ目を無くして一体化して見せる)。
    ───────────────────────────────────────────────────── */
-const SIDE_RAIL_WIDTH_CSS = "clamp(40px, 4vw, 48px)"; // 横幅(細め、画面幅に応じて微調整)
-const SIDE_RAIL_HEIGHT_CSS = "clamp(320px, 62vh, 640px)"; // 縦の全長(画面の高さに応じて伸縮)
+const WIDE_RAIL_WIDTH = 84; // 横幅[px]。画面左端に固定なので画面幅依存では伸縮させない
 
 function SideNavRail({ active, onNav }) {
-  const RAIL_PAD_Y = 10; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
+  const RAIL_PAD_Y = 14; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
   const N = NAV.length;
   const tabH = 100 / N;  // 1タブぶんの高さ[%](内側領域基準)
   const activeIndex = Math.max(0, NAV.findIndex(n => n.id === active));
@@ -2689,18 +2685,11 @@ function SideNavRail({ active, onNav }) {
   return (
     <div style={{
       position: "fixed",
-      left: 12,
-      top: "50%",
-      transform: "translateY(-50%)",
+      left: 0, top: 0, bottom: 0,
       zIndex: 20,
     }}>
-      {/* 位置決め(fixed + translateY(-50%))と登場アニメーションを同じ要素の
-          transformに同居させると、キーフレーム側のtransformが常に優先されて
-          translateY(-50%)が丸ごと無視されてしまう(=中央揃えが効かず、
-          下にはみ出て見切れる)。なので登場アニメーションは内側の別要素に
-          かけて分離する。 */}
-      <div style={{ animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
-        <Glass radius={999} style={{ width: SIDE_RAIL_WIDTH_CSS, height: SIDE_RAIL_HEIGHT_CSS }}>
+      <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
+        <Glass radius={0} style={{ width: WIDE_RAIL_WIDTH, height: "100%" }}>
           <div
             ref={contentRef}
             onPointerDown={handlePointerDown}
@@ -3359,7 +3348,7 @@ function BottomDock({
         <div style={{
           position: "absolute",
           right: 16,
-          bottom: backButtonBottom,
+          ...(isWide ? { top: 16 } : { bottom: backButtonBottom }),
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
@@ -3402,7 +3391,7 @@ function BottomDock({
         <div style={{
           position: "absolute",
           right: 16,
-          bottom: backButtonBottom,
+          ...(isWide ? { top: 16 } : { bottom: backButtonBottom }),
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
@@ -3416,7 +3405,12 @@ function BottomDock({
       <Glass
       filterSize={settled ? "normal" : "none"}
       blur={settled ? 14 : 8}
-      style={{
+      style={isWide ? {
+        width: 380,
+        height: "100%",
+        borderRadius: "0 24px 24px 0",
+        overflow: "hidden",
+      } : {
         width: "100%",
         maxWidth: 480,
         minWidth: 240,
@@ -3427,23 +3421,27 @@ function BottomDock({
       }}
     >
       {/* レイヤーパネル部分 — 高さを直接アニメーションし、
-          ナビバーのガラスの中から「せり出してくる」ように展開する */}
+          ナビバーのガラスの中から「せり出してくる」ように展開する。
+          広い画面(isWide)では、ドラッグで高さを変える仕組み自体を使わず、
+          常に親いっぱいの固定高さで表示する。 */}
       <div
-        aria-hidden={snapIndex === 0 && !isDragging}
+        aria-hidden={!isWide && snapIndex === 0 && !isDragging}
         style={{
-          height: currentHeight,
+          height: isWide ? "100%" : currentHeight,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          transition: isDragging ? "none" : "height 0.4s cubic-bezier(.22,1,.36,1)",
-          pointerEvents: (snapIndex > 0 || isDragging) ? "auto" : "none",
+          transition: isWide || isDragging ? "none" : "height 0.4s cubic-bezier(.22,1,.36,1)",
+          pointerEvents: isWide || snapIndex > 0 || isDragging ? "auto" : "none",
         }}
       >
-        {/* ドラッグハンドル — 常に上部に固定。本体をスクロールしても一緒には動かない。
+        {/* ドラッグハンドル — 広い画面(isWide)では高さを変える操作自体が無いため
+            表示しない。狭い画面(縦持ち)でのみ、常に上部に固定表示する。
             以前は当たり判定を absolute で上下に張り出す構成にしていたが、
             重ね合わせが原因と思われる表示崩れが発生したため、
             ハンドル行自体の高さを広げてタップ範囲とするシンプルな
             構成に戻した(見た目のバー位置は中央のまま変わらない)。 */}
+        {!isWide && (
         <div
           onPointerDown={handlePointerDown}
           style={{
@@ -3460,6 +3458,7 @@ function BottomDock({
             background: "rgba(255,255,255,0.45)",
           }}/>
         </div>
+        )}
 
         {/* 地震タブの「一覧⇄検索」切り替えバー — ハンドル直下に固定表示し、
             スクロールしても本体と一緒には動かない(検索/一覧の入口を常に見せておく)。
@@ -5220,13 +5219,13 @@ export default function App() {
         <div style={{
           position: "absolute",
           ...(isWide
-            ? { top: "50%", transform: "translateY(-50%)" }
+            ? { top: 0, bottom: 0 }
             : { bottom: "calc(16px + env(safe-area-inset-bottom))" }),
-          left: isWide ? 68 : 0, right: 0,
+          left: isWide ? WIDE_RAIL_WIDTH : 0, right: 0,
           display: "flex",
           justifyContent: isWide ? "flex-start" : "center",
-          alignItems: isWide ? "center" : "flex-end",
-          zIndex: 40, padding: isWide ? "0 0 0 16px" : "0 16px",
+          alignItems: isWide ? "stretch" : "flex-end",
+          zIndex: 40, padding: isWide ? 0 : "0 16px",
         }}>
           <BottomDock
             active={activeNav}
