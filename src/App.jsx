@@ -2934,20 +2934,6 @@ function BottomDock({
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
   const scrollRef = useRef(null);
 
-  // 横画面(isWide)では、戻るボタンをガラスの外に浮かせて表示するため、
-  // パネル本体(GlassOrPlainの中身)の画面上の位置を測っておく。
-  const wideContentRef = useRef(null);
-  const [wideAnchorRect, setWideAnchorRect] = useState(null);
-  useLayoutEffect(() => {
-    if (!isWide) { setWideAnchorRect(null); return; }
-    const update = () => {
-      if (wideContentRef.current) setWideAnchorRect(wideContentRef.current.getBoundingClientRect());
-    };
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, [isWide, active, selectedQuakeId, settingsPath]);
-
   // 一覧⇄検索の切り替えや地震の選択/選択解除など、表示中身が切り替わって
   // scrollRef自体がkeyごと作り直される直前に呼ぶ。「勢いよくスクロールした
   // 直後に切り替える」と、iOSの慣性スクロール(フリック後の減速アニメーション)が
@@ -2969,6 +2955,20 @@ function BottomDock({
   useEffect(() => {
     if (active !== "settings") setSettingsPath([]);
   }, [active]);
+
+  // 横画面(isWide)では、戻るボタンをガラスの外に浮かせて表示するため、
+  // パネル本体(GlassOrPlainの中身)の画面上の位置を測っておく。
+  const wideContentRef = useRef(null);
+  const [wideAnchorRect, setWideAnchorRect] = useState(null);
+  useLayoutEffect(() => {
+    if (!isWide) { setWideAnchorRect(null); return; }
+    const update = () => {
+      if (wideContentRef.current) setWideAnchorRect(wideContentRef.current.getBoundingClientRect());
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [isWide, active, selectedQuakeId, settingsPath]);
 
   // 地震タブの表示モード。"recent" = 直近の地震一覧(P2P地震情報フィード)、
   // "search" = 気象庁 震度データベースを検索するUI。
