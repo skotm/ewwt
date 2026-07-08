@@ -2586,7 +2586,7 @@ const NAV_ICONS = {
    パネルと1枚の連続したガラスに見せるため、App側で用意した共有の
    Glassの中に、コンテンツ(BottomDock)と並べて描画される。
    ───────────────────────────────────────────────────── */
-const WIDE_RAIL_WIDTH = 76;      // 横幅[px]
+const WIDE_RAIL_WIDTH = 64;      // 横幅[px]
 const WIDE_RAIL_TOP = 16;        // 画面上端からの余白[px]。フローティングパネルと揃える
 const WIDE_RAIL_RADIUS = 28;     // 角丸[px](共有Glass全体に適用する)
 
@@ -3398,7 +3398,7 @@ function BottomDock({
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
-          ? { style: { width: 380, height: "100%", overflow: "hidden", position: "relative" } }
+          ? { style: { width: 320, height: "100%", overflow: "hidden", position: "relative" } }
           : {
               filterSize: settled ? "normal" : "none",
               blur: settled ? 14 : 8,
