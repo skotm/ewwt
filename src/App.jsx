@@ -2619,7 +2619,7 @@ const WIDE_RAIL_WIDTH = 52;      // 横幅[px]
 const WIDE_RAIL_TOP = 16;        // 画面上端からの余白[px]。フローティングパネルと揃える
 const WIDE_RAIL_RADIUS = 28;     // 角丸[px](共有Glass全体に適用する)
 
-function SideNavRail({ active, onNav }) {
+function SideNavRail({ active, onNav, uiScale = 1 }) {
   const RAIL_PAD_Y = 14; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
   const N = NAV.length;
   const tabH = 100 / N;  // 1タブぶんの高さ[%](内側領域基準)
@@ -2714,6 +2714,12 @@ function SideNavRail({ active, onNav }) {
   const displayIdx = dragging && previewIdx != null ? previewIdx : activeIndex;
 
   return (
+      <div style={{
+        width: `${100 / uiScale}%`,
+        height: `${100 / uiScale}%`,
+        transform: `scale(${uiScale})`,
+        transformOrigin: "top left",
+      }}>
         <div
           ref={contentRef}
           onPointerDown={handlePointerDown}
@@ -2787,6 +2793,7 @@ function SideNavRail({ active, onNav }) {
               );
             })}
           </div>
+        </div>
   );
 }
 
@@ -2927,6 +2934,7 @@ function BottomDock({
   areaFillEnabled, onChangeAreaFillEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stations, searchQuake, onFoundSearchQuake,
+  uiScale = 1,
 }) {
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
@@ -3509,6 +3517,17 @@ function BottomDock({
             };
         return (
       <GlassOrPlain {...glassProps}>
+      {/* uiScaleが1未満の時(横画面で画面が低い場合)、中身を実際より広い
+          仮想サイズでレイアウトさせてから縮小することで、外枠(Glassの箱)の
+          サイズは変えずに文字・要素だけを縮めて収める。uiScale===1の時は
+          100%/scale(1)=100%・scale(1)=等倍になるだけなので、
+          縦画面や通常サイズの横画面では見た目に影響しない。 */}
+      <div style={{
+        width: `${100 / uiScale}%`,
+        height: `${100 / uiScale}%`,
+        transform: `scale(${uiScale})`,
+        transformOrigin: "top left",
+      }}>
       {/* レイヤーパネル部分 — 高さを直接アニメーションし、
           ナビバーのガラスの中から「せり出してくる」ように展開する。
           広い画面(isWide)では、ドラッグで高さを変える仕組み自体を使わず、
@@ -3836,6 +3855,7 @@ function BottomDock({
         })}
       </div>
       )}
+      </div>
       </GlassOrPlain>
         );
       })()}
@@ -5326,15 +5346,11 @@ export default function App() {
           zIndex: 40, padding: "0 16px",
         }}>
           {isWide ? (
-            // scale(縮小率)による見た目の調整と、appearキーフレーム(こちらも
-            // transformを使う)を同じ要素に同居させると、キーフレーム側が
-            // 常に優先されてscaleが丸ごと無視されてしまうため、別要素に分ける。
-            <div style={{ height: "100%", transform: `scale(${wideUIScale})`, transformOrigin: "top left" }}>
               <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
                 <Glass radius={28} style={{ height: "100%" }}>
                   <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
                     <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
-                      <SideNavRail active={activeNav} onNav={setActiveNav}/>
+                      <SideNavRail active={activeNav} onNav={setActiveNav} uiScale={wideUIScale}/>
                     </div>
                     <div style={{ width: 1, alignSelf: "stretch", background: "rgba(255,255,255,0.14)" }}/>
                     <BottomDock
@@ -5344,6 +5360,7 @@ export default function App() {
                       layers={layersForPanel}
                       onToggleLayer={toggleLayer}
                       onLayerOpenChange={setLayerOpen}
+                      uiScale={wideUIScale}
                       quakes={quakes}
                   quakeStatus={quakeStatus}
                   selectedQuakeId={selectedQuakeId}
@@ -5363,7 +5380,6 @@ export default function App() {
               </div>
             </Glass>
               </div>
-            </div>
           ) : (
             <BottomDock
               active={activeNav}
