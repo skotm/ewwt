@@ -30,6 +30,26 @@ function useIsWideLayout() {
   return isWide;
 }
 
+// 横画面レイアウト用のUI縮小率。PC・タブレットの横画面では画面の縦幅に
+// 余裕があるので等倍(1)のままでよいが、横画面のスマホ(高さ400px前後)
+// では同じ大きさのまま出すと文字・要素が窮屈になり壊滅的に見づらくなる
+// ため、画面の縦幅に応じて0.7〜1の範囲で縮小する。
+// 基準の700pxは、タブレット横画面などで概ね窮屈にならない高さの目安。
+function useWideUIScale(isWide) {
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    if (!isWide) { setScale(1); return; }
+    const update = () => {
+      const h = window.innerHeight;
+      setScale(Math.max(0.7, Math.min(1, h / 700)));
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [isWide]);
+  return scale;
+}
+
 /* ─────────────────────────────────────────────────────
    TRUE LIQUID GLASS
    
@@ -452,7 +472,7 @@ function buildMapStyle({ world, prefectures, areas }) {
    外部タイル・外部スタイルサーバーには依存しない。
    ───────────────────────────────────────────────────── */
 function MapCanvas({
-  onReady, stationPoints, hypocenters,
+  onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
 }) {
   const containerRef = useRef(null);
@@ -745,16 +765,25 @@ function MapCanvas({
         minLon = Math.min(minLon, lon); maxLon = Math.max(maxLon, lon);
         minLat = Math.min(minLat, lat); maxLat = Math.max(maxLat, lat);
       });
+      // 横画面(isWide)ではフローティングパネルが画面左側を覆っているため、
+      // 左のpaddingを広めに取り、パネルに隠れない範囲にズームする。
       map.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
-        padding: { top: 80, bottom: 220, left: 40, right: 40 },
+        padding: isWide
+          ? { top: 40, bottom: 40, left: 360, right: 40 }
+          : { top: 80, bottom: 220, left: 40, right: 40 },
         maxZoom: 9,
         duration: 800,
       });
     } else {
       const [lon, lat] = coords[0];
-      map.flyTo({ center: [lon, lat], zoom: 7, duration: 800 });
+      map.flyTo({
+        center: [lon, lat], zoom: 7, duration: 800,
+        // 横画面ではパネルぶん(360px)画面左側が隠れているので、
+        // 見た目の中心が隠れない範囲の中央に来るようずらす。
+        offset: isWide ? [180, 0] : [0, 0],
+      });
     }
-  }, [hypocenters, stationPoints, status]);
+  }, [hypocenters, stationPoints, status, isWide]);
 
   // 推計震度分布(気象庁 estimated_intensity_map)を更新する。
   // 選択中の地震・設定トグルが変わるたびに、画像を取得・ピクセル解析してGeoJSONに変換し、
@@ -2905,6 +2934,20 @@ function BottomDock({
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
   const scrollRef = useRef(null);
 
+  // 横画面(isWide)では、戻るボタンをガラスの外に浮かせて表示するため、
+  // パネル本体(GlassOrPlainの中身)の画面上の位置を測っておく。
+  const wideContentRef = useRef(null);
+  const [wideAnchorRect, setWideAnchorRect] = useState(null);
+  useLayoutEffect(() => {
+    if (!isWide) { setWideAnchorRect(null); return; }
+    const update = () => {
+      if (wideContentRef.current) setWideAnchorRect(wideContentRef.current.getBoundingClientRect());
+    };
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [isWide, active, selectedQuakeId, settingsPath]);
+
   // 一覧⇄検索の切り替えや地震の選択/選択解除など、表示中身が切り替わって
   // scrollRef自体がkeyごと作り直される直前に呼ぶ。「勢いよくスクロールした
   // 直後に切り替える」と、iOSの慣性スクロール(フリック後の減速アニメーション)が
@@ -3338,10 +3381,46 @@ function BottomDock({
           Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
           (ドラッグ含む)にそのまま追従できるようにしている。 */}
       {active === "quake" && selectedQuakeId != null && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <BackToListButton
+              onClick={() => {
+                killScrollMomentum();
+                if (nearbyQuakeFor) {
+                  setNearbyQuakeFor(null);
+                  setNearbyOriginId(null);
+                  setSnapIndex(1);
+                  return;
+                }
+                if (nearbyOriginId) {
+                  const originQuake = quakes.find(q => q.id === nearbyOriginId)
+                    || (searchQuake && searchQuake.id === nearbyOriginId ? searchQuake : null);
+                  if (originQuake) {
+                    pendingNearbyScrollRestoreRef.current = true;
+                    onSelectQuake(nearbyOriginId);
+                    setNearbyQuakeFor(originQuake.place);
+                  } else {
+                    setNearbyOriginId(null);
+                  }
+                  setSnapIndex(3);
+                  return;
+                }
+                onSelectQuake(null);
+              }}
+              label={nearbyQuakeFor ? "地震の詳細に戻る" : nearbyOriginId ? "近傍地震一覧に戻る" : "地震一覧に戻る"}
+            />
+          </div>,
+          document.body
+        ) : (
         <div style={{
           position: "absolute",
           right: 16,
-          ...(isWide ? { top: 16 } : { bottom: backButtonBottom }),
+          bottom: backButtonBottom,
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
@@ -3377,14 +3456,29 @@ function BottomDock({
             label={nearbyQuakeFor ? "地震の詳細に戻る" : nearbyOriginId ? "近傍地震一覧に戻る" : "地震一覧に戻る"}
           />
         </div>
+        )
       )}
 
       {/* 設定タブのサブ画面(カテゴリ/項目の中身)を見ている間だけ、同じ戻るボタンを浮かべる。 */}
       {active === "settings" && settingsPath.length > 0 && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <BackToListButton
+              onClick={() => setSettingsPath(p => p.slice(0, -1))}
+              label="前の画面に戻る"
+            />
+          </div>,
+          document.body
+        ) : (
         <div style={{
           position: "absolute",
           right: 16,
-          ...(isWide ? { top: 16 } : { bottom: backButtonBottom }),
+          bottom: backButtonBottom,
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
@@ -3393,12 +3487,13 @@ function BottomDock({
             label="前の画面に戻る"
           />
         </div>
+        )
       )}
 
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
-          ? { style: { width: 260, height: "100%", overflow: "hidden", position: "relative" } }
+          ? { ref: wideContentRef, style: { width: 260, height: "100%", overflow: "hidden", position: "relative" } }
           : {
               filterSize: settled ? "normal" : "none",
               blur: settled ? 14 : 8,
@@ -4978,6 +5073,7 @@ export default function App() {
   const [layerOpen, setLayerOpen] = useState(false);
   const [map,       setMap]       = useState(null);
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
+  const wideUIScale = useWideUIScale(isWide); // 横画面で画面が低い(=スマホ横持ち)場合の縮小率
 
   // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
@@ -5177,6 +5273,7 @@ export default function App() {
           onReady={setMap}
           stationPoints={selectedQuakePoints}
           hypocenters={selectedHypocenters}
+          isWide={isWide}
           quakeTimeStr={selectedQuake?.time}
           maxIntensityKey={selectedQuake?.maxIntensity}
           estIntensityEnabled={estIntensityEnabled}
@@ -5221,7 +5318,6 @@ export default function App() {
           position: "fixed",
           left: 12, top: 16, bottom: 16,
           zIndex: 40,
-          animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
         } : {
           position: "absolute",
           bottom: "calc(16px + env(safe-area-inset-bottom))",
@@ -5230,20 +5326,25 @@ export default function App() {
           zIndex: 40, padding: "0 16px",
         }}>
           {isWide ? (
-            <Glass radius={28} style={{ height: "100%" }}>
-              <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-                <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
-                  <SideNavRail active={activeNav} onNav={setActiveNav}/>
-                </div>
-                <div style={{ width: 1, alignSelf: "stretch", background: "rgba(255,255,255,0.14)" }}/>
-                <BottomDock
-                  active={activeNav}
-                  onNav={setActiveNav}
-                  layerOpen={layerOpen}
-                  layers={layersForPanel}
-                  onToggleLayer={toggleLayer}
-                  onLayerOpenChange={setLayerOpen}
-                  quakes={quakes}
+            // scale(縮小率)による見た目の調整と、appearキーフレーム(こちらも
+            // transformを使う)を同じ要素に同居させると、キーフレーム側が
+            // 常に優先されてscaleが丸ごと無視されてしまうため、別要素に分ける。
+            <div style={{ height: "100%", transform: `scale(${wideUIScale})`, transformOrigin: "top left" }}>
+              <div style={{ height: "100%", animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both" }}>
+                <Glass radius={28} style={{ height: "100%" }}>
+                  <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+                    <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
+                      <SideNavRail active={activeNav} onNav={setActiveNav}/>
+                    </div>
+                    <div style={{ width: 1, alignSelf: "stretch", background: "rgba(255,255,255,0.14)" }}/>
+                    <BottomDock
+                      active={activeNav}
+                      onNav={setActiveNav}
+                      layerOpen={layerOpen}
+                      layers={layersForPanel}
+                      onToggleLayer={toggleLayer}
+                      onLayerOpenChange={setLayerOpen}
+                      quakes={quakes}
                   quakeStatus={quakeStatus}
                   selectedQuakeId={selectedQuakeId}
                   onSelectQuake={setSelectedQuakeId}
@@ -5261,6 +5362,8 @@ export default function App() {
                 />
               </div>
             </Glass>
+              </div>
+            </div>
           ) : (
             <BottomDock
               active={activeNav}
