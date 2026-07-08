@@ -2579,17 +2579,16 @@ const NAV_ICONS = {
 
 /* ─────────────────────────────────────────────────────
    SIDE NAV RAIL
-   広い画面(isWide)用の、画面左上に浮かぶ縦タブバー。ドラッグ操作は無く、
-   単純なクリックだけでタブを切り替える(PC・タブレットでは横スワイプより
-   クリック/タップの方が自然なため)。
-   縦画面のフローティングパネルと同じGlass技法(角丸+backdrop blur+
-   縁のrim light)を使い、画面いっぱいに伸ばした四角ではなく、
-   コンパクトな丸みのあるカードとして浮かせる。フローティングパネルとは
-   隙間を空けた別カードにする(継ぎ目を無くす一体化はしない)。
+   広い画面(isWide)用の、縦タブバーの中身(アイコン列+スライドする
+   ハイライト)。ドラッグ操作は無く、単純なクリックだけでタブを切り替える
+   (PC・タブレットでは横スワイプよりクリック/タップの方が自然なため)。
+   このコンポーネント自身はGlassや位置決めを持たない。フローティング
+   パネルと1枚の連続したガラスに見せるため、App側で用意した共有の
+   Glassの中に、コンテンツ(BottomDock)と並べて描画される。
    ───────────────────────────────────────────────────── */
 const WIDE_RAIL_WIDTH = 76;      // 横幅[px]
 const WIDE_RAIL_TOP = 16;        // 画面上端からの余白[px]。フローティングパネルと揃える
-const WIDE_RAIL_RADIUS = 28;     // 角丸[px]
+const WIDE_RAIL_RADIUS = 28;     // 角丸[px](共有Glass全体に適用する)
 
 function SideNavRail({ active, onNav }) {
   const RAIL_PAD_Y = 14; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
@@ -2686,15 +2685,6 @@ function SideNavRail({ active, onNav }) {
   const displayIdx = dragging && previewIdx != null ? previewIdx : activeIndex;
 
   return (
-    <div style={{
-      position: "fixed",
-      left: 12,
-      top: WIDE_RAIL_TOP,
-      bottom: 16,
-      zIndex: 20,
-      animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
-    }}>
-      <Glass radius={WIDE_RAIL_RADIUS} style={{ width: WIDE_RAIL_WIDTH, height: "100%" }}>
         <div
           ref={contentRef}
           onPointerDown={handlePointerDown}
@@ -2768,8 +2758,6 @@ function SideNavRail({ active, onNav }) {
               );
             })}
           </div>
-        </Glass>
-    </div>
   );
 }
 
@@ -3343,7 +3331,8 @@ function BottomDock({
 
   return (
     <>
-      {isWide && <SideNavRail active={active} onNav={onNav}/>}
+      {/* 広い画面では、SideNavRail(タブ部分)はApp側で共有のGlassの中に
+          BottomDockと並べて描画するため、ここでは出さない。 */}
 
       {/* 戻るボタン — 地震を選択している間だけ、パネルのすぐ上に浮かぶ。
           Glass(パネル本体)の兄弟として置くことで、currentHeightの変化
@@ -3406,24 +3395,25 @@ function BottomDock({
         </div>
       )}
 
-      <Glass
-      filterSize={settled ? "normal" : "none"}
-      blur={settled ? 14 : 8}
-      style={isWide ? {
-        width: 380,
-        height: "100%",
-        borderRadius: 28,
-        overflow: "hidden",
-      } : {
-        width: "100%",
-        maxWidth: 480,
-        minWidth: 240,
-        borderRadius: `${topRadius}px ${topRadius}px ${bottomRadius}px ${bottomRadius}px`,
-        transition: isDragging ? "none" : "border-radius 0.4s cubic-bezier(.22,1,.36,1)",
-        overflow: "hidden",
-        animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
-      }}
-    >
+      {(() => {
+        const GlassOrPlain = isWide ? "div" : Glass;
+        const glassProps = isWide
+          ? { style: { width: 380, height: "100%", overflow: "hidden", position: "relative" } }
+          : {
+              filterSize: settled ? "normal" : "none",
+              blur: settled ? 14 : 8,
+              style: {
+                width: "100%",
+                maxWidth: 480,
+                minWidth: 240,
+                borderRadius: `${topRadius}px ${topRadius}px ${bottomRadius}px ${bottomRadius}px`,
+                transition: isDragging ? "none" : "border-radius 0.4s cubic-bezier(.22,1,.36,1)",
+                overflow: "hidden",
+                animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
+              },
+            };
+        return (
+      <GlassOrPlain {...glassProps}>
       {/* レイヤーパネル部分 — 高さを直接アニメーションし、
           ナビバーのガラスの中から「せり出してくる」ように展開する。
           広い画面(isWide)では、ドラッグで高さを変える仕組み自体を使わず、
@@ -3750,7 +3740,9 @@ function BottomDock({
         })}
       </div>
       )}
-      </Glass>
+      </GlassOrPlain>
+        );
+      })()}
     </>
   );
 }
@@ -5219,41 +5211,80 @@ export default function App() {
 
         {/* ボトムドック — ナビバーと地図レイヤーパネルをひとつのGlassに統合。
             レイヤーを開くと、このガラス自体の高さ・角丸が滑らかに変化し、
-            ナビバーの内側からパネルが伸びて生まれてくるように見せる */}
-        <div style={{
+            ナビバーの内側からパネルが伸びて生まれてくるように見せる。
+            広い画面(isWide)では、SideNavRail(タブ列)とBottomDockの中身を
+            1つの共有Glassの中に並べて描画し、継ぎ目の無い1枚のガラスに
+            見せる(BottomDock自身はisWideの時、自前のGlassを持たず透明な
+            中身だけを返す)。 */}
+        <div style={isWide ? {
+          position: "fixed",
+          left: 12, top: 16, bottom: 16,
+          zIndex: 40,
+          animation: "appear 0.4s cubic-bezier(.25,1,.5,1) 0.1s both",
+        } : {
           position: "absolute",
-          ...(isWide
-            ? { top: 16, bottom: 16 }
-            : { bottom: "calc(16px + env(safe-area-inset-bottom))" }),
-          left: isWide ? WIDE_RAIL_WIDTH + 12 + 16 : 0, right: 0,
-          display: "flex",
-          justifyContent: isWide ? "flex-start" : "center",
-          alignItems: "stretch",
-          zIndex: 40, padding: isWide ? "0 16px 0 0" : "0 16px",
+          bottom: "calc(16px + env(safe-area-inset-bottom))",
+          left: 0, right: 0,
+          display: "flex", justifyContent: "center", alignItems: "flex-end",
+          zIndex: 40, padding: "0 16px",
         }}>
-          <BottomDock
-            active={activeNav}
-            onNav={setActiveNav}
-            layerOpen={layerOpen}
-            layers={layersForPanel}
-            onToggleLayer={toggleLayer}
-            onLayerOpenChange={setLayerOpen}
-            quakes={quakes}
-            quakeStatus={quakeStatus}
-            selectedQuakeId={selectedQuakeId}
-            onSelectQuake={setSelectedQuakeId}
-            stationPoints={selectedQuakePoints}
-            onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
-            estIntensityEnabled={estIntensityEnabled}
-            onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
-            areaFillEnabled={areaFillEnabled}
-            onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
-            quakeFetchLimit={quakeFetchLimit}
-            onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
-            stations={stations}
-            searchQuake={searchQuake}
-            onFoundSearchQuake={setSearchQuake}
-          />
+          {isWide ? (
+            <Glass radius={28} style={{ height: "100%" }}>
+              <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+                <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
+                  <SideNavRail active={activeNav} onNav={setActiveNav}/>
+                </div>
+                <div style={{ width: 1, alignSelf: "stretch", background: "rgba(255,255,255,0.14)" }}/>
+                <BottomDock
+                  active={activeNav}
+                  onNav={setActiveNav}
+                  layerOpen={layerOpen}
+                  layers={layersForPanel}
+                  onToggleLayer={toggleLayer}
+                  onLayerOpenChange={setLayerOpen}
+                  quakes={quakes}
+                  quakeStatus={quakeStatus}
+                  selectedQuakeId={selectedQuakeId}
+                  onSelectQuake={setSelectedQuakeId}
+                  stationPoints={selectedQuakePoints}
+                  onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
+                  estIntensityEnabled={estIntensityEnabled}
+                  onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
+                  areaFillEnabled={areaFillEnabled}
+                  onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+                  quakeFetchLimit={quakeFetchLimit}
+                  onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
+                  stations={stations}
+                  searchQuake={searchQuake}
+                  onFoundSearchQuake={setSearchQuake}
+                />
+              </div>
+            </Glass>
+          ) : (
+            <BottomDock
+              active={activeNav}
+              onNav={setActiveNav}
+              layerOpen={layerOpen}
+              layers={layersForPanel}
+              onToggleLayer={toggleLayer}
+              onLayerOpenChange={setLayerOpen}
+              quakes={quakes}
+              quakeStatus={quakeStatus}
+              selectedQuakeId={selectedQuakeId}
+              onSelectQuake={setSelectedQuakeId}
+              stationPoints={selectedQuakePoints}
+              onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
+              estIntensityEnabled={estIntensityEnabled}
+              onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
+              areaFillEnabled={areaFillEnabled}
+              onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+              quakeFetchLimit={quakeFetchLimit}
+              onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
+              stations={stations}
+              searchQuake={searchQuake}
+              onFoundSearchQuake={setSearchQuake}
+            />
+          )}
         </div>
 
       </div>
