@@ -2586,7 +2586,7 @@ const NAV_ICONS = {
    パネルと1枚の連続したガラスに見せるため、App側で用意した共有の
    Glassの中に、コンテンツ(BottomDock)と並べて描画される。
    ───────────────────────────────────────────────────── */
-const WIDE_RAIL_WIDTH = 64;      // 横幅[px]
+const WIDE_RAIL_WIDTH = 52;      // 横幅[px]
 const WIDE_RAIL_TOP = 16;        // 画面上端からの余白[px]。フローティングパネルと揃える
 const WIDE_RAIL_RADIUS = 28;     // 角丸[px](共有Glass全体に適用する)
 
@@ -3422,6 +3422,7 @@ function BottomDock({
         aria-hidden={!isWide && snapIndex === 0 && !isDragging}
         style={{
           height: isWide ? "100%" : currentHeight,
+          paddingTop: isWide ? 14 : 0, // ハンドルが無い分、上に少し余白を持たせる
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
