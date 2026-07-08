@@ -3398,7 +3398,7 @@ function BottomDock({
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
-          ? { style: { width: 320, height: "100%", overflow: "hidden", position: "relative" } }
+          ? { style: { width: 260, height: "100%", overflow: "hidden", position: "relative" } }
           : {
               filterSize: settled ? "normal" : "none",
               blur: settled ? 14 : 8,
