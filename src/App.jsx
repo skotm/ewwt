@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, createContext, forwardRef } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, createContext, forwardRef, Fragment } from "react";
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
@@ -3519,15 +3519,22 @@ function BottomDock({
       <GlassOrPlain {...glassProps}>
       {/* uiScaleが1未満の時(横画面で画面が低い場合)、中身を実際より広い
           仮想サイズでレイアウトさせてから縮小することで、外枠(Glassの箱)の
-          サイズは変えずに文字・要素だけを縮めて収める。uiScale===1の時は
-          100%/scale(1)=100%・scale(1)=等倍になるだけなので、
-          縦画面や通常サイズの横画面では見た目に影響しない。 */}
-      <div style={{
-        width: `${100 / uiScale}%`,
-        height: `${100 / uiScale}%`,
-        transform: `scale(${uiScale})`,
-        transformOrigin: "top left",
-      }}>
+          サイズは変えずに文字・要素だけを縮めて収める。
+          縦画面(isWide===false)では、たとえscale(1)であっても transform を
+          祖先要素に付けるとiOS Safariでスクロールできなくなる不具合がある
+          ため、縦画面ではこのラッパー自体を使わない(Fragmentで素通しする)。 */}
+      {(() => {
+        const ScaleWrap = isWide ? "div" : Fragment;
+        const scaleWrapProps = isWide ? {
+          style: {
+            width: `${100 / uiScale}%`,
+            height: `${100 / uiScale}%`,
+            transform: `scale(${uiScale})`,
+            transformOrigin: "top left",
+          },
+        } : {};
+        return (
+      <ScaleWrap {...scaleWrapProps}>
       {/* レイヤーパネル部分 — 高さを直接アニメーションし、
           ナビバーのガラスの中から「せり出してくる」ように展開する。
           広い画面(isWide)では、ドラッグで高さを変える仕組み自体を使わず、
@@ -3856,6 +3863,9 @@ function BottomDock({
       </div>
       )}
       </div>
+      </ScaleWrap>
+        );
+      })()}
       </GlassOrPlain>
         );
       })()}
