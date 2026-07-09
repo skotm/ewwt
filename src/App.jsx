@@ -3600,7 +3600,14 @@ function BottomDock({
         <div
           key={`${active}:${quakeViewMode}:${selectedQuakeId != null}`}
           ref={scrollRef}
-          style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none" }}
+          style={{
+            flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none",
+            // 文字(数字含む)の上を指でなぞった時、iOS Safariは既定だと
+            // テキスト選択ジェスチャーとして扱ってしまい、スクロールが
+            // 効かなくなることがある。中身のテキストを選択不可にして、
+            // どこを触ってもスクロールとして扱われるようにする。
+            userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none",
+          }}
         >
           <div>
             {active === "quake" ? (
