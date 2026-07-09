@@ -181,6 +181,7 @@ const Glass = forwardRef(function Glass({
       {/* 屈折・背景ブラー層: コンテンツとは完全に分離し、これだけにfilterを適用 */}
       <div
         aria-hidden
+        className="glass-backdrop-layer"
         style={{
           position: "absolute",
           inset: 0,
@@ -264,6 +265,19 @@ function GlobalStyles() {
         overflow: hidden;
       }
       button { font-family: inherit; background: none; border: none; cursor: pointer; }
+
+      /* Liquid Glassの背景は backdrop-filter の blur ありきで
+         rgba(255,255,255,0.02) というほぼ完全に透明な色にしている。
+         backdrop-filter に対応していない環境(一部のAndroid端末やPC)では、
+         ぼかしが一切効かず、ほぼ透明な色だけが残るため、パネルが
+         「完全に透けて見える」状態になってしまう。
+         backdrop-filterが使えない場合だけ、はっきり見える不透明めの
+         背景色に差し替える(!importantはこのフォールバック目的でのみ使用)。 */
+      @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-backdrop-layer {
+          background: rgba(32,32,36,0.92) !important;
+        }
+      }
 
       @keyframes pulse {
         0%,100% { opacity:1; transform:scale(1); box-shadow: 0 0 0 0 currentColor; }
