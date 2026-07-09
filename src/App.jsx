@@ -3708,6 +3708,7 @@ function BottomDock({
                         search={eqdbSearch}
                         onChangeSearch={setEqdbSearch}
                         onSearchExecuted={() => setSnapIndex(3)}
+                        scrollContainerRef={scrollRef}
                       />
                     );
                   }
@@ -4404,7 +4405,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
    通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted }) {
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef }) {
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
 
   const {
@@ -4429,9 +4430,24 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     if (justSearchedRef.current && !isSearching) {
       justSearchedRef.current = false;
       onSearchExecuted?.();
-      // パネルの高さが変わるアニメーション(0.4s)が落ち着いてからスクロールする
+      // パネルの高さが変わるアニメーション(0.4s)が落ち着いてからスクロールする。
+      // scrollIntoView()は「overflow:hiddenだが技術的にはスクロール可能な
+      // 祖先要素」まで対象にしてしまうことがあり(例えば角丸クリップ用の
+      // overflow:hidden要素)、本来スクロールさせたいスクロールコンテナ
+      // (scrollContainerRef)ではなく見えない場所を動かしてしまうことがある。
+      // そのため、対象となるスクロールコンテナに対して直接scrollTopを
+      // 計算して設定する。
       setTimeout(() => {
-        resultsAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        const container = scrollContainerRef?.current;
+        const anchor = resultsAnchorRef.current;
+        if (container && anchor) {
+          const containerRect = container.getBoundingClientRect();
+          const anchorRect = anchor.getBoundingClientRect();
+          const delta = anchorRect.top - containerRect.top;
+          container.scrollTo({ top: container.scrollTop + delta, behavior: "smooth" });
+        } else {
+          anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       }, 420);
     }
   }, [isSearching, onSearchExecuted]);
