@@ -3862,7 +3862,6 @@ function BottomDock({
         })}
       </div>
       )}
-      </div>
       </ScaleWrap>
         );
       })()}
