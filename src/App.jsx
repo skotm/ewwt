@@ -7,7 +7,7 @@ import { createPortal } from "react-dom";
    横画面スマホ・タブレット・PCなど横幅が十分ある場合は「左端の縦タブバー
    (レール) + 常に画面右側に居るパネル」に切り替える。
    ここではその判定(=isWideLayout)だけを提供する。実際のレイアウト分岐は
-   BottomDock側で行う。 
+   BottomDock側で行う。
    ───────────────────────────────────────────────────── */
 const WIDE_LAYOUT_MIN_WIDTH = 720; // これ未満は常にスマホ縦持ち相当の下部タブバーを使う
 
@@ -769,7 +769,7 @@ function MapCanvas({
       // 左のpaddingを広めに取り、パネルに隠れない範囲にズームする。
       map.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
         padding: isWide
-          ? { top: 40, bottom: 40, left: 360, right: 40 }
+          ? { top: 40, bottom: 40, left: 460, right: 40 }
           : { top: 80, bottom: 220, left: 40, right: 40 },
         maxZoom: 9,
         duration: 800,
@@ -780,7 +780,7 @@ function MapCanvas({
         center: [lon, lat], zoom: 7, duration: 800,
         // 横画面ではパネルぶん(360px)画面左側が隠れているので、
         // 見た目の中心が隠れない範囲の中央に来るようずらす。
-        offset: isWide ? [180, 0] : [0, 0],
+        offset: isWide ? [230, 0] : [0, 0],
       });
     }
   }, [hypocenters, stationPoints, status, isWide]);
@@ -3500,7 +3500,7 @@ function BottomDock({
       {(() => {
         const GlassOrPlain = isWide ? "div" : Glass;
         const glassProps = isWide
-          ? { ref: wideContentRef, style: { width: 240, height: "100%", overflow: "hidden", position: "relative" } }
+          ? { ref: wideContentRef, style: { width: "clamp(240px, 30vw, 380px)", height: "100%", overflow: "hidden", position: "relative" } }
           : {
               filterSize: settled ? "normal" : "none",
               blur: settled ? 14 : 8,
