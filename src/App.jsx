@@ -3068,14 +3068,24 @@ function BottomDock({
     // 注意: overflow(ショートハンド)を""にクリアするだけだと、個別に設定していた
     // overflowY/overflowXの値ごと消えてしまい、スクロール自体ができなくなる。
     // 必ず本来の値(overflowY: auto / overflowX: hidden)を明示的に指定し直す。
-    scrollRef.current.style.overflowY = "auto";
-    scrollRef.current.style.overflowX = "hidden";
-    if (pendingNearbyScrollRestoreRef.current) {
-      scrollRef.current.scrollTop = nearbyListScrollTopRef.current;
-      pendingNearbyScrollRestoreRef.current = false;
-    } else {
-      scrollRef.current.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
-    }
+    // さらに、hidden→autoを同じ同期フレーム内で戻すと、iOS Safariでは
+    // スクロールコンテナがそのまま反応しなくなることがある(スクロール
+    // エンジンがhiddenを一度も反映しないまま素通りしてしまうためと思われる)。
+    // 1フレーム後に戻すことで、確実にスクロール可能な状態へ復帰させる。
+    const el = scrollRef.current;
+    el.style.overflowY = "hidden";
+    el.style.overflowX = "hidden";
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.style.overflowY = "auto";
+      el.style.overflowX = "hidden";
+      if (pendingNearbyScrollRestoreRef.current) {
+        el.scrollTop = nearbyListScrollTopRef.current;
+        pendingNearbyScrollRestoreRef.current = false;
+      } else {
+        el.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
+      }
+    });
     prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
   }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor]);
 
