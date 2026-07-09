@@ -3519,12 +3519,16 @@ function BottomDock({
       {/* uiScaleが1未満の時(横画面で画面が低い場合)、中身を実際より広い
           仮想サイズでレイアウトさせてから縮小することで、外枠(Glassの箱)の
           サイズは変えずに文字・要素だけを縮めて収める。
-          縦画面(isWide===false)では、たとえscale(1)であっても transform を
-          祖先要素に付けるとiOS Safariでスクロールできなくなる不具合がある
-          ため、縦画面ではこのラッパー自体を使わない(Fragmentで素通しする)。 */}
+          uiScale===1(縦画面、または横画面でも画面が十分高い場合)では、
+          たとえscale(1)であってもtransformを祖先要素に付けると、
+          スクロール関連の挙動(iOS Safariでのタッチスクロール、
+          scrollIntoViewによる自動スクロール位置など)がおかしくなる
+          ことがあるため、実際に縮小が必要な時だけこのラッパーを使う
+          (それ以外はFragmentで素通しする)。 */}
       {(() => {
-        const ScaleWrap = isWide ? "div" : Fragment;
-        const scaleWrapProps = isWide ? {
+        const needsScale = uiScale < 1;
+        const ScaleWrap = needsScale ? "div" : Fragment;
+        const scaleWrapProps = needsScale ? {
           style: {
             width: `${100 / uiScale}%`,
             height: `${100 / uiScale}%`,
