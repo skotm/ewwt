@@ -2950,7 +2950,11 @@ function BottomDock({
   // 切り替えの直前にoverflowをhiddenにして慣性スクロールを即座に断ち切っておく
   // (新しい要素はstyle指定で改めてoverflow: autoになるので支障はない)。
   function killScrollMomentum() {
-    if (scrollRef.current) scrollRef.current.style.overflow = "hidden";
+    // overflowをhidden→autoと切り替えて慣性スクロールを断ち切る方式は、
+    // iOS Safariでボタン要素(地震一覧の各行など)がスクロールをまったく
+    // 受け付けなくなる不具合の原因になっていたため廃止した。
+    // スクロール位置の復元はuseLayoutEffect側でscrollTopを直接設定するだけで
+    // 十分実用上問題なく、慣性も自然に収まる。
   }
 
   const colorSchemeId = useContext(QuakeColorSchemeContext);
@@ -3060,32 +3064,17 @@ function BottomDock({
       prev.active === active && prev.quakeViewMode === quakeViewMode &&
       prev.selectedQuakeId != null && selectedQuakeId == null;
 
-    // killScrollMomentum()が付けたoverflow:hiddenの上書きを解除する。
-    // 以前はコンテナがDOMごと作り直される(key変更)ことで自然に消えていたが、
-    // 近傍地震選択や近傍一覧の開閉のように選択中の地震IDやタブが変わらない
-    // ケースでは作り直されないため、明示的に解除しないとスクロールできない
-    // ままになる。
-    // 注意: overflow(ショートハンド)を""にクリアするだけだと、個別に設定していた
-    // overflowY/overflowXの値ごと消えてしまい、スクロール自体ができなくなる。
-    // 必ず本来の値(overflowY: auto / overflowX: hidden)を明示的に指定し直す。
-    // さらに、hidden→autoを同じ同期フレーム内で戻すと、iOS Safariでは
-    // スクロールコンテナがそのまま反応しなくなることがある(スクロール
-    // エンジンがhiddenを一度も反映しないまま素通りしてしまうためと思われる)。
-    // 1フレーム後に戻すことで、確実にスクロール可能な状態へ復帰させる。
+    // scrollTopを直接設定するだけで、一覧⇄詳細切り替え時の位置調整は十分。
+    // 以前はここでoverflowをhidden→autoと切り替えていたが、iOS Safariで
+    // ボタン要素(地震一覧の各行)がスクロールを受け付けなくなる不具合の
+    // 原因になっていたため廃止した(killScrollMomentum側も参照)。
     const el = scrollRef.current;
-    el.style.overflowY = "hidden";
-    el.style.overflowX = "hidden";
-    requestAnimationFrame(() => {
-      if (!el) return;
-      el.style.overflowY = "auto";
-      el.style.overflowX = "hidden";
-      if (pendingNearbyScrollRestoreRef.current) {
-        el.scrollTop = nearbyListScrollTopRef.current;
-        pendingNearbyScrollRestoreRef.current = false;
-      } else {
-        el.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
-      }
-    });
+    if (pendingNearbyScrollRestoreRef.current) {
+      el.scrollTop = nearbyListScrollTopRef.current;
+      pendingNearbyScrollRestoreRef.current = false;
+    } else {
+      el.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
+    }
     prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
   }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor]);
 
