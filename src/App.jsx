@@ -4273,7 +4273,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
       try {
         const { list, errMsg } = await fetchEqdbSearch({
           startDate: EQDB_MIN_DATE, endDate: eqdbMaxEndDate(),
-          minMag: 0, maxInt: "1", sort: "S0", epi: place,
+          minMag: 0, maxInt: "1", sort: "S2", epi: place,
         });
         if (cancelled) return;
         if (errMsg) { setStatus("error"); setResults([]); return; }
