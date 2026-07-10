@@ -2599,10 +2599,9 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                   }}>
                     {style.label}
                   </span>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", flex: 1 }}>
                     震度{style.label}
                   </span>
-                  <span style={{ flex: 1, height: 2, borderRadius: 1, background: style.bg, opacity: 0.55 }}/>
                   <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
                     {groupPoints.length}件
                   </span>
@@ -2638,14 +2637,18 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                               background: style.bg,
                               boxSizing: "border-box", border: "2px solid rgba(255,255,255,0.9)",
                             }}/>
-                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 2 }}>
-                              {entry.pref}
-                            </div>
-                            {entry.addrs.map((addr, ai) => (
-                              <div key={ai} style={{ fontSize: 13, fontWeight: 600, color: "#fff", lineHeight: 1.5 }}>
-                                {addr}
+                            <div style={{ display: "flex", gap: 10 }}>
+                              <span style={{ flexShrink: 0, width: 58, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+                                {entry.pref}
+                              </span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {entry.addrs.map((addr, ai) => (
+                                  <div key={ai} style={{ fontSize: 13, fontWeight: 600, color: "#fff", lineHeight: 1.5 }}>
+                                    {addr}
+                                  </div>
+                                ))}
                               </div>
-                            ))}
+                            </div>
                           </div>
                         ))}
                       </div>
