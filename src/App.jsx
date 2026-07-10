@@ -5167,19 +5167,10 @@ function SettingsToggleRow({ label, description, checked, onChange }) {
   );
 }
 
-// 地震一覧の取得件数の設定画面。数値入力欄 + よく使う件数のプリセットチップ。
+// 地震一覧の取得件数の設定画面。スライダー(左右に動かして数値を決める) + よく使う件数のプリセットチップ。
+// 以前は数値入力欄だったが、タップした瞬間にiOS側でページ全体がズームされてしまうため、
+// テキスト入力を使わずスライダーだけで完結するようにしている。
 function QuakeFetchLimitSettings({ value, onChange }) {
-  const [text, setText] = useState(String(value));
-
-  // 外部(プリセットタップ等)から値が変わったら表示中のテキストも同期する
-  useEffect(() => { setText(String(value)); }, [value]);
-
-  function commit() {
-    const clamped = clampQuakeFetchLimit(text);
-    onChange(clamped);
-    setText(String(clamped));
-  }
-
   const presets = [50, 100, 300, 500, 1000];
 
   return (
@@ -5191,23 +5182,28 @@ function QuakeFetchLimitSettings({ value, onChange }) {
           件数が多いほど取得に時間がかかります。また、直近1週間より前の情報は取得できない仕様のため、
           地震の少ない期間は指定した件数に満たないことがあります。
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <input
-            type="number"
-            inputMode="numeric"
-            min={QUAKE_FETCH_LIMIT_MIN}
-            max={QUAKE_FETCH_LIMIT_MAX}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onBlur={commit}
-            onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }}
-            style={{
-              width: 90, fontSize: 15, fontWeight: 600, color: "#fff",
-              background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.16)",
-              borderRadius: 8, padding: "7px 10px", outline: "none",
-            }}
-          />
-          <span style={{ fontSize: 13, color: "rgba(255,255,255,0.6)" }}>件</span>
+
+        <div style={{ textAlign: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 30, fontWeight: 800, color: "#fff" }}>{value}</span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: "rgba(255,255,255,0.5)", marginLeft: 4 }}>件</span>
+        </div>
+
+        <input
+          type="range"
+          min={QUAKE_FETCH_LIMIT_MIN}
+          max={QUAKE_FETCH_LIMIT_MAX}
+          step={1}
+          value={value}
+          onChange={e => onChange(clampQuakeFetchLimit(e.target.value))}
+          style={{
+            width: "100%", height: 28,
+            accentColor: "#0A84FF",
+            touchAction: "none",
+          }}
+        />
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 2 }}>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{QUAKE_FETCH_LIMIT_MIN}</span>
+          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.35)" }}>{QUAKE_FETCH_LIMIT_MAX}</span>
         </div>
       </div>
       <SettingsCardDivider/>
