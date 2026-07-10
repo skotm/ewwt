@@ -5286,8 +5286,8 @@ function StationListDisplayModePreview({ mode }) {
   );
 
   return (
-    <div style={{ margin: "18px 2px 2px" }}>
-      <div style={{ padding: "0 12px 6px", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
+    <div style={{ margin: "18px 14px 2px" }}>
+      <div style={{ padding: "0 2px 6px", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
         プレビュー
       </div>
       <div style={{
