@@ -5270,35 +5270,139 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
 }
 
 // 震度観測点リストの表示方法(階層表示/一覧表示)の選択画面。震度配色ピッカーと同じ見た目のリスト。
+// 下にプレビュー用のサンプルデータを添えて、選んだ表示方法がどう見えるかその場で分かるようにする。
+const STATION_DISPLAY_PREVIEW_SAMPLE = [
+  { pref: "東京都",   city: "千代田区", addr: "千代田区大手町", intensityKey: "3" },
+  { pref: "神奈川県", city: "横浜市",   addr: "横浜市中区山下町", intensityKey: "3" },
+  { pref: "埼玉県",   city: "さいたま市", addr: "さいたま市浦和", intensityKey: "2" },
+  { pref: "千葉県",   city: "千葉市",   addr: "千葉市中央区", intensityKey: "1" },
+];
+
+function StationListDisplayModePreview({ mode }) {
+  const schemeId = useContext(QuakeColorSchemeContext);
+  const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
+  const sorted = [...STATION_DISPLAY_PREVIEW_SAMPLE].sort(
+    (a, b) => INTENSITY_ORDER.indexOf(b.intensityKey) - INTENSITY_ORDER.indexOf(a.intensityKey)
+  );
+
+  return (
+    <div style={{ margin: "18px 2px 2px" }}>
+      <div style={{ padding: "0 12px 6px", fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)" }}>
+        プレビュー
+      </div>
+      <div style={{
+        borderRadius: 12, overflow: "hidden",
+        background: "rgba(255,255,255,0.04)",
+        boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
+        pointerEvents: "none", // プレビューはあくまで見本。タップでの開閉はさせない
+      }}>
+        {mode === "grouped" ? (
+          (() => {
+            const map = new Map();
+            for (const p of sorted) {
+              if (!map.has(p.intensityKey)) map.set(p.intensityKey, []);
+              map.get(p.intensityKey).push(p);
+            }
+            return [...map.entries()].map(([key, groupPoints], gi) => {
+              const style = getIntensityStyleFromScheme(scheme, key);
+              const prefs = [...new Set(groupPoints.map(p => p.pref))];
+              return (
+                <div key={key}>
+                  {gi > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)" }}/>}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px" }}>
+                    <span style={{
+                      flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                      background: style.bg, color: style.fg,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 11, fontWeight: 800,
+                    }}>
+                      {style.label}
+                    </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>震度{style.label}</div>
+                      <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 3, lineHeight: 1.6 }}>
+                        {prefs.map((pref, pi) => (
+                          <span key={pref} style={{ whiteSpace: "nowrap" }}>
+                            {pref}{pi < prefs.length - 1 ? "、" : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                         stroke="rgba(255,255,255,0.3)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 6 15 12 9 18"/>
+                    </svg>
+                  </div>
+                </div>
+              );
+            });
+          })()
+        ) : (
+          sorted.map((p, i) => {
+            const style = getIntensityStyleFromScheme(scheme, p.intensityKey);
+            return (
+              <div key={`${p.pref}-${p.addr}-${i}`}>
+                {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
+                  <span style={{
+                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                    background: style.bg, color: style.fg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 800,
+                  }}>
+                    {style.label}
+                  </span>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                    {p.pref}
+                  </span>
+                  <span style={{
+                    flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}>
+                    {p.addr}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StationListDisplayModeSettings({ value, onChange }) {
   const entries = Object.entries(STATION_LIST_DISPLAY_MODES);
   return (
-    <SettingsCard>
-      {entries.map(([id, mode], i) => {
-        const selected = value === id;
-        return (
-          <div key={id}>
-            {i > 0 && <SettingsCardDivider/>}
-            <PressableButton
-              onClick={() => onChange(id)}
-              style={{
-                width: "100%", display: "flex", alignItems: "center", gap: 12,
-                padding: "11px 12px",
-                background: selected ? "rgba(255,255,255,0.07)" : "transparent",
-                border: "none", cursor: "pointer", textAlign: "left",
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>
-                {mode.label}
-              </span>
-              {selected && (
-                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
-              )}
-            </PressableButton>
-          </div>
-        );
-      })}
-    </SettingsCard>
+    <>
+      <SettingsCard>
+        {entries.map(([id, mode], i) => {
+          const selected = value === id;
+          return (
+            <div key={id}>
+              {i > 0 && <SettingsCardDivider/>}
+              <PressableButton
+                onClick={() => onChange(id)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 12,
+                  padding: "11px 12px",
+                  background: selected ? "rgba(255,255,255,0.07)" : "transparent",
+                  border: "none", cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>
+                  {mode.label}
+                </span>
+                {selected && (
+                  <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
+                )}
+              </PressableButton>
+            </div>
+          );
+        })}
+      </SettingsCard>
+      <StationListDisplayModePreview mode={value}/>
+    </>
   );
 }
 
