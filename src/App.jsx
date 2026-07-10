@@ -2547,15 +2547,22 @@ function StationPointsList({ points, displayMode = "grouped" }) {
     const groupPoints = groups.find(([k]) => k === openKey)?.[1] || [];
     const style = getIntensityStyleFromScheme(scheme, openKey);
 
-    // 都道府県ごとにまとめ直す(出現順を維持)
+    // 都道府県ごと→さらに市区町村ごとにまとめ直す(出現順を維持)。
+    // 同じ市区町村の地点は1つの見出しの下にまとめ、見出しの繰り返しを避ける。
     const byPref = [];
     const prefIndexOf = new Map();
     for (const p of groupPoints) {
       if (!prefIndexOf.has(p.pref)) {
         prefIndexOf.set(p.pref, byPref.length);
-        byPref.push({ pref: p.pref, addrs: [] });
+        byPref.push({ pref: p.pref, cities: [], cityIndexOf: new Map() });
       }
-      byPref[prefIndexOf.get(p.pref)].addrs.push({ city: p.city, addr: p.addr });
+      const prefEntry = byPref[prefIndexOf.get(p.pref)];
+      const cityKey = p.city || `__nocity_${p.addr}`; // 市区町村が無い観測点は地点名単位でそのまま1件ずつ扱う
+      if (!prefEntry.cityIndexOf.has(cityKey)) {
+        prefEntry.cityIndexOf.set(cityKey, prefEntry.cities.length);
+        prefEntry.cities.push({ city: p.city, addrs: [] });
+      }
+      prefEntry.cities[prefEntry.cityIndexOf.get(cityKey)].addrs.push(p.addr);
     }
 
     return (
@@ -2615,12 +2622,16 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                 </button>
                 {isOpen && (
                   <div style={{ padding: "0 12px 10px" }}>
-                    {entry.addrs.map((item, ai) => (
-                      <div key={ai} style={{ fontSize: 14, color: "rgba(255,255,255,0.88)", lineHeight: 1.7 }}>
-                        {item.city && (
-                          <span style={{ fontWeight: 700, color: "#fff" }}>{item.city}: </span>
+                    {entry.cities.map((c, ci) => (
+                      <div key={ci} style={{ marginTop: ci > 0 ? 8 : 0 }}>
+                        {c.city && (
+                          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 2 }}>
+                            {c.city}
+                          </div>
                         )}
-                        {item.addr}
+                        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.88)", lineHeight: 1.7 }}>
+                          {c.addrs.join(" ")}
+                        </div>
                       </div>
                     ))}
                   </div>
