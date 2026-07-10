@@ -217,6 +217,37 @@ const Glass = forwardRef(function Glass({
 });
 
 /* ─────────────────────────────────────────────────────
+   PRESSABLE BUTTON
+   ガラスデザインではないフラットなボタン(設定行・一覧行・チップなど)向けの、
+   共通のタップフィードバック。押している間だけ少し縮小+暗くなり、離すと
+   すぐ戻る。個々のボタンでpressed状態を都度書かなくて済むように、ここに
+   一箇所だけ実装して使い回す(ガラス側は既にGlass+pressedで独自の
+   "膨らむ"演出があるので対象外)。
+   ───────────────────────────────────────────────────── */
+const PressableButton = forwardRef(function PressableButton({ style, onClick, children, ...rest }, ref) {
+  const [pressed, setPressed] = useState(false);
+  return (
+    <button
+      ref={ref}
+      onClick={onClick}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      onPointerCancel={() => setPressed(false)}
+      onPointerLeave={() => setPressed(false)}
+      style={{
+        ...style,
+        opacity: pressed ? 0.55 : (style?.opacity ?? 1),
+        transform: pressed ? "scale(0.97)" : (style?.transform ?? "scale(1)"),
+        transition: "opacity 0.12s ease, transform 0.12s ease",
+      }}
+      {...rest}
+    >
+      {children}
+    </button>
+  );
+});
+
+/* ─────────────────────────────────────────────────────
    GLOBAL STYLES
    ───────────────────────────────────────────────────── */
 function GlobalStyles() {
@@ -2603,7 +2634,7 @@ function StationPointsList({ points, displayMode = "list" }) {
             return (
               <div key={entry.pref}>
                 {pi > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)" }}/>}
-                <button
+                <PressableButton
                   onClick={() => togglePref(entry.pref)}
                   style={{
                     width: "100%", display: "flex", alignItems: "center", gap: 10,
@@ -2619,7 +2650,7 @@ function StationPointsList({ points, displayMode = "list" }) {
                        style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
                     <polyline points="6 9 12 15 18 9"/>
                   </svg>
-                </button>
+                </PressableButton>
                 {isOpen && (
                   <div style={{ padding: "0 12px 10px", textAlign: "left" }}>
                     {entry.cities.map((c, ci) => (
@@ -2662,7 +2693,7 @@ function StationPointsList({ points, displayMode = "list" }) {
             return (
               <div key={key}>
                 {gi > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)" }}/>}
-                <button
+                <PressableButton
                   onClick={() => setOpenKey(key)}
                   style={{
                     width: "100%", display: "flex", alignItems: "center", gap: 10,
@@ -2695,7 +2726,7 @@ function StationPointsList({ points, displayMode = "list" }) {
                        style={{ flexShrink: 0 }}>
                     <polyline points="9 6 15 12 9 18"/>
                   </svg>
-                </button>
+                </PressableButton>
               </div>
             );
           })
@@ -2731,7 +2762,7 @@ function StationPointsList({ points, displayMode = "list" }) {
       </div>
 
       {displayMode === "list" && hasMore && (
-        <button
+        <PressableButton
           onClick={() => setExpanded(v => !v)}
           style={{
             width: "100%", textAlign: "center", padding: "8px 0",
@@ -2739,7 +2770,7 @@ function StationPointsList({ points, displayMode = "list" }) {
           }}
         >
           {expanded ? "閉じる" : `すべて表示 (${sorted.length}件)`}
-        </button>
+        </PressableButton>
       )}
 
       {unmappedCount > 0 && (
@@ -3892,7 +3923,7 @@ function BottomDock({
                         {!selected.isEqdb && <QuakeMessageCard quake={selected}/>}
                         {shouldShowNearbyQuakeButton(selected) && (
                           <div style={{ margin: "2px 14px 8px" }}>
-                            <button
+                            <PressableButton
                               type="button"
                               onClick={() => {
                                 if (scrollRef.current) scrollRef.current.scrollTop = 0;
@@ -3910,7 +3941,7 @@ function BottomDock({
                               }}
                             >
                               この震源の近傍で発生した地震
-                            </button>
+                            </PressableButton>
                           </div>
                         )}
                         {stationPoints.length > 0 && (
@@ -4263,7 +4294,7 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
   return (
     <div>
       {showDivider && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 18 }}/>}
-      <button
+      <PressableButton
         onClick={onSelect}
         style={{
           width: "100%", display: "flex", alignItems: "center", gap: 10,
@@ -4297,7 +4328,7 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
         <span className="mono" style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
           {q.isEqdb ? q.time?.slice(0, 10) : q.time?.slice(5, 16)}
         </span>
-      </button>
+      </PressableButton>
     </div>
   );
 }
@@ -4423,7 +4454,7 @@ function OptionPicker({ value, options, onChange, style }) {
 
   return (
     <div style={{ position: "relative" }}>
-      <button
+      <PressableButton
         ref={btnRef}
         type="button"
         onClick={() => (open ? setOpen(false) : computeAndOpen())}
@@ -4437,7 +4468,7 @@ function OptionPicker({ value, options, onChange, style }) {
           {selected?.label ?? value}
         </span>
         <ChevronDownIcon open={open}/>
-      </button>
+      </PressableButton>
 
       {open && menuRect && createPortal(
         <>
@@ -4457,7 +4488,7 @@ function OptionPicker({ value, options, onChange, style }) {
             }}
           >
             {options.map((o, i) => (
-              <button
+              <PressableButton
                 key={o.value}
                 type="button"
                 onClick={() => { onChange(o.value); setOpen(false); }}
@@ -4469,7 +4500,7 @@ function OptionPicker({ value, options, onChange, style }) {
                 }}
               >
                 {o.label}
-              </button>
+              </PressableButton>
             ))}
           </div>
         </>,
@@ -4578,7 +4609,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
 
       <div style={{ display: "flex", gap: 6, padding: "8px 14px 10px", flexWrap: "wrap" }}>
         {NEARBY_SORT_BUTTONS.map(b => (
-          <button
+          <PressableButton
             key={b.key}
             type="button"
             onClick={() => handleSortTap(b.key)}
@@ -4590,7 +4621,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
             }}
           >
             {b.label}{sortKey === b.key ? (sortDesc ? " ↓" : " ↑") : ""}
-          </button>
+          </PressableButton>
         ))}
       </div>
 
@@ -4773,7 +4804,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
           <OptionPicker value={sort} options={EQDB_SORT_OPTIONS} onChange={v => patch({ sort: v })}/>
         </EqdbFormField>
 
-        <button
+        <PressableButton
           onClick={handleSearch}
           disabled={isSearching}
           style={{
@@ -4787,7 +4818,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
         >
           <SearchGlassIcon size={15}/>
           <span>{isSearching ? "検索中…" : "検索"}</span>
-        </button>
+        </PressableButton>
 
         {status !== "" && (
           <div style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", textAlign: "center" }}>
@@ -5082,7 +5113,7 @@ function SettingsCardDivider() {
 // カード内の1行。右端に「>」を出して、掘り下げられることを示す。
 function SettingsMenuRow({ label, onClick }) {
   return (
-    <button
+    <PressableButton
       onClick={onClick}
       style={{
         width: "100%", display: "flex", alignItems: "center", gap: 10,
@@ -5097,7 +5128,7 @@ function SettingsMenuRow({ label, onClick }) {
            stroke="rgba(255,255,255,0.3)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="9 6 15 12 9 18"/>
       </svg>
-    </button>
+    </PressableButton>
   );
 }
 
@@ -5168,7 +5199,7 @@ function QuakeFetchLimitSettings({ value, onChange }) {
       <SettingsCardDivider/>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "12px 14px" }}>
         {presets.map(p => (
-          <button
+          <PressableButton
             key={p}
             onClick={() => onChange(p)}
             style={{
@@ -5179,7 +5210,7 @@ function QuakeFetchLimitSettings({ value, onChange }) {
             }}
           >
             {p}件
-          </button>
+          </PressableButton>
         ))}
       </div>
     </SettingsCard>
@@ -5196,7 +5227,7 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
         return (
           <div key={id}>
             {i > 0 && <SettingsCardDivider/>}
-            <button
+            <PressableButton
               onClick={() => onChangeColorScheme(id)}
               style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 12,
@@ -5220,7 +5251,7 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
               {selected && (
                 <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
               )}
-            </button>
+            </PressableButton>
           </div>
         );
       })}
@@ -5238,7 +5269,7 @@ function StationListDisplayModeSettings({ value, onChange }) {
         return (
           <div key={id}>
             {i > 0 && <SettingsCardDivider/>}
-            <button
+            <PressableButton
               onClick={() => onChange(id)}
               style={{
                 width: "100%", display: "flex", alignItems: "center", gap: 12,
@@ -5253,7 +5284,7 @@ function StationListDisplayModeSettings({ value, onChange }) {
               {selected && (
                 <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
               )}
-            </button>
+            </PressableButton>
           </div>
         );
       })}
