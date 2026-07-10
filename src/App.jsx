@@ -2637,32 +2637,33 @@ function StationPointsList({ points, displayMode = "list" }) {
                 <PressableButton
                   onClick={() => togglePref(entry.pref)}
                   style={{
-                    width: "100%", display: "flex", alignItems: "center", gap: 10,
-                    padding: "11px 12px", background: "transparent", border: "none",
-                    cursor: "pointer", textAlign: "left",
+                    width: "100%", display: "block", background: "transparent", border: "none",
+                    cursor: "pointer", textAlign: "left", padding: 0,
                   }}
                 >
-                  <span style={{ fontSize: 14, fontWeight: 700, color: "#fff", flex: 1 }}>
-                    {entry.pref}
-                  </span>
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
-                       stroke="rgba(255,255,255,0.3)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
-                       style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
-                    <polyline points="6 9 12 15 18 9"/>
-                  </svg>
-                </PressableButton>
-                {isOpen && (
-                  <div style={{ padding: "0 12px 10px", textAlign: "left" }}>
-                    {entry.cities.map((c, ci) => (
-                      <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7, textAlign: "left" }}>
-                        {c.city && (
-                          <span style={{ fontWeight: 700, color: "#fff" }}>{c.city} </span>
-                        )}
-                        <span style={{ color: "rgba(255,255,255,0.88)" }}>{c.addrs.join(" ")}</span>
-                      </div>
-                    ))}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px" }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: "#fff", flex: 1 }}>
+                      {entry.pref}
+                    </span>
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                         stroke="rgba(255,255,255,0.3)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+                         style={{ transform: isOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
                   </div>
-                )}
+                  {isOpen && (
+                    <div style={{ padding: "0 12px 10px", textAlign: "left" }}>
+                      {entry.cities.map((c, ci) => (
+                        <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7, textAlign: "left" }}>
+                          {c.city && (
+                            <span style={{ fontWeight: 700, color: "#fff" }}>{c.city} </span>
+                          )}
+                          <span style={{ color: "rgba(255,255,255,0.88)" }}>{c.addrs.join(" ")}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </PressableButton>
               </div>
             );
           })}
