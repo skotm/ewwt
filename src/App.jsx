@@ -1078,6 +1078,10 @@ const INTENSITY_LABEL = {
 // addImageでMapLibreに登録する。text-fieldを使わないため、
 // スタイルにglyphs(フォント配信)を用意しなくても数字を表示できる。
 const STATION_ICON_KEYS = ["0", "1", "2", "3", "4", "5", "5-", "5+", "6", "6-", "6+", "7", "?"];
+
+// 震度キーの弱い順(小さい順)の並び。震度リストのソート・グループ化・
+// 折りたたみ判定など、複数箇所で「震度の大小比較」が必要な場面で共通して使う。
+const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
 const STATION_ICON_BASE_RADIUS = 32; // bitmap側の半径(px)。icon-sizeで実際の大きさへスケールする。
 
 // withText=falseの場合は数字を描かない(低ズームで円が小さいときに文字が潰れるのを避けるため)。
@@ -1310,6 +1314,35 @@ function saveQuakeFetchLimit(limit) {
     localStorage.setItem(QUAKE_FETCH_LIMIT_STORAGE_KEY, String(clampQuakeFetchLimit(limit)));
   } catch (err) {
     console.warn("地震の取得件数の設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   震度観測点リスト(StationPointsList)の表示方法。
+   "grouped" = 震度階級ごとに階層表示(既定)、"list" = 従来のフラット一覧。
+   震度配色などと同様、localStorageに保存し次回起動時も覚えておく。
+   ───────────────────────────────────────────────────── */
+const STATION_LIST_DISPLAY_MODES = {
+  grouped: { label: "階層表示" },
+  list:    { label: "一覧表示" },
+};
+const STATION_LIST_DISPLAY_MODE_STORAGE_KEY = "stationListDisplayMode";
+
+function loadStoredStationListDisplayMode() {
+  try {
+    const saved = localStorage.getItem(STATION_LIST_DISPLAY_MODE_STORAGE_KEY);
+    if (saved && STATION_LIST_DISPLAY_MODES[saved]) return saved;
+  } catch (err) {
+    console.warn("震度観測点リストの表示設定を読み込めませんでした:", err);
+  }
+  return "grouped"; // 既定は階層表示
+}
+
+function saveStationListDisplayMode(mode) {
+  try {
+    localStorage.setItem(STATION_LIST_DISPLAY_MODE_STORAGE_KEY, mode);
+  } catch (err) {
+    console.warn("震度観測点リストの表示設定を保存できませんでした:", err);
   }
 }
 
@@ -2452,45 +2485,88 @@ function QuakeMessageCard({ quake }) {
 
 /* ─────────────────────────────────────────────────────
    STATION POINTS LIST — 各地の震度
-   選択中の地震について、観測点ごとの震度を大きい順に並べて表示する。
-   件数が多い地震(数百観測点になることもある)を考慮し、既定では上位のみ表示し、
-   「すべて表示」で展開できるようにする。
+   選択中の地震について、観測点ごとの震度を表示する。表示方法は設定で選べる:
+     - "list"    : 震度が大きい順にフラットな一覧で表示(従来の見た目)。
+                   件数が多い地震(数百観測点になることもある)を考慮し、
+                   既定では上位のみ表示し「すべて表示」で展開できる。
+     - "grouped" : 震度階級ごとにグループ化して階層表示(既定)。
+                   震度4以上のグループは常に展開、震度3以下は
+                   「最大震度-2」以下の階級であれば既定で折りたたむ。
+                   グループ見出しをタップすると開閉できる。
+   観測点マスタに見つからず地図に表示されていない件数(unmappedCount)は、
+   どちらの表示方法でもリスト最下部にまとめて表示する。
    ───────────────────────────────────────────────────── */
-function StationPointsList({ points }) {
-  const [expanded, setExpanded] = useState(false);
+function StationPointsList({ points, displayMode = "grouped" }) {
+  const [expanded, setExpanded] = useState(false); // 一覧表示(list)用の「すべて表示」
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set()); // 階層表示(grouped)用
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
 
   // scale(10刻みのJMAコード)が大きい順 = 震度が大きい順
   const sorted = useMemo(() => {
-    return [...points].sort((a, b) => {
-      const order = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
-      return order.indexOf(b.intensityKey) - order.indexOf(a.intensityKey);
-    });
+    return [...points].sort((a, b) => INTENSITY_ORDER.indexOf(b.intensityKey) - INTENSITY_ORDER.indexOf(a.intensityKey));
+  }, [points]);
+
+  const maxIntensityKey = sorted[0]?.intensityKey;
+
+  // 震度キーごとにグループ化する(sortedは既に震度降順なので、Mapの挿入順=震度降順のまま保たれる)
+  const groups = useMemo(() => {
+    const map = new Map();
+    for (const p of sorted) {
+      if (!map.has(p.intensityKey)) map.set(p.intensityKey, []);
+      map.get(p.intensityKey).push(p);
+    }
+    return [...map.entries()];
+  }, [sorted]);
+
+  // 震度4以上は常に展開(=折りたためない)。震度3以下は「最大震度-2」以下の階級であれば
+  // 既定で折りたたむ。それ以外(最大震度-1、最大震度)は展開した状態で開始する。
+  function isAlwaysExpanded(intensityKey) {
+    return INTENSITY_ORDER.indexOf(intensityKey) >= INTENSITY_ORDER.indexOf("4");
+  }
+  function isCollapsedByDefault(intensityKey) {
+    if (isAlwaysExpanded(intensityKey)) return false;
+    const idx = INTENSITY_ORDER.indexOf(intensityKey);
+    const maxIdx = INTENSITY_ORDER.indexOf(maxIntensityKey);
+    return idx <= maxIdx - 2;
+  }
+
+  // 選択中の地震が変わるたび(=points自体が変わるたび)、折りたたみ状態を既定値へ作り直す
+  useEffect(() => {
+    const initial = new Set();
+    for (const [key] of groups) {
+      if (isCollapsedByDefault(key)) initial.add(key);
+    }
+    setCollapsedGroups(initial);
+    // groupsはpointsから毎回作り直される新しい配列なので、依存はpointsのみにする
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
 
   if (sorted.length === 0) return null;
 
+  // 観測点マスタに見つからず、緯度経度が引けなかった(=地図上には表示されていない)観測点の数。
+  // 地図上で「無いことに気づけない」状態を防ぐため、リスト最下部に件数を明示しておく。
+  const unmappedCount = sorted.filter(p => p.latitude == null || p.longitude == null).length;
+
   const VISIBLE_COUNT = 10;
   const visible = expanded ? sorted : sorted.slice(0, VISIBLE_COUNT);
   const hasMore = sorted.length > VISIBLE_COUNT;
-  // 観測点マスタに見つからず、緯度経度が引けなかった(=地図上には表示されていない)観測点の数。
-  // 地図上で「無いことに気づけない」状態を防ぐため、ここで件数を明示しておく。
-  const unmappedCount = sorted.filter(p => p.latitude == null || p.longitude == null).length;
+
+  function toggleGroup(key) {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   return (
     <div style={{ margin: "2px 14px 8px" }}>
       <div style={{
         padding: "6px 2px",
         fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)",
-        display: "flex", alignItems: "baseline", gap: 6,
       }}>
-        <span>各地の震度</span>
-        {unmappedCount > 0 && (
-          <span style={{ fontWeight: 500, color: "rgba(255,255,255,0.35)" }}>
-            (うち{unmappedCount}件は観測点マスタに無く、地図には非表示)
-          </span>
-        )}
+        各地の震度
       </div>
 
       <div style={{
@@ -2499,36 +2575,96 @@ function StationPointsList({ points }) {
         background: "rgba(255,255,255,0.04)",
         boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
       }}>
-        {visible.map((p, i) => {
-          const style = getIntensityStyleFromScheme(scheme, p.intensityKey);
-          return (
-            <div key={`${p.pref}-${p.addr}-${i}`}>
-              {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
-                <span style={{
-                  flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
-                  background: style.bg, color: style.fg,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 11, fontWeight: 800,
-                }}>
-                  {style.label}
-                </span>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-                  {p.pref}
-                </span>
-                <span style={{
-                  flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>
-                  {p.addr}
-                </span>
+        {displayMode === "grouped" ? (
+          groups.map(([key, groupPoints], gi) => {
+            const style = getIntensityStyleFromScheme(scheme, key);
+            const collapsible = !isAlwaysExpanded(key);
+            const collapsed = collapsible && collapsedGroups.has(key);
+            return (
+              <div key={key}>
+                {gi > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)" }}/>}
+                <button
+                  onClick={collapsible ? () => toggleGroup(key) : undefined}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 12px", background: "transparent", border: "none",
+                    cursor: collapsible ? "pointer" : "default", textAlign: "left",
+                  }}
+                >
+                  <span style={{
+                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                    background: style.bg, color: style.fg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 800,
+                  }}>
+                    {style.label}
+                  </span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", flex: 1 }}>
+                    震度{style.label}
+                  </span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
+                    {groupPoints.length}件
+                  </span>
+                  {collapsible && (
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                         stroke="rgba(255,255,255,0.3)" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+                         style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.15s ease", flexShrink: 0 }}>
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  )}
+                </button>
+
+                {!collapsed && groupPoints.map((p, i) => (
+                  <div key={`${p.pref}-${p.addr}-${i}`}>
+                    <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px 7px 34px" }}>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                        {p.pref}
+                      </span>
+                      <span style={{
+                        flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
+                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                      }}>
+                        {p.addr}
+                      </span>
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        ) : (
+          visible.map((p, i) => {
+            const style = getIntensityStyleFromScheme(scheme, p.intensityKey);
+            return (
+              <div key={`${p.pref}-${p.addr}-${i}`}>
+                {i > 0 && <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
+                  <span style={{
+                    flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+                    background: style.bg, color: style.fg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 800,
+                  }}>
+                    {style.label}
+                  </span>
+                  <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
+                    {p.pref}
+                  </span>
+                  <span style={{
+                    flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}>
+                    {p.addr}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
 
-      {hasMore && (
+      {displayMode === "list" && hasMore && (
         <button
           onClick={() => setExpanded(v => !v)}
           style={{
@@ -2538,6 +2674,12 @@ function StationPointsList({ points }) {
         >
           {expanded ? "閉じる" : `すべて表示 (${sorted.length}件)`}
         </button>
+      )}
+
+      {unmappedCount > 0 && (
+        <div style={{ padding: "8px 2px 2px", fontSize: 11, fontWeight: 500, color: "rgba(255,255,255,0.35)" }}>
+          うち{unmappedCount}件は観測点マスタに無く、地図には非表示です
+        </div>
       )}
     </div>
   );
@@ -2947,6 +3089,7 @@ function BottomDock({
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
+  stationListDisplayMode, onChangeStationListDisplayMode,
   stations, searchQuake, onFoundSearchQuake,
   uiScale = 1,
 }) {
@@ -3705,7 +3848,7 @@ function BottomDock({
                           </div>
                         )}
                         {stationPoints.length > 0 && (
-                          <StationPointsList points={stationPoints}/>
+                          <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}/>
                         )}
                       </div>
                     );
@@ -3758,6 +3901,8 @@ function BottomDock({
                   onChangeAreaFillEnabled={onChangeAreaFillEnabled}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={onChangeQuakeFetchLimit}
+                  stationListDisplayMode={stationListDisplayMode}
+                  onChangeStationListDisplayMode={onChangeStationListDisplayMode}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -5017,11 +5162,45 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
   );
 }
 
+// 震度観測点リストの表示方法(階層表示/一覧表示)の選択画面。震度配色ピッカーと同じ見た目のリスト。
+function StationListDisplayModeSettings({ value, onChange }) {
+  const entries = Object.entries(STATION_LIST_DISPLAY_MODES);
+  return (
+    <SettingsCard>
+      {entries.map(([id, mode], i) => {
+        const selected = value === id;
+        return (
+          <div key={id}>
+            {i > 0 && <SettingsCardDivider/>}
+            <button
+              onClick={() => onChange(id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12,
+                padding: "11px 12px",
+                background: selected ? "rgba(255,255,255,0.07)" : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>
+                {mode.label}
+              </span>
+              {selected && (
+                <span style={{ fontSize: 13, color: "rgba(255,255,255,0.85)" }}>✓</span>
+              )}
+            </button>
+          </div>
+        );
+      })}
+    </SettingsCard>
+  );
+}
+
 function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
+  stationListDisplayMode, onChangeStationListDisplayMode,
 }) {
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
@@ -5078,6 +5257,16 @@ function SettingsBody({
     );
   }
 
+  // 各地の震度リストの表示方法(地震カテゴリの項目)の中身
+  if (category === "quake" && leaf === "stationListDisplay") {
+    return (
+      <>
+        <SettingsHeader title="各地の震度の表示方法"/>
+        <StationListDisplayModeSettings value={stationListDisplayMode} onChange={onChangeStationListDisplayMode}/>
+      </>
+    );
+  }
+
   // 取得件数(地震カテゴリの項目)の中身
   if (category === "quake" && leaf === "fetchLimit") {
     return (
@@ -5098,6 +5287,8 @@ function SettingsBody({
           <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="地図塗りつぶし" onClick={() => onNavigate([...path, "mapFill"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
         </SettingsCard>
@@ -5168,6 +5359,15 @@ export default function App() {
   function handleChangeAreaFillEnabled(next) {
     setAreaFillEnabledState(next);
     saveAreaFillEnabled(next);
+  }
+
+  // 震度観測点リスト(各地の震度)の表示方法。"grouped"(階層表示、既定) | "list"(一覧表示)。
+  // 設定タブ「地震」内から切り替え、localStorageに永続化する。
+  const [stationListDisplayMode, setStationListDisplayModeState] = useState(loadStoredStationListDisplayMode);
+
+  function handleChangeStationListDisplayMode(next) {
+    setStationListDisplayModeState(next);
+    saveStationListDisplayMode(next);
   }
 
   // 地震一覧の取得件数(1〜1000、デフォルト100)。設定タブで変更すると一覧を取り直す。
@@ -5449,6 +5649,8 @@ export default function App() {
               onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
               quakeFetchLimit={quakeFetchLimit}
               onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
+              stationListDisplayMode={stationListDisplayMode}
+              onChangeStationListDisplayMode={handleChangeStationListDisplayMode}
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
