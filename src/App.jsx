@@ -2531,6 +2531,7 @@ function StationPointsList({ points, displayMode = "list" }) {
   const [expanded, setExpanded] = useState(false); // 一覧表示(list)用の「すべて表示」
   const [openKey, setOpenKey] = useState(null); // 階層表示(grouped)用: 詳細画面を開いている震度キー
   const [openPrefs, setOpenPrefs] = useState(() => new Set()); // 詳細画面内で開いている都道府県
+  const [closePressed, setClosePressed] = useState(false); // 詳細画面の✕(ガラス)ボタンの押下状態
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
 
@@ -2603,9 +2604,21 @@ function StationPointsList({ points, displayMode = "list" }) {
             震度{style.label}の地域
           </div>
           <div style={{ position: "absolute", right: 0 }}>
-            <Glass radius={999} style={{ width: 28, height: 28 }}>
+            <Glass
+              radius={999}
+              style={{
+                width: 28, height: 28,
+                transform: closePressed ? "scale(1.16)" : "scale(1)",
+                transformOrigin: "center",
+                transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
+              }}
+            >
               <button
                 onClick={() => setOpenKey(null)}
+                onPointerDown={() => setClosePressed(true)}
+                onPointerUp={() => setClosePressed(false)}
+                onPointerCancel={() => setClosePressed(false)}
+                onPointerLeave={() => setClosePressed(false)}
                 aria-label="閉じる"
                 style={{
                   width: "100%", height: "100%",
