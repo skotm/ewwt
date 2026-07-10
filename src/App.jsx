@@ -5274,7 +5274,6 @@ function QuakeColorSchemeSettings({ colorSchemeId, onChangeColorScheme }) {
 const STATION_DISPLAY_PREVIEW_SAMPLE = [
   { pref: "東京都",   city: "千代田区", addr: "千代田区大手町", intensityKey: "3" },
   { pref: "神奈川県", city: "横浜市",   addr: "横浜市中区山下町", intensityKey: "3" },
-  { pref: "埼玉県",   city: "さいたま市", addr: "さいたま市浦和", intensityKey: "3" },
 ];
 
 function StationListDisplayModePreview({ mode }) {
