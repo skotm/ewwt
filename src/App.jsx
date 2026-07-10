@@ -1335,7 +1335,7 @@ function loadStoredStationListDisplayMode() {
   } catch (err) {
     console.warn("震度観測点リストの表示設定を読み込めませんでした:", err);
   }
-  return "grouped"; // 既定は階層表示
+  return "list"; // 既定は一覧表示
 }
 
 function saveStationListDisplayMode(mode) {
@@ -2496,7 +2496,7 @@ function QuakeMessageCard({ quake }) {
    観測点マスタに見つからず地図に表示されていない件数(unmappedCount)は、
    要約画面の最下部にまとめて表示する(詳細画面では表示しない)。
    ───────────────────────────────────────────────────── */
-function StationPointsList({ points, displayMode = "grouped" }) {
+function StationPointsList({ points, displayMode = "list" }) {
   const [expanded, setExpanded] = useState(false); // 一覧表示(list)用の「すべて表示」
   const [openKey, setOpenKey] = useState(null); // 階層表示(grouped)用: 詳細画面を開いている震度キー
   const [openPrefs, setOpenPrefs] = useState(() => new Set()); // 詳細画面内で開いている都道府県
