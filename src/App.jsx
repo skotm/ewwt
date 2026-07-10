@@ -2566,7 +2566,7 @@ function StationPointsList({ points, displayMode = "list" }) {
     }
 
     return (
-      <div style={{ margin: "2px 14px 8px" }}>
+      <div style={{ margin: "2px 14px 8px", textAlign: "left" }}>
         <div style={{ position: "relative", display: "flex", alignItems: "center", padding: "6px 2px 10px" }}>
           <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 700, color: "#fff", paddingRight: 36 }}>
             震度{style.label}の地域
@@ -2621,9 +2621,9 @@ function StationPointsList({ points, displayMode = "list" }) {
                   </svg>
                 </button>
                 {isOpen && (
-                  <div style={{ padding: "0 12px 10px" }}>
+                  <div style={{ padding: "0 12px 10px", textAlign: "left" }}>
                     {entry.cities.map((c, ci) => (
-                      <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7 }}>
+                      <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7, textAlign: "left" }}>
                         {c.city && (
                           <span style={{ fontWeight: 700, color: "#fff" }}>{c.city} </span>
                         )}
