@@ -2599,9 +2599,10 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                   }}>
                     {style.label}
                   </span>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", flex: 1 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
                     震度{style.label}
                   </span>
+                  <span style={{ flex: 1, height: 2, borderRadius: 1, background: style.bg, opacity: 0.55 }}/>
                   <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.4)" }}>
                     {groupPoints.length}件
                   </span>
@@ -2614,22 +2615,43 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                   )}
                 </button>
 
-                {!collapsed && groupPoints.map((p, i) => (
-                  <div key={`${p.pref}-${p.addr}-${i}`}>
-                    <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px 7px 34px" }}>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", flexShrink: 0 }}>
-                        {p.pref}
-                      </span>
-                      <span style={{
-                        flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: "#fff",
-                        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                      }}>
-                        {p.addr}
-                      </span>
+                {!collapsed && (() => {
+                  // 同じグループ内を都道府県ごとにまとめ直す(出現順を維持)。
+                  // 1つの都道府県に複数の地点があれば、ドットは1つのまま地点名を複数行で並べる。
+                  const byPref = [];
+                  const prefIndexOf = new Map();
+                  for (const p of groupPoints) {
+                    if (!prefIndexOf.has(p.pref)) {
+                      prefIndexOf.set(p.pref, byPref.length);
+                      byPref.push({ pref: p.pref, addrs: [] });
+                    }
+                    byPref[prefIndexOf.get(p.pref)].addrs.push(p.addr);
+                  }
+                  return (
+                    <div style={{ padding: "2px 12px 12px" }}>
+                      <div style={{ position: "relative", marginLeft: 17, paddingLeft: 18, borderLeft: `2px solid ${style.bg}` }}>
+                        {byPref.map((entry, pi) => (
+                          <div key={entry.pref} style={{ position: "relative", padding: pi === 0 ? "2px 0 10px" : "10px 0" }}>
+                            <span style={{
+                              position: "absolute", left: -25, top: 3,
+                              width: 10, height: 10, borderRadius: "50%",
+                              background: style.bg,
+                              boxSizing: "border-box", border: "2px solid rgba(255,255,255,0.9)",
+                            }}/>
+                            <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 2 }}>
+                              {entry.pref}
+                            </div>
+                            {entry.addrs.map((addr, ai) => (
+                              <div key={ai} style={{ fontSize: 13, fontWeight: 600, color: "#fff", lineHeight: 1.5 }}>
+                                {addr}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })()}
               </div>
             );
           })
