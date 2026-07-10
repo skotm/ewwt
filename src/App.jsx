@@ -1967,6 +1967,7 @@ function resolveStationPoints(points, stations) {
     return {
       pref: p.pref,
       addr: p.addr,
+      city: station?.city?.name || null,
       intensityKey: maxScaleToIntensityKey(p.scale),
       latitude: station ? parseFloat(station.lat) : null,
       longitude: station ? parseFloat(station.lon) : null,
@@ -2554,29 +2555,33 @@ function StationPointsList({ points, displayMode = "grouped" }) {
         prefIndexOf.set(p.pref, byPref.length);
         byPref.push({ pref: p.pref, addrs: [] });
       }
-      byPref[prefIndexOf.get(p.pref)].addrs.push(p.addr);
+      byPref[prefIndexOf.get(p.pref)].addrs.push({ city: p.city, addr: p.addr });
     }
 
     return (
       <div style={{ margin: "2px 14px 8px" }}>
         <div style={{ position: "relative", display: "flex", alignItems: "center", padding: "6px 2px 10px" }}>
-          <button
-            onClick={() => setOpenKey(null)}
-            aria-label="閉じる"
-            style={{
-              position: "absolute", left: 0, width: 26, height: 26, borderRadius: 13,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              background: "transparent", border: "none", cursor: "pointer",
-            }}
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-                 stroke="rgba(255,255,255,0.55)" strokeWidth="2.4" strokeLinecap="round">
-              <line x1="6" y1="6" x2="18" y2="18"/>
-              <line x1="18" y1="6" x2="6" y2="18"/>
-            </svg>
-          </button>
-          <div style={{ flex: 1, textAlign: "center", fontSize: 13, fontWeight: 700, color: "#fff" }}>
+          <div style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: 700, color: "#fff" }}>
             震度{style.label}の地域
+          </div>
+          <div style={{ position: "absolute", right: 0 }}>
+            <Glass radius={999} style={{ width: 28, height: 28 }}>
+              <button
+                onClick={() => setOpenKey(null)}
+                aria-label="閉じる"
+                style={{
+                  width: "100%", height: "100%",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "transparent", border: "none", cursor: "pointer",
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none"
+                     stroke="rgba(255,255,255,0.75)" strokeWidth="2.4" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                </svg>
+              </button>
+            </Glass>
           </div>
         </div>
 
@@ -2610,9 +2615,12 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                 </button>
                 {isOpen && (
                   <div style={{ padding: "0 12px 10px" }}>
-                    {entry.addrs.map((addr, ai) => (
-                      <div key={ai} style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", lineHeight: 1.6 }}>
-                        {addr}
+                    {entry.addrs.map((item, ai) => (
+                      <div key={ai} style={{ fontSize: 14, color: "rgba(255,255,255,0.88)", lineHeight: 1.7 }}>
+                        {item.city && (
+                          <span style={{ fontWeight: 700, color: "#fff" }}>{item.city}: </span>
+                        )}
+                        {item.addr}
                       </div>
                     ))}
                   </div>
@@ -2667,8 +2675,12 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                     <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>
                       震度{style.label}
                     </div>
-                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginTop: 2, lineHeight: 1.5 }}>
-                      {prefs.join("、")}
+                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 3, lineHeight: 1.6 }}>
+                      {prefs.map((pref, pi) => (
+                        <span key={pref} style={{ whiteSpace: "nowrap" }}>
+                          {pref}{pi < prefs.length - 1 ? "、" : ""}
+                        </span>
+                      ))}
                     </div>
                   </div>
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
@@ -5709,4 +5721,3 @@ export default function App() {
     </QuakeColorSchemeContext.Provider>
   );
 }
-
