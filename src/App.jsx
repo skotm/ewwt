@@ -2626,32 +2626,37 @@ function StationPointsList({ points, displayMode = "grouped" }) {
                     }
                     byPref[prefIndexOf.get(p.pref)].addrs.push(p.addr);
                   }
+                  const RAIL_WIDTH = 16; // ドット/縦線を乗せる列の幅。ここを基準にドットと線を同じ列内に収め、ズレが出ないようにする
                   return (
-                    <div style={{ padding: "2px 12px 12px" }}>
-                      <div style={{ position: "relative", marginLeft: 17, paddingLeft: 18, borderLeft: `2px solid ${style.bg}` }}>
-                        {byPref.map((entry, pi) => (
-                          <div key={entry.pref} style={{ position: "relative", padding: pi === 0 ? "2px 0 10px" : "10px 0" }}>
-                            <span style={{
-                              position: "absolute", left: -25, top: 3,
-                              width: 10, height: 10, borderRadius: "50%",
-                              background: style.bg,
-                              boxSizing: "border-box", border: "2px solid rgba(255,255,255,0.9)",
+                    <div style={{ padding: "0 12px 8px" }}>
+                      {byPref.map((entry, pi) => (
+                        <div key={entry.pref} style={{ display: "flex", gap: 10 }}>
+                          {/* レール列: ドットと縦線を同じ幅の列の中に収めることで、拡大表示でもズレないようにする */}
+                          <div style={{ width: RAIL_WIDTH, flexShrink: 0, position: "relative", display: "flex", justifyContent: "center" }}>
+                            {pi > 0 && (
+                              <div style={{ position: "absolute", top: 0, bottom: "50%", width: 2, background: style.bg }}/>
+                            )}
+                            {pi < byPref.length - 1 && (
+                              <div style={{ position: "absolute", top: "50%", bottom: 0, width: 2, background: style.bg }}/>
+                            )}
+                            <div style={{
+                              width: 11, height: 11, borderRadius: "50%",
+                              background: style.bg, border: "2px solid rgba(20,20,22,0.9)",
+                              marginTop: 5, flexShrink: 0, zIndex: 1,
                             }}/>
-                            <div style={{ display: "flex", gap: 10 }}>
-                              <span style={{ flexShrink: 0, width: 58, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-                                {entry.pref}
-                              </span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                {entry.addrs.map((addr, ai) => (
-                                  <div key={ai} style={{ fontSize: 13, fontWeight: 600, color: "#fff", lineHeight: 1.5 }}>
-                                    {addr}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
                           </div>
-                        ))}
-                      </div>
+                          <div style={{ flex: 1, minWidth: 0, paddingBottom: 10 }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.65)", marginBottom: 2 }}>
+                              {entry.pref}
+                            </div>
+                            {entry.addrs.map((addr, ai) => (
+                              <div key={ai} style={{ fontSize: 13, fontWeight: 600, color: "#fff", lineHeight: 1.5 }}>
+                                {addr}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   );
                 })()}
