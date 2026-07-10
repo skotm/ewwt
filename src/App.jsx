@@ -1175,7 +1175,7 @@ function registerStationIcons(map, scheme) {
 const QUAKE_COLOR_SCHEMES = {
   // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。
   legacy: {
-    label: "過去のプログラム",
+    label: "eqs viewer配色",
     colors: {
       "0":  { bg: "#8E8E93", fg: "#fff" },
       "1":  { bg: "#64D2FF", fg: "#0B0B0C" },
@@ -1216,7 +1216,7 @@ const QUAKE_COLOR_SCHEMES = {
   },
   // このアプリで震度分布の塗りつぶし・バッジに元々使っていた配色。
   fill: {
-    label: "塗りつぶし配色",
+    label: "",
     colors: {
       "0":  { bg: "#3A3A3C", fg: "#fff" },
       "1":  { bg: "#2F6690", fg: "#fff" },
@@ -1229,7 +1229,7 @@ const QUAKE_COLOR_SCHEMES = {
       "6":  { bg: "#E0342C", fg: "#fff" }, // 同上、震度6
       "6-": { bg: "#E0342C", fg: "#fff" },
       "6+": { bg: "#8A1518", fg: "#fff" },
-      "7":  { bg: "#5C0F1F", fg: "#fff" },
+      "7":  { bg: "#AF52DE", fg: "#fff" }, // 紫
       "?":  { bg: "#3A3A3C", fg: "rgba(255,255,255,0.5)" },
     },
   },
@@ -1238,7 +1238,7 @@ const QUAKE_COLOR_SCHEMES = {
 // 現在選択中の震度配色スキームID("legacy" | "jma" | "fill")を
 // アプリ全体に配るコンテキスト。地図・バッジ・凡例など離れた場所からでも
 // props バケツリレーせずに参照できるようにする。
-const QuakeColorSchemeContext = createContext("fill");
+const QuakeColorSchemeContext = createContext("legacy");
 
 // 震度配色スキームの選択はブラウザのlocalStorageに保存し、次回起動時も覚えておく。
 // (プライベートブラウジング等でlocalStorageが使えない環境でも落ちないようtry/catchで囲む)
@@ -1251,7 +1251,7 @@ function loadStoredQuakeColorScheme() {
   } catch (err) {
     console.warn("震度配色の設定を読み込めませんでした:", err);
   }
-  return "fill";
+  return "legacy";
 }
 
 function saveQuakeColorScheme(schemeId) {
