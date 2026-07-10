@@ -5733,6 +5733,8 @@ export default function App() {
                   onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
+                  stationListDisplayMode={stationListDisplayMode}
+                  onChangeStationListDisplayMode={handleChangeStationListDisplayMode}
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
