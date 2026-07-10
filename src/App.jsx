@@ -2568,7 +2568,7 @@ function StationPointsList({ points, displayMode = "list" }) {
     return (
       <div style={{ margin: "2px 14px 8px" }}>
         <div style={{ position: "relative", display: "flex", alignItems: "center", padding: "6px 2px 10px" }}>
-          <div style={{ flex: 1, textAlign: "center", fontSize: 14, fontWeight: 700, color: "#fff" }}>
+          <div style={{ flex: 1, textAlign: "left", fontSize: 14, fontWeight: 700, color: "#fff", paddingRight: 36 }}>
             震度{style.label}の地域
           </div>
           <div style={{ position: "absolute", right: 0 }}>
@@ -2623,15 +2623,11 @@ function StationPointsList({ points, displayMode = "list" }) {
                 {isOpen && (
                   <div style={{ padding: "0 12px 10px" }}>
                     {entry.cities.map((c, ci) => (
-                      <div key={ci} style={{ marginTop: ci > 0 ? 8 : 0 }}>
+                      <div key={ci} style={{ marginTop: ci > 0 ? 6 : 0, fontSize: 14, lineHeight: 1.7 }}>
                         {c.city && (
-                          <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 2 }}>
-                            {c.city}
-                          </div>
+                          <span style={{ fontWeight: 700, color: "#fff" }}>{c.city} </span>
                         )}
-                        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.88)", lineHeight: 1.7 }}>
-                          {c.addrs.join(" ")}
-                        </div>
+                        <span style={{ color: "rgba(255,255,255,0.88)" }}>{c.addrs.join(" ")}</span>
                       </div>
                     ))}
                   </div>
