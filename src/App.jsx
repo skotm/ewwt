@@ -5420,48 +5420,97 @@ function StationListDisplayModeSettings({ value, onChange }) {
 //  対応はこれで済むが、LICENSEファイル自体を public/LICENSE にも
 //  配置(またはコピー)しておく必要がある)
 function LicenseFileCard() {
-  const [state, setState] = useState({ status: "loading", text: "" });
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState({ status: "idle", text: "" });
 
-  useEffect(() => {
-    let cancelled = false;
+  function handleOpen() {
+    setOpen(true);
+    if (state.status !== "idle") return; // 一度取得できていれば再取得しない
+    setState({ status: "loading", text: "" });
     fetch(`${import.meta.env.BASE_URL}LICENSE`)
       .then(res => {
         if (!res.ok) throw new Error(`status ${res.status}`);
         return res.text();
       })
-      .then(text => { if (!cancelled) setState({ status: "ready", text }); })
+      .then(text => setState({ status: "ready", text }))
       .catch(err => {
         console.warn("LICENSEファイルを取得できませんでした:", err);
-        if (!cancelled) setState({ status: "error", text: "" });
+        setState({ status: "error", text: "" });
       });
-    return () => { cancelled = true; };
-  }, []);
+  }
 
   return (
-    <SettingsCard>
-      <div style={{ padding: "14px 14px" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>
-          MIT License
-        </div>
-        {state.status === "loading" && (
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>読み込み中…</div>
-        )}
-        {state.status === "error" && (
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
-            LICENSEファイルを読み込めませんでした。
-          </div>
-        )}
-        {state.status === "ready" && (
-          <pre style={{
-            margin: 0, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: 11, lineHeight: 1.7, color: "rgba(255,255,255,0.65)",
-            whiteSpace: "pre-wrap", wordBreak: "break-word",
+    <>
+      <SettingsCard>
+        <PressableButton
+          onClick={handleOpen}
+          style={{
+            width: "100%", textAlign: "left", padding: "12px 14px",
+            background: "transparent", border: "none", cursor: "pointer",
+            fontSize: 13, fontWeight: 600, color: "#fff",
+          }}
+        >
+          MIT License 2026 skotm
+        </PressableButton>
+      </SettingsCard>
+
+      {open && createPortal(
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+        }}>
+          <div
+            onClick={() => setOpen(false)}
+            style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.55)" }}
+          />
+          <Glass radius={18} style={{
+            position: "relative", width: "100%", maxWidth: 420, maxHeight: "70vh",
+            display: "flex", flexDirection: "column",
           }}>
-            {state.text}
-          </pre>
-        )}
-      </div>
-    </SettingsCard>
+            <div style={{ display: "flex", alignItems: "center", padding: "14px 8px 8px 16px", flexShrink: 0 }}>
+              <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: "#fff" }}>
+                MIT License 2026 skotm
+              </span>
+              <button
+                onClick={() => setOpen(false)}
+                aria-label="閉じる"
+                style={{
+                  width: 30, height: 30, borderRadius: 15, flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: "transparent", border: "none", cursor: "pointer",
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none"
+                     stroke="rgba(255,255,255,0.75)" strokeWidth="2.4" strokeLinecap="round">
+                  <line x1="6" y1="6" x2="18" y2="18"/>
+                  <line x1="18" y1="6" x2="6" y2="18"/>
+                </svg>
+              </button>
+            </div>
+            <div style={{ overflowY: "auto", padding: "0 16px 18px" }}>
+              {state.status === "loading" && (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>読み込み中…</div>
+              )}
+              {state.status === "error" && (
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+                  LICENSEファイルを読み込めませんでした。
+                </div>
+              )}
+              {state.status === "ready" && (
+                <pre style={{
+                  margin: 0, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 11, lineHeight: 1.7, color: "rgba(255,255,255,0.65)",
+                  whiteSpace: "pre-wrap", wordBreak: "break-word",
+                }}>
+                  {state.text}
+                </pre>
+              )}
+            </div>
+          </Glass>
+        </div>,
+        document.body
+      )}
+    </>
   );
 }
 
