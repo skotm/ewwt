@@ -5087,8 +5087,12 @@ const SETTINGS_MENU = [
 ];
 
 // カテゴリごとの項目一覧。地震カテゴリはSettingsBody内で専用に組み立てるため
-// ここには含めない。他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
-const SETTINGS_ITEMS = {};
+// ここには含めない。詳細設定にはライセンス表示を追加、他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
+const SETTINGS_ITEMS = {
+  advanced: [
+    { id: "license", label: "ライセンス" },
+  ],
+};
 
 // 設定画面共通のヘッダー。「地図レイヤー」のような下線区切りは使わず、
 // 太字の大きめタイトルにすることで独自の見た目にしている。
@@ -5424,6 +5428,9 @@ function SettingsBody({
             </div>
           ))}
         </SettingsCard>
+        <div style={{ padding: "10px 14px 20px", textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
+          Developed by skotm
+        </div>
       </>
     );
   }
@@ -5500,6 +5507,30 @@ function SettingsBody({
           <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // ライセンス(詳細設定カテゴリの項目)の中身
+  if (category === "advanced" && leaf === "license") {
+    return (
+      <>
+        <SettingsHeader title="ライセンス"/>
+        <SettingsCard>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
+              データ提供
+            </div>
+            気象庁 / 国土地理院 / Natural Earth / P2P地震情報(DM-D.S.S)
+          </div>
+          <SettingsCardDivider/>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
+              オープンソースソフトウェア
+            </div>
+            React
+          </div>
         </SettingsCard>
       </>
     );
