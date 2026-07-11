@@ -5843,7 +5843,7 @@ export default function App() {
       <GlobalStyles/>
       <Filters/>
 
-      <div style={{ height: "100dvh", position: "relative", overflow: "hidden", background: "#121214" }}>
+      <div style={{ height: "100%", position: "relative", overflow: "hidden", background: "#121214" }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
