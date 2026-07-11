@@ -5408,6 +5408,63 @@ function StationListDisplayModeSettings({ value, onChange }) {
   );
 }
 
+// リポジトリ直下のLICENSEファイル(MIT)を実行時に取得して、そのまま表示するカード。
+// ビルド時に埋め込むのではなく、デプロイ先で公開されている実ファイルを毎回fetchすることで、
+// LICENSEファイルの内容が変わっても表示側の修正なしに追従できるようにしている。
+// 前提: Viteの public/ ディレクトリに LICENSE ファイルが置かれていること。
+// (このプロジェクトは vite.config.ts を使っており、GitHub Pagesには
+//  skotm.github.io/ewwt/ というサブパスで公開されている。publicディレクトリの
+//  中身はビルド時にそのままそのサブパス配下にコピーされるため、リポジトリ直下に
+//  置いただけのファイルはビルド成果物に含まれず配信されない。
+//  import.meta.env.BASE_URL でサブパスを解決しているので、コード側での
+//  対応はこれで済むが、LICENSEファイル自体を public/LICENSE にも
+//  配置(またはコピー)しておく必要がある)
+function LicenseFileCard() {
+  const [state, setState] = useState({ status: "loading", text: "" });
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${import.meta.env.BASE_URL}LICENSE`)
+      .then(res => {
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        return res.text();
+      })
+      .then(text => { if (!cancelled) setState({ status: "ready", text }); })
+      .catch(err => {
+        console.warn("LICENSEファイルを取得できませんでした:", err);
+        if (!cancelled) setState({ status: "error", text: "" });
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <SettingsCard>
+      <div style={{ padding: "14px 14px" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>
+          MIT License
+        </div>
+        {state.status === "loading" && (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>読み込み中…</div>
+        )}
+        {state.status === "error" && (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+            LICENSEファイルを読み込めませんでした。
+          </div>
+        )}
+        {state.status === "ready" && (
+          <pre style={{
+            margin: 0, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 11, lineHeight: 1.7, color: "rgba(255,255,255,0.65)",
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+          }}>
+            {state.text}
+          </pre>
+        )}
+      </div>
+    </SettingsCard>
+  );
+}
+
 function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
@@ -5522,7 +5579,7 @@ function SettingsBody({
             <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
               データ提供
             </div>
-            気象庁 / 国土地理院 / Natural Earth / P2P地震情報(DM-D.S.S)
+            気象庁 / 国土地理院 / Natural Earth / P2P地震情報
           </div>
           <SettingsCardDivider/>
           <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8 }}>
@@ -5532,6 +5589,7 @@ function SettingsBody({
             React
           </div>
         </SettingsCard>
+        <LicenseFileCard/>
       </>
     );
   }
