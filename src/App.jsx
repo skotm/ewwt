@@ -5439,7 +5439,7 @@ function LicenseFileCard() {
 
   return (
     <SettingsCard>
-      <div style={{ padding: "14px 14px" }}>
+      <div style={{ padding: "14px 14px", textAlign: "left" }}>
         {state.status === "loading" && (
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>読み込み中…</div>
         )}
@@ -5452,7 +5452,7 @@ function LicenseFileCard() {
           <pre style={{
             margin: 0, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
             fontSize: 11, lineHeight: 1.7, color: "rgba(255,255,255,0.65)",
-            whiteSpace: "pre-wrap", wordBreak: "break-word",
+            whiteSpace: "pre-wrap", wordBreak: "break-word", textAlign: "left",
           }}>
             {state.text}
           </pre>
@@ -5572,14 +5572,14 @@ function SettingsBody({
       <>
         <SettingsHeader title="ライセンス"/>
         <SettingsCard>
-          <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8 }}>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8, textAlign: "left" }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
               データ提供
             </div>
             気象庁 / 国土地理院 / Natural Earth / P2P地震情報
           </div>
           <SettingsCardDivider/>
-          <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8 }}>
+          <div style={{ padding: "14px 14px", fontSize: 12, color: "rgba(255,255,255,0.55)", lineHeight: 1.8, textAlign: "left" }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 4 }}>
               オープンソースソフトウェア
             </div>
