@@ -2,6 +2,17 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, crea
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
+   APP VERSION
+   バージョン表記のルール(vMAJOR.MINOR.PATCH):
+   - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
+   - PATCHが10になったらMINOR(2つ目)を1増やし、PATCHは0に戻す
+   - MINORが10になったらMAJOR(1つ目)を1増やし、MINORは0に戻す
+   - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
+   (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
+   ───────────────────────────────────────────────────── */
+const APP_VERSION = "1.0.5";
+
+/* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
    スマホ縦持ちでは「下部タブバー + 下からドラッグして開くボトムシート」、
    横画面スマホ・タブレット・PCなど横幅が十分ある場合は「左端の縦タブバー
@@ -5489,6 +5500,8 @@ function SettingsBody({
         </SettingsCard>
         <div style={{ padding: "10px 14px 20px", textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.3)" }}>
           Developed by skotm
+          <br/>
+          v{APP_VERSION}
         </div>
       </>
     );
