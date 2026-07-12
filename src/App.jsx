@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5";
+const APP_VERSION = "1.0.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -184,168 +184,10 @@ function Filters() {
 }
 
 /* ─────────────────────────────────────────────────────
-   MAP BLUR PROVIDER (backdrop-filterを一切使わない擬似ぼかし)
-
-   Windows版Chrome/Edgeでは、WebGL地図がOSのDirectComposition経由の
-   ハードウェアオーバーレイとして描画されることがあり、その場合
-   backdrop-filterがブラウザのコンポジタから背景をサンプリングできず
-   完全に透けてしまう(既知の環境依存不具合)。これを回避するため、
-   backdrop-filterには一切頼らず、以下の2段階でぼかしを"手動で"再現する:
-
-   1) 地図全体を、著しく縮小した専用canvas(例: 1/8)へ定期的にdrawImageで
-      複写しておく(Provider)。縮小コピー自体は非常に軽い処理。
-   2) 各Glassパネル側は、自分の画面上の位置に対応する縮小canvas内の
-      ごく小さな矩形を、自分の実サイズまで引き伸ばして描画する(Layer)。
-      「著しく縮小してから拡大する」こと自体がぼかしとして機能するため、
-      CSSのfilter/backdrop-filterに一切依存しない。
-
-   base64化やImg要素は使わず、canvas→canvasのdrawImageのみで完結させて
-   いるため、画像化(toDataURL等)特有の重さは発生しない。
-   ───────────────────────────────────────────────────── */
-const MapBlurContext = createContext(null);
-
-const MAP_BLUR_DOWNSAMPLE = 9;   // 地図を1/9に縮小して保持する(小さいほど軽く、ぼけも強い)
-
-function MapBlurProvider({ map, children }) {
-  const snapshotRef = useRef({ canvas: null, mapRect: null, version: 0 });
-
-  useEffect(() => {
-    if (!map) return;
-    const snapCanvas = document.createElement("canvas");
-    const ctx = snapCanvas.getContext("2d", { alpha: false });
-
-    function measure() {
-      const container = map.getContainer();
-      const rect = container.getBoundingClientRect();
-      snapshotRef.current.mapRect = rect;
-      const w = Math.max(1, Math.round(rect.width / MAP_BLUR_DOWNSAMPLE));
-      const h = Math.max(1, Math.round(rect.height / MAP_BLUR_DOWNSAMPLE));
-      if (snapCanvas.width !== w || snapCanvas.height !== h) {
-        snapCanvas.width = w;
-        snapCanvas.height = h;
-      }
-    }
-
-    // 一定間隔でのポーリングではなく、地図が実際に描画し直された瞬間
-    // (MapLibreの"render"イベント)に直結させて複写する。ポーリング間隔
-    // による「後追い感」が出ないよう、遅延を意図的に挟まない。
-    // MapLibre自身、何か変化があった時だけ表示更新に合わせてrenderを
-    // 発火する(=常時ポーリングしているわけではない)ので、アイドル時に
-    // 無駄な処理が走ることもない。
-    function updateSnapshot() {
-      const source = map.getCanvas();
-      if (!source || !source.width || !source.height) return;
-      measure();
-      try {
-        ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, snapCanvas.width, snapCanvas.height);
-        snapshotRef.current.version++;
-      } catch { /* コンテキストロスト等は静かにスキップ、次のrenderで復帰する */ }
-    }
-
-    measure();
-    snapshotRef.current.canvas = snapCanvas;
-    updateSnapshot();
-
-    map.on("render", updateSnapshot);
-    const ro = new ResizeObserver(() => { measure(); updateSnapshot(); });
-    ro.observe(map.getContainer());
-
-    return () => {
-      map.off("render", updateSnapshot);
-      ro.disconnect();
-    };
-  }, [map]);
-
-  return (
-    <MapBlurContext.Provider value={snapshotRef}>
-      {children}
-    </MapBlurContext.Provider>
-  );
-}
-
-// Glass 1枚ごとに使う、自分の位置に対応する部分だけを縮小canvasから
-// 切り出して引き伸ばし描画するレイヤー。
-function MapBlurBackdropLayer({ panelRef, extraBlur = 0 }) {
-  const snapshotRef = useContext(MapBlurContext);
-  const canvasRef = useRef(null);
-
-  useEffect(() => {
-    if (!snapshotRef) return;
-    let rafId = null;
-    // 直前に描画した内容と同じなら再描画をスキップするための記録。
-    // (地図もパネル位置も動いていない間は、drawImage自体を省略できる)
-    let lastKey = "";
-
-    function draw() {
-      rafId = requestAnimationFrame(draw);
-      const snap = snapshotRef.current;
-      const panelEl = panelRef.current;
-      const canvas = canvasRef.current;
-      if (!snap?.canvas || !snap?.mapRect || !panelEl || !canvas) return;
-      const mapRect = snap.mapRect;
-      if (mapRect.width <= 0 || mapRect.height <= 0) return;
-      const panelRect = panelEl.getBoundingClientRect();
-      if (panelRect.width <= 0 || panelRect.height <= 0) return;
-
-      // 地図側の更新有無(version)とパネルの現在位置をまとめてキー化し、
-      // 前回と完全に同じなら描画をスキップする(遅延を出さないため
-      // 監視自体は毎フレーム行うが、実際のdrawImageは変化があった時だけ)。
-      const key = snap.version + ":" + panelRect.left + "," + panelRect.top + "," + panelRect.width + "," + panelRect.height;
-      if (key === lastKey) return;
-      lastKey = key;
-
-      const src = snap.canvas;
-      const scaleX = src.width / mapRect.width;
-      const scaleY = src.height / mapRect.height;
-      const sx = (panelRect.left - mapRect.left) * scaleX;
-      const sy = (panelRect.top - mapRect.top) * scaleY;
-      const sw = panelRect.width * scaleX;
-      const sh = panelRect.height * scaleY;
-
-      const dw = Math.max(1, Math.round(panelRect.width));
-      const dh = Math.max(1, Math.round(panelRect.height));
-      if (canvas.width !== dw || canvas.height !== dh) {
-        canvas.width = dw;
-        canvas.height = dh;
-      }
-      const ctx = canvas.getContext("2d");
-      ctx.clearRect(0, 0, dw, dh);
-      if (sw > 0 && sh > 0) {
-        ctx.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
-      }
-    }
-
-    rafId = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(rafId);
-  }, [snapshotRef, panelRef]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      aria-hidden
-      style={{
-        position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
-        borderRadius: "inherit",
-        // 縮小→拡大の粗さをほんの少しだけ和らげる程度の軽い仕上げ。
-        // backdrop-filterではなく普通のfilterを、WebGLでない通常の2D
-        // canvasにかけているだけなので、Windowsのオーバーレイ合成問題の
-        // 対象にはならない。
-        filter: extraBlur > 0 ? `blur(${extraBlur}px)` : undefined,
-        zIndex: 0,
-        pointerEvents: "none",
-      }}
-    />
-  );
-}
-
-/* ─────────────────────────────────────────────────────
    LIQUID GLASS SURFACE COMPONENT
    
-   背景:  自前の縮小canvas再拡大によるぼかし(backdrop-filter不使用)
-   面:    ごく薄い白tintのみ
+   背景:  backdrop-filter: blur のみ（色付けない）
+   面:    rgba(0,0,0,0) — 完全透明
    縁:    SVGフィルタで屈折 + CSSで細い白rim
    ───────────────────────────────────────────────────── */
 const Glass = forwardRef(function Glass({
@@ -353,25 +195,16 @@ const Glass = forwardRef(function Glass({
   radius = 20,
   style,
   filterSize = "normal",  // "normal" | "sm" | "none"
-  blur = 14,               // 縁の屈折レイヤー(backdrop-filter)のぼかし量(px)。主背景のぼかしには使わない
+  blur = 14,               // backdrop blur量(px)。アニメーション中だけ軽くしたい場合に上書きする
   ...rest
-}, forwardedRef) {
-  // filterSize="none" の場合は屈折SVGフィルタを外す
+}, ref) {
+  // filterSize="none" の場合は屈折SVGフィルタを外し、単純なbackdrop blurのみにする
   // （リサイズや角丸トランジション中など、フィルタの再計算コストが重くなる場面用の軽量モード）
   const filterId = filterSize === "none" ? null : filterSize === "sm" ? "lg-refract-sm" : "lg-refract";
 
-  // 自分の画面上の位置を測るための内部ref。外部から渡されたrefと両方に
-  // 同じDOMノードをセットする必要があるため、コールバックrefで合成する。
-  const panelRef = useRef(null);
-  const setRefs = (node) => {
-    panelRef.current = node;
-    if (typeof forwardedRef === "function") forwardedRef(node);
-    else if (forwardedRef) forwardedRef.current = node;
-  };
-
   return (
     <div
-      ref={setRefs}
+      ref={ref}
       style={{
         position: "relative",
         borderRadius: radius,
@@ -380,25 +213,30 @@ const Glass = forwardRef(function Glass({
       }}
       {...rest}
     >
-      {/* 背景ブラー層: backdrop-filterを一切使わない自前実装。
-          MapBlurProviderが用意した縮小地図canvasから、自分の位置に
-          対応する部分を切り出して拡大描画する(詳細はコンポーネント上部参照)。 */}
-      <MapBlurBackdropLayer panelRef={panelRef} extraBlur={2} />
-      {/* ごく薄い白tint。ガラス面らしい明るさを少しだけ足す */}
+      {/* 背景ブラー層: backdrop-filterのみを単独で適用する。
+          ここに filter:url(...) を同時指定すると、Windows版Chrome/Edge
+          (ANGLE/D3D11経由のレンダリングパス)ではbackdrop-filterの
+          ぼかし自体が丸ごと無効化され、rgba(255,255,255,0.02)というほぼ
+          無色の背景だけが残って「完全に透ける」表示になってしまう
+          既知の不具合があるため、意図的にfilterを外してある。 */}
       <div
         aria-hidden
+        className="glass-backdrop-layer"
         style={{
           position: "absolute",
           inset: 0,
           borderRadius: "inherit",
-          background: "rgba(255,255,255,0.06)",
+          backdropFilter: `blur(${blur}px) saturate(140%)`,
+          WebkitBackdropFilter: `blur(${blur}px) saturate(140%)`,
+          background: "rgba(255,255,255,0.02)",
           zIndex: 0,
-          pointerEvents: "none",
         }}
       />
-      {/* 縁屈折(SVG displacement)層: backdrop-filter+SVGフィルタの組み合わせで
-          縁だけ歪ませる装飾。Windows環境などでbackdrop-filterが無効化されても
-          このレイヤーが消えるだけで、上のMapBlurBackdropLayerは影響を受けない。 */}
+      {/* 縁屈折(SVG displacement)層: 上のブラー層とは別要素にすることで、
+          backdrop-filter + filter の組み合わせ不具合がここで起きても
+          このレイヤーだけが無効になり、下のブラー層は影響を受けない
+          (＝最悪の場合でも「ぼかしは効くが屈折演出だけ消える」に留まり、
+          「完全に透ける」事態は起きない、というフォールバック構造)。 */}
       {filterId && (
         <div
           aria-hidden
@@ -523,10 +361,18 @@ function GlobalStyles() {
       }
       button { font-family: inherit; background: none; border: none; cursor: pointer; }
 
-      /* 旧: backdrop-filter未対応環境向けのフォールバック。
-         Glassコンポーネントの主背景は現在backdrop-filterに依存しない
-         自前canvas実装(MapBlurBackdropLayer)に置き換えたため、この
-         フォールバックは不要になった。 */
+      /* Liquid Glassの背景は backdrop-filter の blur ありきで
+         rgba(255,255,255,0.02) というほぼ完全に透明な色にしている。
+         backdrop-filter に対応していない環境(一部のAndroid端末やPC)では、
+         ぼかしが一切効かず、ほぼ透明な色だけが残るため、パネルが
+         「完全に透けて見える」状態になってしまう。
+         backdrop-filterが使えない場合だけ、はっきり見える不透明めの
+         背景色に差し替える(!importantはこのフォールバック目的でのみ使用)。 */
+      @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-backdrop-layer {
+          background: rgba(32,32,36,0.92) !important;
+        }
+      }
 
       @keyframes pulse {
         0%,100% { opacity:1; transform:scale(1); box-shadow: 0 0 0 0 currentColor; }
@@ -553,20 +399,6 @@ function GlobalStyles() {
       .maplibregl-ctrl-bottom-left,
       .maplibregl-ctrl-bottom-right,
       .maplibregl-control-container { display: none; }
-
-      /* Windows版Chrome/Edgeでは、WebGL canvas(地図本体)がOSレベルの
-         DirectCompositionハードウェアオーバーレイとして描画されることがあり、
-         その場合ブラウザ自身のコンポジタ(=backdrop-filterがサンプリング
-         する対象)を素通りしてしまう。結果、上に重ねたLiquid Glassパネルの
-         backdrop-filterからは地図が「何も描かれていない」ことになり、
-         パネルが完全に透けて見える。
-         canvasに実質無害な(見た目を変えない)CSS filterを明示的にかけておくと、
-         ブラウザはこの要素をオーバーレイ昇格させず通常のコンポジットレイヤーとして
-         扱うようになることがあり、それによってbackdrop-filterのサンプリング対象に
-         地図が含まれるようになる、という報告のある回避策。 */
-      .maplibregl-canvas {
-        filter: brightness(1);
-      }
 
       .mono { font-variant-numeric: tabular-nums; }
 
@@ -6093,7 +5925,6 @@ export default function App() {
       <GlobalStyles/>
       <Filters/>
 
-      <MapBlurProvider map={map}>
       <div style={{ height: "100%", position: "relative", overflow: "hidden", background: "#121214" }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
@@ -6222,7 +6053,6 @@ export default function App() {
         </div>
 
       </div>
-      </MapBlurProvider>
     </QuakeColorSchemeContext.Provider>
   );
 }
