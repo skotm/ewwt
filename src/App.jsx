@@ -5902,7 +5902,7 @@ export default function App() {
           zIndex: 40,
         } : {
           position: "absolute",
-          bottom: "calc(16px + env(safe-area-inset-bottom))",
+          bottom: "calc(6px + env(safe-area-inset-bottom))",
           left: 0, right: 0,
           display: "flex", justifyContent: "center", alignItems: "flex-end",
           zIndex: 40, padding: "0 16px",
