@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5f";
+const APP_VERSION = "1.0.5";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -205,17 +205,14 @@ function Filters() {
 const MapBlurContext = createContext(null);
 
 const MAP_BLUR_DOWNSAMPLE = 9;   // 地図を1/9に縮小して保持する(小さいほど軽く、ぼけも強い)
-const MAP_BLUR_MIN_INTERVAL = 70; // 縮小canvasの更新間隔(ms)。ぼかしの下地なので15fps弱で十分
 
 function MapBlurProvider({ map, children }) {
-  const snapshotRef = useRef({ canvas: null, mapRect: null });
+  const snapshotRef = useRef({ canvas: null, mapRect: null, version: 0 });
 
   useEffect(() => {
     if (!map) return;
     const snapCanvas = document.createElement("canvas");
     const ctx = snapCanvas.getContext("2d", { alpha: false });
-    let rafId = null;
-    let lastDraw = 0;
 
     function measure() {
       const container = map.getContainer();
@@ -229,27 +226,32 @@ function MapBlurProvider({ map, children }) {
       }
     }
 
-    function tick(now) {
-      rafId = requestAnimationFrame(tick);
-      if (now - lastDraw < MAP_BLUR_MIN_INTERVAL) return;
-      lastDraw = now;
+    // 一定間隔でのポーリングではなく、地図が実際に描画し直された瞬間
+    // (MapLibreの"render"イベント)に直結させて複写する。ポーリング間隔
+    // による「後追い感」が出ないよう、遅延を意図的に挟まない。
+    // MapLibre自身、何か変化があった時だけ表示更新に合わせてrenderを
+    // 発火する(=常時ポーリングしているわけではない)ので、アイドル時に
+    // 無駄な処理が走ることもない。
+    function updateSnapshot() {
       const source = map.getCanvas();
       if (!source || !source.width || !source.height) return;
       measure();
       try {
         ctx.drawImage(source, 0, 0, source.width, source.height, 0, 0, snapCanvas.width, snapCanvas.height);
-      } catch { /* コンテキストロスト等は次フレームへ静かにスキップ */ }
+        snapshotRef.current.version++;
+      } catch { /* コンテキストロスト等は静かにスキップ、次のrenderで復帰する */ }
     }
 
     measure();
     snapshotRef.current.canvas = snapCanvas;
-    rafId = requestAnimationFrame(tick);
+    updateSnapshot();
 
-    const ro = new ResizeObserver(measure);
+    map.on("render", updateSnapshot);
+    const ro = new ResizeObserver(() => { measure(); updateSnapshot(); });
     ro.observe(map.getContainer());
 
     return () => {
-      cancelAnimationFrame(rafId);
+      map.off("render", updateSnapshot);
       ro.disconnect();
     };
   }, [map]);
@@ -270,15 +272,12 @@ function MapBlurBackdropLayer({ panelRef, extraBlur = 0 }) {
   useEffect(() => {
     if (!snapshotRef) return;
     let rafId = null;
-    let lastDraw = 0;
+    // 直前に描画した内容と同じなら再描画をスキップするための記録。
+    // (地図もパネル位置も動いていない間は、drawImage自体を省略できる)
+    let lastKey = "";
 
-    function draw(now) {
+    function draw() {
       rafId = requestAnimationFrame(draw);
-      // 上流(MapBlurProvider)の更新頻度に合わせて間引く。
-      // getBoundingClientRectはレイアウト計算を伴うため、60fpsで
-      // 毎フレーム呼ぶのは無駄が大きい。
-      if (now - lastDraw < MAP_BLUR_MIN_INTERVAL) return;
-      lastDraw = now;
       const snap = snapshotRef.current;
       const panelEl = panelRef.current;
       const canvas = canvasRef.current;
@@ -287,6 +286,13 @@ function MapBlurBackdropLayer({ panelRef, extraBlur = 0 }) {
       if (mapRect.width <= 0 || mapRect.height <= 0) return;
       const panelRect = panelEl.getBoundingClientRect();
       if (panelRect.width <= 0 || panelRect.height <= 0) return;
+
+      // 地図側の更新有無(version)とパネルの現在位置をまとめてキー化し、
+      // 前回と完全に同じなら描画をスキップする(遅延を出さないため
+      // 監視自体は毎フレーム行うが、実際のdrawImageは変化があった時だけ)。
+      const key = snap.version + ":" + panelRect.left + "," + panelRect.top + "," + panelRect.width + "," + panelRect.height;
+      if (key === lastKey) return;
+      lastKey = key;
 
       const src = snap.canvas;
       const scaleX = src.width / mapRect.width;
