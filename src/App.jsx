@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5";
+const APP_VERSION = "1.0.6";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -39,6 +39,30 @@ function useIsWideLayout() {
     };
   }, []);
   return isWide;
+}
+
+// 「ホーム画面に追加」して起動した、いわゆるスタンドアロンPWAかどうかを判定する。
+// 通常のSafari/Chromeのタブとして開いている場合はfalse。
+// スタンドアロンだとブラウザ自身のツールバーが無いためbottomのセーフエリアの
+// 余白の付け方が変わるので、下部ナビの余白調整で使い分ける(BottomDock参照)。
+function useIsStandalonePwa() {
+  const [isStandalone, setIsStandalone] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(display-mode: standalone)").matches
+      || window.navigator.standalone === true; // iOS Safariの旧来のフラグ
+  });
+  useEffect(() => {
+    const mq = window.matchMedia("(display-mode: standalone)");
+    const update = () => setIsStandalone(mq.matches || window.navigator.standalone === true);
+    update();
+    if (mq.addEventListener) mq.addEventListener("change", update);
+    else mq.addListener(update);
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", update);
+      else mq.removeListener(update);
+    };
+  }, []);
+  return isStandalone;
 }
 
 // 横画面レイアウト用のUI縮小率。PC・タブレットの横画面では画面の縦幅に
@@ -3224,6 +3248,7 @@ function BottomDock({
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
                             // 引き渡す(onHandoffToPanelDrag)ため、ハンドル自体を広げる必要はない。
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
+  const isStandalonePwa = useIsStandalonePwa(); // ホーム画面に追加したPWAとして起動しているか
   const scrollRef = useRef(null);
 
   // 一覧⇄検索の切り替えや地震の選択/選択解除など、表示中身が切り替わって
@@ -5915,7 +5940,9 @@ export default function App() {
           zIndex: 40,
         } : {
           position: "absolute",
-          bottom: "calc(env(safe-area-inset-bottom) - 10px)",
+          bottom: isStandalonePwa
+            ? "calc(env(safe-area-inset-bottom) - 10px)"
+            : "calc(env(safe-area-inset-bottom) + 10px)",
           left: 0, right: 0,
           display: "flex", justifyContent: "center", alignItems: "flex-end",
           zIndex: 40, padding: "0 16px",
