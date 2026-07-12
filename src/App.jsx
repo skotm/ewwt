@@ -255,6 +255,11 @@ function GlobalStyles() {
     <style>{`
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       html, body, #root { height: 100%; width: 100%; }
+      /* iOSのスタンドアロンPWAは、ステータスバー分(env(safe-area-inset-top))だけ
+         ドキュメント全体を上にずらして描画するが、高さ自体は増えないため、
+         その分だけ下端に隙間ができてしまう。ずらされる分だけ高さを余分に
+         確保しておくことで、この隙間を無くす。 */
+      html { min-height: calc(100% + env(safe-area-inset-top, 0px)); }
       html {
         overflow: hidden;
         background: #121214;
