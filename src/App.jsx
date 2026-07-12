@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6";
+const APP_VERSION = "1.0.5a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3248,7 +3248,6 @@ function BottomDock({
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
                             // 引き渡す(onHandoffToPanelDrag)ため、ハンドル自体を広げる必要はない。
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
-  const isStandalonePwa = useIsStandalonePwa(); // ホーム画面に追加したPWAとして起動しているか
   const scrollRef = useRef(null);
 
   // 一覧⇄検索の切り替えや地震の選択/選択解除など、表示中身が切り替わって
@@ -5685,6 +5684,7 @@ export default function App() {
   const [map,       setMap]       = useState(null);
   const isWide = useIsWideLayout(); // 横画面スマホ・タブレット・PCなどの広い画面かどうか
   const wideUIScale = useWideUIScale(isWide); // 横画面で画面が低い(=スマホ横持ち)場合の縮小率
+  const isStandalonePwa = useIsStandalonePwa(); // ホーム画面に追加したPWAとして起動しているか
 
   // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
