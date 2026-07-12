@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6a";
+const APP_VERSION = "1.0.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -230,9 +230,19 @@ function saveGlassOpaqueOverride(v) {
   try { localStorage.setItem(GLASS_OPAQUE_OVERRIDE_KEY, v); } catch {}
 }
 
-// Glassコンポーネント群が「不透明フォールバック中かどうか」を購読するためのcontext。
-// Appのトップレベルで判定結果(自動判定 or 手動オーバーライド)をProviderに渡す。
-const GlassOpaqueContext = createContext(false);
+// Glassコンポーネント群、および設定画面の「フローティング関連」トグルが
+// 共有するcontext。Appのトップレベルで判定結果(自動判定 or 手動オーバーライド)
+// と、オーバーライドを変更するための関数をまとめて配信する。
+// - opaque: 実際に不透明表示にするかどうか(Glassコンポーネントが参照)
+// - override: "auto" | "on" | "off"(ユーザーの手動選択。設定画面のトグルに対応)
+// - suspectedBroken: 自動判定の結果(ぼかしが実効しない疑いがあるか)
+// - setOverride: overrideを変更する関数
+const GlassOpaqueContext = createContext({
+  opaque: false,
+  override: "auto",
+  suspectedBroken: false,
+  setOverride: () => {},
+});
 
 /* ─────────────────────────────────────────────────────
    LIQUID GLASS SURFACE COMPONENT
@@ -253,7 +263,7 @@ const Glass = forwardRef(function Glass({
   // ぼかし層も使わず、はっきり見える不透明めの背景に切り替える。
   // 屈折フィルタは「ぼかされた背景を歪ませる」演出のため、ぼかし自体が
   // 効いていない状態でfilter:url(...)だけ生かしても視覚的な意味がない。
-  const glassOpaque = useContext(GlassOpaqueContext);
+  const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
 
   // filterSize="none" の場合は屈折SVGフィルタを外し、単純なbackdrop blurのみにする
   // （リサイズや角丸トランジション中など、フィルタの再計算コストが重くなる場面用の軽量モード）
@@ -2953,15 +2963,16 @@ function StationPointsList({ points, displayMode = "list" }) {
 /* ─────────────────────────────────────────────────────
    TOGGLE (iOS-style)
    ───────────────────────────────────────────────────── */
-function Toggle({ on, onChange }) {
+function Toggle({ on, onChange, disabled = false }) {
   return (
     <div
-      onClick={onChange}
-      role="switch" aria-checked={on}
+      onClick={disabled ? undefined : onChange}
+      role="switch" aria-checked={on} aria-disabled={disabled || undefined}
       style={{
         width: 44, height: 26, borderRadius: 13, flexShrink: 0,
         background: on ? "#32D74B" : "rgba(255,255,255,0.2)",
-        position: "relative", cursor: "pointer",
+        position: "relative", cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.5 : 1,
         transition: "background 0.22s",
         boxShadow: "inset 0 0 0 0.5px rgba(0,0,0,0.2)",
       }}
@@ -5241,7 +5252,8 @@ const SETTINGS_MENU = [
 // ここには含めない。詳細設定にはライセンス表示を追加、他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
 const SETTINGS_ITEMS = {
   advanced: [
-    { id: "license", label: "ライセンス" },
+    { id: "floating", label: "フローティング関連" },
+    { id: "license",  label: "ライセンス" },
   ],
 };
 
@@ -5303,7 +5315,7 @@ function SettingsMenuRow({ label, onClick }) {
 
 // カード内の1行(ON/OFF切り替え用)。SettingsMenuRowと同じ余白・見た目で、
 // 右端は「>」の代わりに丸いスイッチ(Toggle)を出す。
-function SettingsToggleRow({ label, description, checked, onChange }) {
+function SettingsToggleRow({ label, description, checked, onChange, disabled = false }) {
   return (
     <div style={{
       width: "100%", display: "flex", alignItems: "center", gap: 10,
@@ -5317,7 +5329,7 @@ function SettingsToggleRow({ label, description, checked, onChange }) {
           </div>
         )}
       </div>
-      <Toggle on={checked} onChange={onChange}/>
+      <Toggle on={checked} onChange={onChange} disabled={disabled}/>
     </div>
   );
 }
@@ -5620,6 +5632,14 @@ function SettingsBody({
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
 }) {
+  // 「フローティングを不透明にする」トグル用。BottomDock経由でpropsを何段も
+  // 通す代わりに、Appのトップレベルで配信しているcontextを直接購読する。
+  const {
+    opaque: glassOpaqueEnabled,
+    suspectedBroken: glassOpaqueSuspectedBroken,
+    setOverride: onChangeGlassOpaqueOverride,
+  } = useContext(GlassOpaqueContext);
+
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
     return (
@@ -5719,6 +5739,31 @@ function SettingsBody({
     );
   }
 
+  // フローティング関連(詳細設定カテゴリの項目)の中身。
+  // Liquid Glassのぼかしを使わず、常に不透明な背景にするかどうかのトグル。
+  // ぼかしが実効しない疑いがある環境(Windows ChromeでのANGLE Direct3D11絡みの
+  // 既知の不具合など)では、自動判定により常にON固定・変更不可にしている。
+  if (category === "advanced" && leaf === "floating") {
+    return (
+      <>
+        <SettingsHeader title="フローティング関連"/>
+        <SettingsCard>
+          <SettingsToggleRow
+            label="フローティングを不透明にする"
+            description={
+              glassOpaqueSuspectedBroken
+                ? "この端末・ブラウザではぼかし効果が正しく表示されない可能性があるため、自動的に不透明表示に固定されています。"
+                : "オンにすると、地図パネルなどの半透明・ぼかし表示をやめて、はっきり見える不透明な背景にします。"
+            }
+            checked={glassOpaqueEnabled}
+            onChange={() => onChangeGlassOpaqueOverride(glassOpaqueEnabled ? "off" : "on")}
+            disabled={glassOpaqueSuspectedBroken}
+          />
+        </SettingsCard>
+      </>
+    );
+  }
+
   // ライセンス(詳細設定カテゴリの項目)の中身
   if (category === "advanced" && leaf === "license" && !sub) {
     return (
@@ -5805,14 +5850,25 @@ export default function App() {
   const [suspectedBackdropFilterBroken] = useState(detectSuspectedBackdropFilterBreakage);
 
   function handleChangeGlassOpaqueOverride(next) {
+    // ぼかしが実効しない疑いがある場合、不透明のまま固定する
+    // (設定画面のトグルはdisabled表示にしているが、念のためここでも二重に防ぐ)。
+    if (suspectedBackdropFilterBroken) return;
     setGlassOpaqueOverrideState(next);
     saveGlassOpaqueOverride(next);
   }
 
   const glassOpaque =
+    suspectedBackdropFilterBroken ? true : // ぼかしが効かない疑いがある場合は常に不透明固定
     glassOpaqueOverride === "on"  ? true  :
     glassOpaqueOverride === "off" ? false :
-    suspectedBackdropFilterBroken; // "auto"
+    false; // "auto" かつ疑いがない場合はぼかしを使う
+
+  const glassOpaqueContextValue = useMemo(() => ({
+    opaque: glassOpaque,
+    override: glassOpaqueOverride,
+    suspectedBroken: suspectedBackdropFilterBroken,
+    setOverride: handleChangeGlassOpaqueOverride,
+  }), [glassOpaque, glassOpaqueOverride, suspectedBackdropFilterBroken, handleChangeGlassOpaqueOverride]);
 
   // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
@@ -6010,7 +6066,7 @@ export default function App() {
   }, [quakeFetchLimit]);
 
   return (
-    <GlassOpaqueContext.Provider value={glassOpaque}>
+    <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
     <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
       <GlobalStyles/>
       <Filters/>
