@@ -10,9 +10,9 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5a";
+const APP_VERSION = "1.0.5c";
 
-/* ─────────────────────────────────────────────────────
+/* ────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
    スマホ縦持ちでは「下部タブバー + 下からドラッグして開くボトムシート」、
    横画面スマホ・タブレット・PCなど横幅が十分ある場合は「左端の縦タブバー
@@ -213,7 +213,12 @@ const Glass = forwardRef(function Glass({
       }}
       {...rest}
     >
-      {/* 屈折・背景ブラー層: コンテンツとは完全に分離し、これだけにfilterを適用 */}
+      {/* 背景ブラー層: backdrop-filterのみを単独で適用する。
+          ここに filter:url(...) を同時指定すると、Windows版Chrome/Edge
+          (ANGLE/D3D11経由のレンダリングパス)ではbackdrop-filterの
+          ぼかし自体が丸ごと無効化され、rgba(255,255,255,0.02)というほぼ
+          無色の背景だけが残って「完全に透ける」表示になってしまう
+          既知の不具合があるため、意図的にfilterを外してある。 */}
       <div
         aria-hidden
         className="glass-backdrop-layer"
@@ -224,10 +229,29 @@ const Glass = forwardRef(function Glass({
           backdropFilter: `blur(${blur}px) saturate(140%)`,
           WebkitBackdropFilter: `blur(${blur}px) saturate(140%)`,
           background: "rgba(255,255,255,0.02)",
-          filter: filterId ? `url(#${filterId})` : undefined,
           zIndex: 0,
         }}
       />
+      {/* 縁屈折(SVG displacement)層: 上のブラー層とは別要素にすることで、
+          backdrop-filter + filter の組み合わせ不具合がここで起きても
+          このレイヤーだけが無効になり、下のブラー層は影響を受けない
+          (＝最悪の場合でも「ぼかしは効くが屈折演出だけ消える」に留まり、
+          「完全に透ける」事態は起きない、というフォールバック構造)。 */}
+      {filterId && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "inherit",
+            backdropFilter: `blur(${blur}px) saturate(140%)`,
+            WebkitBackdropFilter: `blur(${blur}px) saturate(140%)`,
+            filter: `url(#${filterId})`,
+            zIndex: 0,
+            pointerEvents: "none",
+          }}
+        />
+      )}
       {/* 縁のrim light: シャープな1pxの白線、歪みなし */}
       <div
         aria-hidden
