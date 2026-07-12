@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5g";
+const APP_VERSION = "1.0.6a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -372,6 +372,19 @@ function GlobalStyles() {
   return (
     <style>{`
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      /* PC(Windows/Mac)のChrome・Edgeでは、地震一覧などスクロール可能な
+         パネル内に、ネイティブの太い白っぽいスクロールバーがそのまま
+         出てしまい、Liquid Glassの見た目にそぐわない。スクロール自体は
+         有効なまま、バーの見た目だけ全要素で非表示にする。 */
+      *, *::before, *::after {
+        scrollbar-width: none;      /* Firefox */
+        -ms-overflow-style: none;   /* 旧Edge/IE */
+      }
+      *::-webkit-scrollbar {
+        display: none;              /* Chrome, 新Edge, Safari */
+        width: 0;
+        height: 0;
+      }
       html, body, #root { height: 100%; width: 100%; }
       /* iOSのスタンドアロンPWAは、ステータスバー分(env(safe-area-inset-top))だけ
          ドキュメント全体を上にずらして描画するが、高さ自体は増えないため、
