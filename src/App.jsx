@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6b";
+const APP_VERSION = "1.0.6c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -616,7 +616,7 @@ function loadGeoData() {
    実際の色は震度分布モードがONの間だけ、feature-state(setFeatureState)で
    区域ごとに動的に設定する。ここでは初期値(無色・透明)のレイヤーだけ用意しておく。
    ───────────────────────────────────────────────────── */
-function buildMapStyle({ world, prefectures, areas }) {
+function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.dark) {
   return {
     version: 8,
     sources: {
@@ -627,22 +627,22 @@ function buildMapStyle({ world, prefectures, areas }) {
       areas: { type: "geojson", data: areas, promoteId: "code" },
     },
     layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#121214" } },
+      { id: "bg", type: "background", paint: { "background-color": mapColors.mapBg } },
       {
         id: "world-fill", type: "fill", source: "world",
-        paint: { "fill-color": "#2c2c2e" },
+        paint: { "fill-color": mapColors.mapWorldFill },
       },
       {
         id: "world-line", type: "line", source: "world",
-        paint: { "line-color": "rgba(255,255,255,0.08)", "line-width": 0.5 },
+        paint: { "line-color": mapColors.mapWorldLine, "line-width": 0.5 },
       },
       {
         id: "prefectures-fill", type: "fill", source: "prefectures",
-        paint: { "fill-color": "#3a3a3c" },
+        paint: { "fill-color": mapColors.mapPrefFill },
       },
       {
         id: "prefectures-line", type: "line", source: "prefectures",
-        paint: { "line-color": "rgba(255,255,255,0.18)", "line-width": 0.6 },
+        paint: { "line-color": mapColors.mapPrefLine, "line-width": 0.6 },
       },
       {
         // 震度分布(細分区域ごとの塗り分け)。feature-stateが無い区域は透明のまま。
@@ -679,6 +679,13 @@ function MapCanvas({
   // 現在選択中の震度配色スキーム。観測点マーカー・震度分布の塗り分けの両方で使う。
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
+  // 地図の基本配色(海・陸・都道府県境界線)。ライト/ダークモードで切り替える。
+  const { tokens: themeTokens } = useContext(ThemeContext);
+  // マップ生成(下のuseEffect本体)は[]依存で一度きりしか走らないため、
+  // 生成時点の最新トークンをrefで参照する。切り替え時の反映は
+  // 別のuseEffectでsetPaintPropertyして行う(下方)。
+  const themeTokensRef = useRef(themeTokens);
+  themeTokensRef.current = themeTokens;
 
   useEffect(() => {
     let cancelled = false;
@@ -691,7 +698,7 @@ function MapCanvas({
         try {
           map = new maplibregl.Map({
             container: containerRef.current,
-            style: buildMapStyle(geo),
+            style: buildMapStyle(geo, themeTokensRef.current),
             center: [138.0, 38.0], // 日本全体が収まる中心付近
             zoom: 4.5,
             pitch: 0,
@@ -1113,8 +1120,21 @@ function MapCanvas({
     }
   }, [colorScheme, status]);
 
+  // ライト/ダークモードが切り替わったら、地図の基本配色(海・陸・都道府県境界線)
+  // だけを塗り替える。マップの再生成は行わない(ソースの再読み込みが走ると
+  // 一瞬地図が消えてちらつくため)。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    map.setPaintProperty("bg", "background-color", themeTokens.mapBg);
+    map.setPaintProperty("world-fill", "fill-color", themeTokens.mapWorldFill);
+    map.setPaintProperty("world-line", "line-color", themeTokens.mapWorldLine);
+    map.setPaintProperty("prefectures-fill", "fill-color", themeTokens.mapPrefFill);
+    map.setPaintProperty("prefectures-line", "line-color", themeTokens.mapPrefLine);
+  }, [themeTokens, status]);
+
   return (
-    <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#121214" }}>
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: themeTokens.mapBg }}>
       <div
         ref={containerRef}
         style={{
@@ -1452,6 +1472,12 @@ const THEME_TOKENS = {
     glassOpaqueBg: "rgba(32,32,36,0.92)",
     rimLight: "rgba(255,255,255,0.45)",
     rimHighlight: "rgba(255,255,255,0.55)",
+    // 地図の基本配色(海・陸・都道府県境界線)
+    mapBg: "#121214",         // 海
+    mapWorldFill: "#2c2c2e",  // 陸地(海外)
+    mapWorldLine: "rgba(255,255,255,0.08)",
+    mapPrefFill: "#3a3a3c",   // 都道府県(日本)
+    mapPrefLine: "rgba(255,255,255,0.18)",
   },
   light: {
     pageBg: "#eef0f3",
@@ -1465,6 +1491,12 @@ const THEME_TOKENS = {
     glassOpaqueBg: "rgba(244,245,248,0.94)",
     rimLight: "rgba(21,22,26,0.16)",
     rimHighlight: "rgba(255,255,255,0.8)",
+    // 地図の基本配色(海・陸・都道府県境界線)
+    mapBg: "#aecbe8",         // 海
+    mapWorldFill: "#e4e2dc",  // 陸地(海外)
+    mapWorldLine: "rgba(21,22,26,0.12)",
+    mapPrefFill: "#f2f0ea",   // 都道府県(日本)
+    mapPrefLine: "rgba(21,22,26,0.22)",
   },
 };
 
