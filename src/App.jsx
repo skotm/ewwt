@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5d";
+const APP_VERSION = "1.0.5g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -184,6 +184,57 @@ function Filters() {
 }
 
 /* ─────────────────────────────────────────────────────
+   BACKDROP-FILTER 実効性の疑わしさを検出する
+   
+   Windows Chromium(ANGLE Direct3D11経由)では、backdrop-filterは
+   CSS機能としては「対応」しているにもかかわらず(@supportsも通る)、
+   背後のWebGL canvas(地図)がDirectCompositionのハードウェア
+   オーバーレイに昇格し、ブラウザの通常コンポジタから見えなくなる
+   ことがある。この場合ぼかしは一切効かず、ガラスパネルの背景が
+   ほぼ完全に透けて見える(既存の @supports not(...) フォールバックは
+   「機能自体に非対応」の場合しか拾えないため、この症状は検出できない)。
+   
+   WEBGL_debug_renderer_info 拡張でGPUレンダラー文字列を取得し、
+   既知の発生条件(ANGLEのDirect3D11バックエンド)に一致するかで
+   ヒューリスティックに判定する。100%正確な判定ではないため、
+   設定側で手動オーバーライドできるようにlocalStorageに保存する
+   ("auto" | "on"(常に不透明) | "off"(常にぼかし優先))。
+   ───────────────────────────────────────────────────── */
+function detectSuspectedBackdropFilterBreakage() {
+  try {
+    const canvas = document.createElement("canvas");
+    const gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+    if (!gl) return false;
+    const ext = gl.getExtension("WEBGL_debug_renderer_info");
+    if (!ext) return false;
+    const renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || "";
+    // 例: "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)"
+    return /ANGLE/i.test(String(renderer)) && /Direct3D11/i.test(String(renderer));
+  } catch {
+    return false;
+  }
+}
+
+const GLASS_OPAQUE_OVERRIDE_KEY = "glassOpaqueFallback"; // "auto" | "on" | "off"
+
+function loadGlassOpaqueOverride() {
+  try {
+    const v = localStorage.getItem(GLASS_OPAQUE_OVERRIDE_KEY);
+    return v === "on" || v === "off" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+function saveGlassOpaqueOverride(v) {
+  try { localStorage.setItem(GLASS_OPAQUE_OVERRIDE_KEY, v); } catch {}
+}
+
+// Glassコンポーネント群が「不透明フォールバック中かどうか」を購読するためのcontext。
+// Appのトップレベルで判定結果(自動判定 or 手動オーバーライド)をProviderに渡す。
+const GlassOpaqueContext = createContext(false);
+
+/* ─────────────────────────────────────────────────────
    LIQUID GLASS SURFACE COMPONENT
    
    背景:  backdrop-filter: blur のみ（色付けない）
@@ -198,9 +249,15 @@ const Glass = forwardRef(function Glass({
   blur = 14,               // backdrop blur量(px)。アニメーション中だけ軽くしたい場合に上書きする
   ...rest
 }, ref) {
+  // backdrop-filterが実効しない(疑いがある)環境では、屈折SVGフィルタも
+  // ぼかし層も使わず、はっきり見える不透明めの背景に切り替える。
+  // 屈折フィルタは「ぼかされた背景を歪ませる」演出のため、ぼかし自体が
+  // 効いていない状態でfilter:url(...)だけ生かしても視覚的な意味がない。
+  const glassOpaque = useContext(GlassOpaqueContext);
+
   // filterSize="none" の場合は屈折SVGフィルタを外し、単純なbackdrop blurのみにする
   // （リサイズや角丸トランジション中など、フィルタの再計算コストが重くなる場面用の軽量モード）
-  const filterId = filterSize === "none" ? null : filterSize === "sm" ? "lg-refract-sm" : "lg-refract";
+  const filterId = glassOpaque ? null : (filterSize === "none" ? null : filterSize === "sm" ? "lg-refract-sm" : "lg-refract");
 
   return (
     <div
@@ -226,9 +283,11 @@ const Glass = forwardRef(function Glass({
           position: "absolute",
           inset: 0,
           borderRadius: "inherit",
-          backdropFilter: `blur(${blur}px) saturate(140%)`,
-          WebkitBackdropFilter: `blur(${blur}px) saturate(140%)`,
-          background: "rgba(255,255,255,0.02)",
+          // ぼかしが実効しない環境ではbackdrop-filter自体を外す
+          // (どうせ効かない処理をGPUにやらせ続けるコストを避ける)。
+          backdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
+          WebkitBackdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
+          background: glassOpaque ? "rgba(32,32,36,0.92)" : "rgba(255,255,255,0.02)",
           zIndex: 0,
         }}
       />
@@ -5725,6 +5784,23 @@ export default function App() {
   const wideUIScale = useWideUIScale(isWide); // 横画面で画面が低い(=スマホ横持ち)場合の縮小率
   const isStandalonePwa = useIsStandalonePwa(); // ホーム画面に追加したPWAとして起動しているか
 
+  // Liquid Glassのぼかしが実効しない(疑いがある)場合の不透明フォールバック。
+  // "auto"時はWebGLレンダラー文字列からのヒューリスティック判定に従い、
+  // 手動で "on"(常に不透明)/"off"(常にぼかし優先)にも上書きできる
+  // (設定タブなどから handleChangeGlassOpaqueOverride を呼んで切り替える)。
+  const [glassOpaqueOverride, setGlassOpaqueOverrideState] = useState(loadGlassOpaqueOverride);
+  const [suspectedBackdropFilterBroken] = useState(detectSuspectedBackdropFilterBreakage);
+
+  function handleChangeGlassOpaqueOverride(next) {
+    setGlassOpaqueOverrideState(next);
+    saveGlassOpaqueOverride(next);
+  }
+
+  const glassOpaque =
+    glassOpaqueOverride === "on"  ? true  :
+    glassOpaqueOverride === "off" ? false :
+    suspectedBackdropFilterBroken; // "auto"
+
   // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
   const [quakeColorScheme, setQuakeColorScheme] = useState(loadStoredQuakeColorScheme); // "legacy" | "jma" | "fill"
@@ -5921,6 +5997,7 @@ export default function App() {
   }, [quakeFetchLimit]);
 
   return (
+    <GlassOpaqueContext.Provider value={glassOpaque}>
     <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
       <GlobalStyles/>
       <Filters/>
@@ -6054,5 +6131,6 @@ export default function App() {
 
       </div>
     </QuakeColorSchemeContext.Provider>
+    </GlassOpaqueContext.Provider>
   );
 }
