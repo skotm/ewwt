@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6d";
+const APP_VERSION = "1.0.6e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1477,6 +1477,10 @@ const THEME_TOKENS = {
     glassOpaqueBg: "rgba(32,32,36,0.92)",
     rimLight: "rgba(255,255,255,0.45)",
     rimHighlight: "rgba(255,255,255,0.55)",
+    // ナビ行(SideNavRail/BottomDockの下部タブ)の選択中ピル。
+    // ダークはこれまで通りガラスの縁取り(rim)入りの見た目を維持する。
+    navPillBg: "rgba(255,255,255,0.13)",
+    navPillShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.45), inset 0 1px 0 rgba(255,255,255,0.55)",
     // 文字・線用のRGBチャンネル値(不透明度だけ変えたrgba(${tokens.ink},X)の形で
     // 各所から使う。ダークは白、ライトはほぼ黒)。
     ink: "255,255,255",
@@ -1495,10 +1499,14 @@ const THEME_TOKENS = {
     cardBg: "rgba(21,22,26,0.045)",
     cardBorder: "rgba(21,22,26,0.10)",
     divider: "rgba(21,22,26,0.10)",
-    glassTint: "rgba(255,255,255,0.35)",
+    glassTint: "rgba(255,255,255,0.55)",
     glassOpaqueBg: "rgba(244,245,248,0.94)",
     rimLight: "rgba(21,22,26,0.16)",
     rimHighlight: "rgba(255,255,255,0.8)",
+    // ナビ行の選択中ピル。参考画像のような、縁取りのないフラットな
+    // 淡いグレーのピルにする(ダークのようなガラスの縁取りは入れない)。
+    navPillBg: "rgba(21,22,26,0.07)",
+    navPillShadow: "none",
     ink: "21,22,26",
     // 地図の基本配色(海・陸・都道府県境界線)
     mapBg: "#aecbe8",         // 海
@@ -3307,8 +3315,8 @@ function SideNavRail({ active, onNav, uiScale = 1 }) {
                 top: `calc(${RAIL_PAD_Y}px + (100% - ${RAIL_PAD_Y * 2}px) * ${highlightTop / 100})`,
                 height: `calc((100% - ${RAIL_PAD_Y * 2}px) * ${tabH / 100})`,
                 borderRadius: 999,
-                background: `rgba(${tokens.ink},0.13)`,
-                boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.45), inset 0 1px 0 rgba(${tokens.ink},0.55)`,
+                background: tokens.navPillBg,
+                boxShadow: tokens.navPillShadow,
                 transform: pressed ? "scale(1.08)" : "scale(1)",
                 transformOrigin: "center",
                 transition: dragging
@@ -4379,8 +4387,8 @@ function BottomDock({
             left: `calc(${NAV_PAD_X}px + (100% - ${NAV_PAD_X * 2}px) * ${highlightLeft / 100})`,
             width: `calc((100% - ${NAV_PAD_X * 2}px) * ${tabW / 100})`,
             borderRadius: 999,
-            background: `rgba(${tokens.ink},0.13)`,
-            boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.45), inset 0 1px 0 rgba(${tokens.ink},0.55)`,
+            background: tokens.navPillBg,
+            boxShadow: tokens.navPillShadow,
             // 押している間はわずかに拡大し、Apple Liquid Glass特有の
             // "押し込むとガラスが少し膨らむ" 触覚的な質感を再現する。
             transform: navPressed ? "scale(1.16)" : "scale(1)",
