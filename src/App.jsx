@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6b";
+const APP_VERSION = "1.0.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -264,6 +264,7 @@ const Glass = forwardRef(function Glass({
   // 屈折フィルタは「ぼかされた背景を歪ませる」演出のため、ぼかし自体が
   // 効いていない状態でfilter:url(...)だけ生かしても視覚的な意味がない。
   const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
+  const { tokens } = useContext(ThemeContext);
 
   // filterSize="none" の場合は屈折SVGフィルタを外し、単純なbackdrop blurのみにする
   // （リサイズや角丸トランジション中など、フィルタの再計算コストが重くなる場面用の軽量モード）
@@ -297,7 +298,7 @@ const Glass = forwardRef(function Glass({
           // (どうせ効かない処理をGPUにやらせ続けるコストを避ける)。
           backdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
           WebkitBackdropFilter: glassOpaque ? "none" : `blur(${blur}px) saturate(140%)`,
-          background: glassOpaque ? "rgba(32,32,36,0.92)" : "rgba(255,255,255,0.02)",
+          background: glassOpaque ? tokens.glassOpaqueBg : tokens.glassTint,
           zIndex: 0,
         }}
       />
@@ -329,8 +330,8 @@ const Glass = forwardRef(function Glass({
           inset: 0,
           borderRadius: "inherit",
           boxShadow: `
-            inset 0 0 0 0.75px rgba(255,255,255,0.45),
-            inset 0 1px 0 rgba(255,255,255,0.55)
+            inset 0 0 0 0.75px ${tokens.rimLight},
+            inset 0 1px 0 ${tokens.rimHighlight}
           `,
           pointerEvents: "none",
           zIndex: 1,
@@ -378,9 +379,14 @@ const PressableButton = forwardRef(function PressableButton({ style, onClick, ch
 /* ─────────────────────────────────────────────────────
    GLOBAL STYLES
    ───────────────────────────────────────────────────── */
-function GlobalStyles() {
+function GlobalStyles({ tokens = THEME_TOKENS.dark }) {
   return (
     <style>{`
+      :root {
+        --page-bg: ${tokens.pageBg};
+        --text: ${tokens.text};
+        --glass-opaque-bg: ${tokens.glassOpaqueBg};
+      }
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       /* PC(Windows/Mac)のChrome・Edgeでは、地震一覧などスクロール可能な
          パネル内に、ネイティブの太い白っぽいスクロールバーがそのまま
@@ -403,7 +409,7 @@ function GlobalStyles() {
       html { min-height: calc(100% + env(safe-area-inset-top, 0px)); }
       html {
         overflow: hidden;
-        background: #121214;
+        background: var(--page-bg);
       }
       body {
         /*
@@ -416,7 +422,7 @@ function GlobalStyles() {
         */
         position: fixed;
         inset: 0;
-        background: #121214;
+        background: var(--page-bg);
         font-family: -apple-system, BlinkMacSystemFont,
                      "SF Pro Display", "Helvetica Neue",
                      "Noto Sans JP", sans-serif;
@@ -424,7 +430,7 @@ function GlobalStyles() {
         overflow: hidden;
         overscroll-behavior: none;
         touch-action: none;
-        color: #fff;
+        color: var(--text);
       }
       /* アプリ全体をネイティブアプリのUIのように扱うため、長押しでの
          テキスト選択・コピー/調べる/翻訳メニュー(iOSのcallout)を無効化する。
@@ -452,7 +458,7 @@ function GlobalStyles() {
          背景色に差し替える(!importantはこのフォールバック目的でのみ使用)。 */
       @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
         .glass-backdrop-layer {
-          background: rgba(32,32,36,0.92) !important;
+          background: var(--glass-opaque-bg) !important;
         }
       }
 
@@ -1422,6 +1428,75 @@ function saveQuakeColorScheme(schemeId) {
     console.warn("震度配色の設定を保存できませんでした:", err);
   }
 }
+
+/* ─────────────────────────────────────────────────────
+   ライト/ダークモード
+   
+   アプリ全体はもともとダーク基調(#121214背景+白文字)で作られているため、
+   ライトモードは「別の配色を丸ごと用意し、UIのベースとなる色をcontext経由で
+   出し分ける」形で追加する。地図の基本配色(海・陸のタイル色)や、震度色
+   バッジのような意味を持つ色(震度配色スキームなど)まではこの対応範囲に
+   含めない(それらは別途テーマ対応が必要)。まずは背景・カード・文字色
+   など、UIチューム全体に効いてくる基礎トークンをテーマ切り替え対象にする。
+   ───────────────────────────────────────────────────── */
+const THEME_TOKENS = {
+  dark: {
+    pageBg: "#121214",
+    text: "#ffffff",
+    textSecondary: "rgba(255,255,255,0.55)",
+    textTertiary: "rgba(255,255,255,0.35)",
+    cardBg: "rgba(255,255,255,0.04)",
+    cardBorder: "rgba(255,255,255,0.08)",
+    divider: "rgba(255,255,255,0.08)",
+    glassTint: "rgba(255,255,255,0.02)",
+    glassOpaqueBg: "rgba(32,32,36,0.92)",
+    rimLight: "rgba(255,255,255,0.45)",
+    rimHighlight: "rgba(255,255,255,0.55)",
+  },
+  light: {
+    pageBg: "#eef0f3",
+    text: "#15161a",
+    textSecondary: "rgba(21,22,26,0.6)",
+    textTertiary: "rgba(21,22,26,0.4)",
+    cardBg: "rgba(21,22,26,0.045)",
+    cardBorder: "rgba(21,22,26,0.10)",
+    divider: "rgba(21,22,26,0.10)",
+    glassTint: "rgba(255,255,255,0.35)",
+    glassOpaqueBg: "rgba(244,245,248,0.94)",
+    rimLight: "rgba(21,22,26,0.16)",
+    rimHighlight: "rgba(255,255,255,0.8)",
+  },
+};
+
+// UIのベースになる配色トークンを、モード("dark"|"light")込みでアプリ全体に配るcontext。
+// { mode, tokens, setMode } の形。tokensはTHEME_TOKENS[mode]そのもの。
+const ThemeContext = createContext({
+  mode: "dark",
+  tokens: THEME_TOKENS.dark,
+  setMode: () => {},
+});
+
+// テーマの選択はlocalStorageに保存し、次回起動時も覚えておく。初期設定はダーク。
+const THEME_MODE_STORAGE_KEY = "themeMode";
+
+function loadStoredThemeMode() {
+  try {
+    const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
+    if (saved === "light" || saved === "dark") return saved;
+  } catch (err) {
+    console.warn("テーマ設定を読み込めませんでした:", err);
+  }
+  return "dark";
+}
+
+function saveThemeMode(mode) {
+  try {
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
+  } catch (err) {
+    console.warn("テーマ設定を保存できませんでした:", err);
+  }
+}
+
 
 /* ─────────────────────────────────────────────────────
    推計震度分布(気象庁 estimated_intensity_map)の表示ON/OFF設定。
@@ -5252,8 +5327,9 @@ const SETTINGS_MENU = [
 // ここには含めない。詳細設定にはライセンス表示を追加、他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
 const SETTINGS_ITEMS = {
   advanced: [
-    { id: "floating", label: "フローティング関連" },
-    { id: "license",  label: "ライセンス" },
+    { id: "appearance", label: "外観" },
+    { id: "floating",   label: "フローティング関連" },
+    { id: "license",    label: "ライセンス" },
   ],
 };
 
@@ -5262,9 +5338,10 @@ const SETTINGS_ITEMS = {
 // 戻る操作は地震タブと同じ丸いフローティングボタン(BackToListButton)に
 // 統一したので、ヘッダー自体には戻るボタンを持たせていない。
 function SettingsHeader({ title }) {
+  const { tokens } = useContext(ThemeContext);
   return (
     <div style={{ padding: "12px 14px 6px" }}>
-      <span style={{ fontSize: 16, fontWeight: 700, color: "#fff" }}>
+      <span style={{ fontSize: 16, fontWeight: 700, color: tokens.text }}>
         {title}
       </span>
     </div>
@@ -5273,13 +5350,14 @@ function SettingsHeader({ title }) {
 
 // カテゴリ/項目一覧を包む角丸のグループ化カード。震度配色ピッカーと同じ見た目の箱。
 function SettingsCard({ children }) {
+  const { tokens } = useContext(ThemeContext);
   return (
     <div style={{ margin: "6px 14px 8px" }}>
       <div style={{
         borderRadius: 12,
         overflow: "hidden",
-        background: "rgba(255,255,255,0.04)",
-        boxShadow: "inset 0 0 0 0.5px rgba(255,255,255,0.08)",
+        background: tokens.cardBg,
+        boxShadow: `inset 0 0 0 0.5px ${tokens.cardBorder}`,
       }}>
         {children}
       </div>
@@ -5288,11 +5366,13 @@ function SettingsCard({ children }) {
 }
 
 function SettingsCardDivider() {
-  return <div style={{ height: 0.5, background: "rgba(255,255,255,0.08)", marginLeft: 12 }}/>;
+  const { tokens } = useContext(ThemeContext);
+  return <div style={{ height: 0.5, background: tokens.divider, marginLeft: 12 }}/>;
 }
 
 // カード内の1行。右端に「>」を出して、掘り下げられることを示す。
 function SettingsMenuRow({ label, onClick }) {
+  const { tokens } = useContext(ThemeContext);
   return (
     <PressableButton
       onClick={onClick}
@@ -5302,11 +5382,11 @@ function SettingsMenuRow({ label, onClick }) {
         cursor: "pointer", textAlign: "left",
       }}
     >
-      <span style={{ fontSize: 14, fontWeight: 600, color: "#fff", flex: 1 }}>
+      <span style={{ fontSize: 14, fontWeight: 600, color: tokens.text, flex: 1 }}>
         {label}
       </span>
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-           stroke="rgba(255,255,255,0.3)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+           stroke={tokens.textTertiary} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <polyline points="9 6 15 12 9 18"/>
       </svg>
     </PressableButton>
@@ -5316,15 +5396,16 @@ function SettingsMenuRow({ label, onClick }) {
 // カード内の1行(ON/OFF切り替え用)。SettingsMenuRowと同じ余白・見た目で、
 // 右端は「>」の代わりに丸いスイッチ(Toggle)を出す。
 function SettingsToggleRow({ label, description, checked, onChange, disabled = false }) {
+  const { tokens } = useContext(ThemeContext);
   return (
     <div style={{
       width: "100%", display: "flex", alignItems: "center", gap: 10,
       padding: "12px 14px",
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{label}</div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: tokens.text }}>{label}</div>
         {description && (
-          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", marginTop: 3, lineHeight: 1.4 }}>
+          <div style={{ fontSize: 11, color: tokens.textSecondary, marginTop: 3, lineHeight: 1.4 }}>
             {description}
           </div>
         )}
@@ -5640,6 +5721,9 @@ function SettingsBody({
     setOverride: onChangeGlassOpaqueOverride,
   } = useContext(GlassOpaqueContext);
 
+  // ライト/ダークモード切り替え用。同じくcontext経由で直接購読する。
+  const { mode: themeMode, setMode: onChangeThemeMode } = useContext(ThemeContext);
+
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
     return (
@@ -5734,6 +5818,26 @@ function SettingsBody({
           <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="取得件数" onClick={() => onNavigate([...path, "fetchLimit"])}/>
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // 外観(詳細設定カテゴリの項目)の中身。ライトモード/ダークモードの切り替え。
+  // 初期設定はダーク。ここではUIチューム(背景・カード・文字色など)の
+  // 基礎トークンだけを切り替えており、地図の基本配色や震度配色スキームは
+  // 対象外(別途テーマ対応が必要)。
+  if (category === "advanced" && leaf === "appearance") {
+    return (
+      <>
+        <SettingsHeader title="外観"/>
+        <SettingsCard>
+          <SettingsToggleRow
+            label="ライトモード"
+            description="オフのときはダークモード(初期設定)です。"
+            checked={themeMode === "light"}
+            onChange={() => onChangeThemeMode(themeMode === "light" ? "dark" : "light")}
+          />
         </SettingsCard>
       </>
     );
@@ -5869,6 +5973,21 @@ export default function App() {
     suspectedBroken: suspectedBackdropFilterBroken,
     setOverride: handleChangeGlassOpaqueOverride,
   }), [glassOpaque, glassOpaqueOverride, suspectedBackdropFilterBroken, handleChangeGlassOpaqueOverride]);
+
+  // ライト/ダークモード。設定タブの「詳細設定」→「外観」から切り替える。
+  // 初期設定はダーク。選択はlocalStorageに保存し、次回起動時も復元する。
+  const [themeMode, setThemeModeState] = useState(loadStoredThemeMode); // "dark" | "light"
+
+  function handleChangeThemeMode(next) {
+    setThemeModeState(next);
+    saveThemeMode(next);
+  }
+
+  const themeContextValue = useMemo(() => ({
+    mode: themeMode,
+    tokens: THEME_TOKENS[themeMode],
+    setMode: handleChangeThemeMode,
+  }), [themeMode]);
 
   // 震度配色。設定タブの「地震」→「震度配色」から切り替える。
   // 選択したスキームはlocalStorageに保存し、次回起動時も復元する。
@@ -6066,12 +6185,13 @@ export default function App() {
   }, [quakeFetchLimit]);
 
   return (
+    <ThemeContext.Provider value={themeContextValue}>
     <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
     <QuakeColorSchemeContext.Provider value={quakeColorScheme}>
-      <GlobalStyles/>
+      <GlobalStyles tokens={themeContextValue.tokens}/>
       <Filters/>
 
-      <div style={{ height: "100%", position: "relative", overflow: "hidden", background: "#121214" }}>
+      <div style={{ height: "100%", position: "relative", overflow: "hidden", background: themeContextValue.tokens.pageBg }}>
 
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
@@ -6201,5 +6321,6 @@ export default function App() {
       </div>
     </QuakeColorSchemeContext.Provider>
     </GlassOpaqueContext.Provider>
+    </ThemeContext.Provider>
   );
 }
