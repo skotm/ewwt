@@ -10,9 +10,9 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5c";
+const APP_VERSION = "1.0.5d";
 
-/* ────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
    スマホ縦持ちでは「下部タブバー + 下からドラッグして開くボトムシート」、
    横画面スマホ・タブレット・PCなど横幅が十分ある場合は「左端の縦タブバー
@@ -610,6 +610,21 @@ function MapCanvas({
             attributionControl: false,
             // ナビゲーション操作はLiquid Glassの自前ボタンで行うため
             // 標準コントロールはあえて追加しない
+
+            // preserveDrawingBuffer: true
+            // MapLibreのWebGL canvasはデフォルトだと描画直後にdrawing bufferを
+            // 破棄してよいことになっている(次フレームでどうせ描き直すため)。
+            // 通常表示ではこれで問題ないが、backdrop-filterはブラウザの
+            // コンポジタが「今画面に出ている見た目」をその都度スナップショット
+            // して読みに行く処理であり、Windows Chromium(ANGLE/D3D11経由)の
+            // GPUコンポジットのタイミングによっては、そのスナップショットの
+            // 瞬間にはすでにbufferがクリア済み=空、ということが起こり得る。
+            // これが「backdrop-filterのガラスパネルの中だけWebGL地図が
+            // 全く映らず完全に透ける」症状の典型的な原因のひとつ。
+            // preserveDrawingBufferをtrueにすると毎フレームのbufferが
+            // 保持されるため、コンポジタがいつ読みに来ても地図が残っている
+            // 状態になる(引き換えに描画コストがわずかに上がる)。
+            preserveDrawingBuffer: true,
           });
         } catch (constructErr) {
           console.error("MapLibre Map construction failed:", constructErr);
