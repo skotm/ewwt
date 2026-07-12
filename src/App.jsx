@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.5d";
+const APP_VERSION = "1.0.5e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -399,6 +399,20 @@ function GlobalStyles() {
       .maplibregl-ctrl-bottom-left,
       .maplibregl-ctrl-bottom-right,
       .maplibregl-control-container { display: none; }
+
+      /* Windows版Chrome/Edgeでは、WebGL canvas(地図本体)がOSレベルの
+         DirectCompositionハードウェアオーバーレイとして描画されることがあり、
+         その場合ブラウザ自身のコンポジタ(=backdrop-filterがサンプリング
+         する対象)を素通りしてしまう。結果、上に重ねたLiquid Glassパネルの
+         backdrop-filterからは地図が「何も描かれていない」ことになり、
+         パネルが完全に透けて見える。
+         canvasに実質無害な(見た目を変えない)CSS filterを明示的にかけておくと、
+         ブラウザはこの要素をオーバーレイ昇格させず通常のコンポジットレイヤーとして
+         扱うようになることがあり、それによってbackdrop-filterのサンプリング対象に
+         地図が含まれるようになる、という報告のある回避策。 */
+      .maplibregl-canvas {
+        filter: brightness(1);
+      }
 
       .mono { font-variant-numeric: tabular-nums; }
 
