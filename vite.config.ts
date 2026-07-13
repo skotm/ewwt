@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
-  base: '/ewwt/',
+  base: '/MeteoQuake/',
   plugins: [
     react(),
     VitePWA({
@@ -11,13 +11,13 @@ export default defineConfig({
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
         name: '地震気象防災アプリ',
-        short_name: 'ewwt', // お好みの名前に変更してください
+        short_name: 'MeteoQuake', // お好みの名前に変更してください
         description: '地震・気象・防災情報アプリ',
         theme_color: '#0B0B0C',
         background_color: '#0B0B0C',
         display: 'standalone',
-        start_url: '/ewwt/',
-        scope: '/ewwt/',
+        start_url: '/MeteoQuake/',
+        scope: '/MeteoQuake/',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
