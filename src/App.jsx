@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6g";
+const APP_VERSION = "1.0.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -680,7 +680,7 @@ function MapCanvas({
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
   // 地図の基本配色(海・陸・都道府県境界線)。ライト/ダークモードで切り替える。
-  const { tokens: themeTokens } = useContext(ThemeContext);
+  const { tokens: themeTokens, mode } = useContext(ThemeContext);
   const tokens = themeTokens; // 下方で自動変換されたtokens.*参照のためのエイリアス
   // マップ生成(下のuseEffect本体)は[]依存で一度きりしか走らないため、
   // 生成時点の最新トークンをrefで参照する。切り替え時の反映は
@@ -1177,12 +1177,16 @@ function MapCanvas({
           display: "flex", alignItems: "center", gap: 8,
           padding: "8px 14px",
           borderRadius: 999,
-          background: "rgba(20,20,22,0.75)",
+          background: tokens.glassOpaqueBg,
           backdropFilter: "blur(10px)",
           WebkitBackdropFilter: "blur(10px)",
-          color: `rgba(${tokens.ink},0.85)`,
+          color: tokens.text,
           fontSize: 12,
           fontWeight: 600,
+          // 直下に地図(任意の色)が透けるため、文字の可読性を担保する縁取り。
+          textShadow: mode === "light"
+            ? "0 1px 2px rgba(255,255,255,0.6)"
+            : "0 1px 3px rgba(0,0,0,0.6)",
           boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
           pointerEvents: "none",
         }}>
@@ -1204,6 +1208,7 @@ function MapCanvas({
           display: "flex", flexDirection: "column",
           alignItems: "center", justifyContent: "center",
           gap: 10, color: "rgba(255,140,140,0.9)", padding: 24, textAlign: "center",
+          textShadow: mode === "light" ? "0 1px 2px rgba(255,255,255,0.7)" : "0 1px 3px rgba(0,0,0,0.6)",
         }}>
           <span style={{ fontSize: 14, fontWeight: 600 }}>地図を表示できませんでした</span>
           <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.5)`, maxWidth: 280 }}>{errorMsg}</span>
@@ -1239,14 +1244,17 @@ function Clock() {
    ALERT PILL
    ───────────────────────────────────────────────────── */
 const ALERT_COLOR = {
-  none:      "rgba(255,255,255,0.7)",
   watch:     "#FFD60A",
   warning:   "#FF9F0A",
   emergency: "#FF453A",
-};function AlertPill({ alert }) {
+};
+function AlertPill({ alert }) {
   const { tokens } = useContext(ThemeContext);
 
-  const color = ALERT_COLOR[alert.level] || ALERT_COLOR.none;
+  // "warning"等の警報色は演出上どのテーマでも同じ鮮やかな色を保つが、
+  // 警報なし("none")の通常表示は地の文なので、他のテキストと同様に
+  // テーマの文字色に追従させる(固定の白だとライトモードで読めなくなるため)。
+  const color = ALERT_COLOR[alert.level] || tokens.textSecondary;
   const hasAlert = alert.level !== "none";
 
   return (
@@ -1779,7 +1787,7 @@ function toQuakeCard(item) {
    あれば続けて表示する。津波の危険がある場合は色も変える。
    ───────────────────────────────────────────────────── */
 const TSUNAMI_TEXT = {
-  None:         { text: "この地震による津波の心配はありません。",                 color: "rgba(255,255,255,0.5)" },
+  None:         { text: "この地震による津波の心配はありません。" },
   Unknown:      { text: "津波の有無について、現在調査中です。",                   color: "#FFD60A" },
   Checking:     { text: "津波の有無について、現在調査中です。",                   color: "#FFD60A" },
   NonEffective: { text: "若干の海面変動が予想されますが、被害の心配はありません。", color: "#FFD60A" },
@@ -1792,7 +1800,7 @@ function buildQuakeMessage(quake) {
   const { tokens } = useContext(ThemeContext);
 
   const tsunami = TSUNAMI_TEXT[quake.domesticTsunami] || TSUNAMI_TEXT.None;
-  const lines = [{ label: "津波情報", text: tsunami.text, color: tsunami.color }];
+  const lines = [{ label: "津波情報", text: tsunami.text, color: tsunami.color || tokens.textSecondary }];
   if (quake.freeFormComment) {
     lines.push({ label: "付加文", text: quake.freeFormComment, color: `rgba(${tokens.ink},0.75)` });
   }
@@ -4480,6 +4488,7 @@ function BottomDock({
 const INTENSITY_LEGEND_ORDER = ["1", "2", "3", "4", "5-", "5+", "6-", "6+", "7"];
 
 function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
+  const { tokens } = useContext(ThemeContext);
   const schemeId = useContext(QuakeColorSchemeContext);
   const scheme = QUAKE_COLOR_SCHEMES[schemeId] || QUAKE_COLOR_SCHEMES.fill;
 
@@ -4525,7 +4534,7 @@ function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
               style={{
                 width: 7, height: 16, borderRadius: 2,
                 background: style.bg,
-                boxShadow: isMax ? "0 0 0 2px rgba(255,255,255,0.9)" : "none",
+                boxShadow: isMax ? `0 0 0 2px rgba(${tokens.ink},0.9)` : "none",
                 flexShrink: 0,
               }}
             />
@@ -4542,6 +4551,7 @@ function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
    押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
    ───────────────────────────────────────────────────── */
 function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
+  const { tokens } = useContext(ThemeContext);
   // ナビ行のガラスハイライトと同じ、"押し込むとガラスが少し膨らむ"演出。
   const [pressed, setPressed] = useState(false);
 
@@ -4566,7 +4576,7 @@ function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
           position: "relative", zIndex: 1,
           width: "100%", height: "100%",
           display: "flex", alignItems: "center", justifyContent: "center",
-          color: "rgba(200,220,255,0.95)",
+          color: tokens.text,
         }}
       >
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
@@ -5160,8 +5170,8 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
           style={{
             marginTop: 1, padding: "8px 0", borderRadius: 10,
             display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-            border: "1px solid rgba(10,132,255,0.5)",
-            background: "rgba(10,132,255,0.22)", color: tokens.accentText,
+            border: "1px solid rgba(10,132,255,0.9)",
+            background: "#0A84FF", color: "#ffffff",
             fontSize: 14, fontWeight: 700,
             opacity: isSearching ? 0.5 : 1,
           }}
