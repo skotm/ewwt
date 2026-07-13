@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6f";
+const APP_VERSION = "1.0.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1484,6 +1484,10 @@ const THEME_TOKENS = {
     // 文字・線用のRGBチャンネル値(不透明度だけ変えたrgba(${tokens.ink},X)の形で
     // 各所から使う。ダークは白、ライトはほぼ黒)。
     ink: "255,255,255",
+    // 検索ボタンなどのアクセント文字色。ダークは明るい水色の方が背景に映えるが、
+    // ライトの明るい背景だと同じ色ではコントラストが足りず読みにくくなるため、
+    // ライトモードではやや濃い標準的なシステムブルーにする。
+    accentText: "#64D2FF",
     // 地図の基本配色(海・陸・都道府県境界線)
     mapBg: "#121214",         // 海
     mapWorldFill: "#2c2c2e",  // 陸地(海外)
@@ -1508,6 +1512,7 @@ const THEME_TOKENS = {
     navPillBg: "rgba(21,22,26,0.07)",
     navPillShadow: "none",
     ink: "21,22,26",
+    accentText: "#0A84FF",
     // 地図の基本配色(海・陸・都道府県境界線)
     mapBg: "#aecbe8",         // 海
     mapWorldFill: "#e4e2dc",  // 陸地(海外)
@@ -4824,8 +4829,8 @@ function OptionPicker({ value, options, onChange, style }) {
               zIndex: 9999,
               maxHeight: 220, overflowY: "auto",
               borderRadius: 10,
-              background: "rgba(30,30,32,0.98)",
-              boxShadow: `0 10px 28px rgba(0,0,0,0.55), inset 0 0 0 0.5px rgba(${tokens.ink},0.14)`,
+              background: tokens.glassOpaqueBg,
+              boxShadow: `0 10px 28px rgba(0,0,0,0.35), inset 0 0 0 0.5px rgba(${tokens.ink},0.14)`,
             }}
           >
             {options.map((o, i) => (
@@ -5156,7 +5161,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
             marginTop: 1, padding: "8px 0", borderRadius: 10,
             display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
             border: "1px solid rgba(10,132,255,0.5)",
-            background: "rgba(10,132,255,0.22)", color: "#64D2FF",
+            background: "rgba(10,132,255,0.22)", color: tokens.accentText,
             fontSize: 14, fontWeight: 700,
             opacity: isSearching ? 0.5 : 1,
           }}
