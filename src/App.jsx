@@ -5848,7 +5848,7 @@ function StationListDisplayModeSettings({ value, onChange }) {
 // LICENSEファイルの内容が変わっても表示側の修正なしに追従できるようにしている。
 // 前提: Viteの public/ ディレクトリに LICENSE ファイルが置かれていること。
 // (このプロジェクトは vite.config.ts を使っており、GitHub Pagesには
-//  skotm.github.io/ewwt/ というサブパスで公開されている。publicディレクトリの
+//  skotm.github.io/MeteoQuake/ というサブパスで公開されている。publicディレクトリの
 //  中身はビルド時にそのままそのサブパス配下にコピーされるため、リポジトリ直下に
 //  置いただけのファイルはビルド成果物に含まれず配信されない。
 //  import.meta.env.BASE_URL でサブパスを解決しているので、コード側での
