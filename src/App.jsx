@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.6e";
+const APP_VERSION = "1.0.6f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3184,6 +3184,7 @@ const WIDE_RAIL_RADIUS = 28;     // 角丸[px](共有Glass全体に適用する)
 
 function SideNavRail({ active, onNav, uiScale = 1 }) {
   const { tokens } = useContext(ThemeContext);
+  const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
 
   const RAIL_PAD_Y = 14; // 内側コンテンツ(ボタン列)の上下パディング[px]。JSXと一致させる
   const N = NAV.length;
@@ -3315,8 +3316,15 @@ function SideNavRail({ active, onNav, uiScale = 1 }) {
                 top: `calc(${RAIL_PAD_Y}px + (100% - ${RAIL_PAD_Y * 2}px) * ${highlightTop / 100})`,
                 height: `calc((100% - ${RAIL_PAD_Y * 2}px) * ${tabH / 100})`,
                 borderRadius: 999,
-                background: tokens.navPillBg,
-                boxShadow: tokens.navPillShadow,
+                background: (pressed || dragging) && !glassOpaque ? tokens.glassTint : tokens.navPillBg,
+                boxShadow: (pressed || dragging) && !glassOpaque
+                  ? `inset 0 0 0 0.5px ${tokens.rimLight}, inset 0 1px 0 ${tokens.rimHighlight}`
+                  : tokens.navPillShadow,
+                // タッチ/ドラッグ中だけ本物のガラス(backdrop-filter blur)にする。
+                // 通常時は軽量なフラットピルのままにして、常時ブラーによる
+                // 描画負荷を避ける。
+                backdropFilter: (pressed || dragging) && !glassOpaque ? "blur(16px) saturate(160%)" : "none",
+                WebkitBackdropFilter: (pressed || dragging) && !glassOpaque ? "blur(16px) saturate(160%)" : "none",
                 transform: pressed ? "scale(1.08)" : "scale(1)",
                 transformOrigin: "center",
                 transition: dragging
@@ -3503,6 +3511,7 @@ function BottomDock({
   uiScale = 1,
 }) {
   const { tokens } = useContext(ThemeContext);
+  const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
 
   const HANDLE_HEIGHT = 18; // ハンドル行の固定高さ(スクロールに巻き込まれず常に上部に固定)。
                             // 地震タブでは直下のQuakeListToolbarが縦ドラッグをこのハンドルへ
@@ -4387,8 +4396,13 @@ function BottomDock({
             left: `calc(${NAV_PAD_X}px + (100% - ${NAV_PAD_X * 2}px) * ${highlightLeft / 100})`,
             width: `calc((100% - ${NAV_PAD_X * 2}px) * ${tabW / 100})`,
             borderRadius: 999,
-            background: tokens.navPillBg,
-            boxShadow: tokens.navPillShadow,
+            background: (navPressed || navDragging) && !glassOpaque ? tokens.glassTint : tokens.navPillBg,
+            boxShadow: (navPressed || navDragging) && !glassOpaque
+              ? `inset 0 0 0 0.5px ${tokens.rimLight}, inset 0 1px 0 ${tokens.rimHighlight}`
+              : tokens.navPillShadow,
+            // タッチ/ドラッグ中だけ本物のガラス(backdrop-filter blur)にする。
+            backdropFilter: (navPressed || navDragging) && !glassOpaque ? "blur(16px) saturate(160%)" : "none",
+            WebkitBackdropFilter: (navPressed || navDragging) && !glassOpaque ? "blur(16px) saturate(160%)" : "none",
             // 押している間はわずかに拡大し、Apple Liquid Glass特有の
             // "押し込むとガラスが少し膨らむ" 触覚的な質感を再現する。
             transform: navPressed ? "scale(1.16)" : "scale(1)",
@@ -4655,13 +4669,16 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
 // 開始日/終了日(input[type=date])・OptionPickerの見た目を統一するための共通スタイル。
 // 高さを固定(34px)して、日付欄とピッカー欄で縦の揃いがずれないようにする。
 // 「中高」パネル(290px固定)に検索ボタンまで収まるよう、あえて少しコンパクトにしている。
-const EQDB_INPUT_STYLE = {
-  width: "100%", height: 34, boxSizing: "border-box",
-  background: "rgba(255,255,255,0.08)", color: "#fff",
-  border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8,
-  padding: "0 10px", fontSize: 13, outline: "none",
-  colorScheme: "dark",
-};
+// ライト/ダークで色が変わるため、固定オブジェクトではなくtokensを受け取る関数にしている。
+function eqdbInputStyle(tokens, mode) {
+  return {
+    width: "100%", height: 34, boxSizing: "border-box",
+    background: `rgba(${tokens.ink},0.06)`, color: tokens.text,
+    border: `1px solid rgba(${tokens.ink},0.16)`, borderRadius: 8,
+    padding: "0 10px", fontSize: 13, outline: "none",
+    colorScheme: mode === "light" ? "light" : "dark",
+  };
+}
 
 function EqdbFormField({ label, full, children }) {
   const { tokens } = useContext(ThemeContext);
@@ -4702,12 +4719,15 @@ function defaultEqdbDateRange() {
 // フォントサイズを16px未満にすると、iOSがフォーカス時に画面を自動的に拡大し、
 // そのまま(user-scalable=noのため)手動で縮小できなくなる不具合があるため、
 // 必ず16px以上にする。
-const EQDB_DATE_INPUT_STYLE = {
-  ...EQDB_INPUT_STYLE,
+const EQDB_DATE_INPUT_STYLE_EXTRA = {
   fontSize: 16,
   WebkitAppearance: "none",
   appearance: "none",
 };
+
+function eqdbDateInputStyle(tokens, mode) {
+  return { ...eqdbInputStyle(tokens, mode), ...EQDB_DATE_INPUT_STYLE_EXTRA };
+}
 
 // 下向き山形アイコン(OptionPickerの右端に置く。開いている間は上下反転する)
 function ChevronDownIcon({ open }) {
@@ -4730,8 +4750,7 @@ function ChevronDownIcon({ open }) {
    「ボタン+SVGの山形アイコン」で選択肢を開閉する自前のドロップダウンを使う。
    ───────────────────────────────────────────────────── */
 function OptionPicker({ value, options, onChange, style }) {
-  const { tokens } = useContext(ThemeContext);
-
+  const { tokens, mode } = useContext(ThemeContext);
   const [open, setOpen] = useState(false);
   const [menuRect, setMenuRect] = useState(null); // {left, width, top?, bottom?}
   const btnRef = useRef(null);
@@ -4781,7 +4800,7 @@ function OptionPicker({ value, options, onChange, style }) {
         type="button"
         onClick={() => (open ? setOpen(false) : computeAndOpen())}
         style={{
-          ...EQDB_INPUT_STYLE, ...style,
+          ...eqdbInputStyle(tokens, mode), ...style,
           display: "flex", alignItems: "center", justifyContent: "space-between",
           cursor: "pointer",
         }}
@@ -4986,7 +5005,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
 function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef }) {
-  const { tokens } = useContext(ThemeContext);
+  const { tokens, mode } = useContext(ThemeContext);
 
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
 
@@ -5109,11 +5128,11 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
         <div style={{ display: "flex", gap: 8 }}>
           <EqdbFormField label="開始日">
             <input type="date" value={startDate} min={EQDB_MIN_DATE} max={endDate || maxEndDate}
-              onChange={e => patch({ startDate: e.target.value < EQDB_MIN_DATE ? EQDB_MIN_DATE : e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
+              onChange={e => patch({ startDate: e.target.value < EQDB_MIN_DATE ? EQDB_MIN_DATE : e.target.value })} style={eqdbDateInputStyle(tokens, mode)}/>
           </EqdbFormField>
           <EqdbFormField label="終了日">
             <input type="date" value={endDate} min={startDate || EQDB_MIN_DATE} max={maxEndDate}
-              onChange={e => patch({ endDate: e.target.value > maxEndDate ? maxEndDate : e.target.value })} style={EQDB_DATE_INPUT_STYLE}/>
+              onChange={e => patch({ endDate: e.target.value > maxEndDate ? maxEndDate : e.target.value })} style={eqdbDateInputStyle(tokens, mode)}/>
           </EqdbFormField>
         </div>
 
@@ -5201,6 +5220,7 @@ const QUAKE_TOOLBAR_ITEMS = [
 
 function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
   const { tokens } = useContext(ThemeContext);
+  const { opaque: glassOpaque } = useContext(GlassOpaqueContext);
 
   // ナビ行と同じ %ベース連続追従方式。PAD_X はJSX側のpaddingと必ず一致させる。
   const PAD_X = 3;
@@ -5339,8 +5359,13 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
             left: `calc(${PAD_X}px + (100% - ${PAD_X * 2}px) * ${highlightLeft / 100})`,
             width: `calc((100% - ${PAD_X * 2}px) * ${tabW / 100})`,
             borderRadius: 999,
-            background: `rgba(${tokens.ink},0.14)`,
-            boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.45), inset 0 1px 0 rgba(${tokens.ink},0.55)`,
+            background: (pressed || dragging) && !glassOpaque ? tokens.glassTint : tokens.navPillBg,
+            boxShadow: (pressed || dragging) && !glassOpaque
+              ? `inset 0 0 0 0.5px ${tokens.rimLight}, inset 0 1px 0 ${tokens.rimHighlight}`
+              : tokens.navPillShadow,
+            // タッチ/ドラッグ中だけ本物のガラス(backdrop-filter blur)にする。
+            backdropFilter: (pressed || dragging) && !glassOpaque ? "blur(16px) saturate(160%)" : "none",
+            WebkitBackdropFilter: (pressed || dragging) && !glassOpaque ? "blur(16px) saturate(160%)" : "none",
             transform: pressed ? "scale(1.16)" : "scale(1)",
             transformOrigin: "center",
             transition: dragging
