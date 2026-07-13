@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.7d";
+const APP_VERSION = "1.0.7e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2912,6 +2912,15 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
     onOpenKeyChange(null);
     setOpenPrefs(new Set());
   }, [points]);
+
+  // 詳細画面を閉じた時・別の震度キーの詳細画面へ切り替わった時は、
+  // 開いていた都道府県の展開状態をリセットする。
+  // openPrefsは震度キーをまたいで共有しているstateなので、これをやらないと
+  // 「震度5弱の詳細で北海道を開いたまま閉じて、震度3の詳細を開いたら
+  //  北海道が開きっぱなしになっている」といった意図しない引き継ぎが起きる。
+  useEffect(() => {
+    setOpenPrefs(new Set());
+  }, [openKey]);
 
   if (sorted.length === 0) return null;
 
