@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.7";
+const APP_VERSION = "1.0.7a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2516,49 +2516,17 @@ function findAreaCodeByPoint(areasGeoJSON, lat, lon) {
 //   2. 見つからなければ、地点名が部分一致(どちらかがどちらかを含む)するもの
 //   3. それでも見つからなければ、緯度経度が最も近い観測点を採用する
 //      (ただしあまりに離れた地点を誤って採用しないよう、約0.05度以内という上限を設ける)
-// 都道府県名(47件)の一覧。eqdb(震度データベース)の観測点名は
-// 「(都道府県名)(市区町村名)」の形(例: "北海道札幌市中央区"、"東京都新宿区")で
-// 与えられ、都道府県を単独のフィールドとしては返してこない。そのため観測点名の
-// 先頭がこの一覧のどれと前方一致するかで都道府県を判別する。
-// 長さの近い紛らわしい組(例: 「山梨県」と「山形県」)はどちらも完全な文字列同士の
-// 前方一致なので誤判定は起きない。
-const JMA_PREFECTURE_NAMES = [
-  "北海道",
-  "青森県", "岩手県", "宮城県", "秋田県", "山形県", "福島県",
-  "茨城県", "栃木県", "群馬県", "埼玉県", "千葉県", "東京都", "神奈川県",
-  "新潟県", "富山県", "石川県", "福井県", "山梨県", "長野県",
-  "岐阜県", "静岡県", "愛知県", "三重県",
-  "滋賀県", "京都府", "大阪府", "兵庫県", "奈良県", "和歌山県",
-  "鳥取県", "島根県", "岡山県", "広島県", "山口県",
-  "徳島県", "香川県", "愛媛県", "高知県",
-  "福岡県", "佐賀県", "長崎県", "熊本県", "大分県", "宮崎県", "鹿児島県",
-  "沖縄県",
-];
-
-// 観測点名(例: "北海道札幌市中央区")の先頭から都道府県名を判別し、
-// { pref, city, rest } を返す(前方一致しなければ pref・city は null、
-// rest は元の名前のまま)。
-// rest は「都道府県+市区町村」を取り除いた残り(例: "中央区")。
-// 都道府県・市区町村の見出しの下にそのまま表示しても二重に表示されない
-// ようにするためのもので、呼び出し側では addr としてこちらを使う。
-function extractPrefFromStationName(name) {
-  if (!name) return { pref: null, city: null, rest: name };
-  const pref = JMA_PREFECTURE_NAMES.find(p => name.startsWith(p));
-  if (!pref) return { pref: null, city: null, rest: name };
-  const afterPref = name.slice(pref.length);
-  // 市区町村名の終わりの文字(市/区/町/村)が最初に現れるところまでを市区町村名とみなす。
-  // 例: "札幌市中央区" → "札幌市"、"新宿区" → "新宿区"。
-  const cityMatch = afterPref.match(/^.+?[市区町村]/);
-  const city = cityMatch ? cityMatch[0] : null;
-  const rest = city ? afterPref.slice(city.length) : afterPref;
-  return { pref, city, rest };
-}
-
-function findAreaCodeByStationName(stations, name, lat, lon, areasGeoJSON) {
-  const byPoint = findAreaCodeByPoint(areasGeoJSON, lat, lon);
-  if (byPoint) return byPoint;
-
-  if (!stations) return null;
+// 観測点マスタ(stations)から、eqdbの観測点名(name)に最も一致する地点を探す。
+// findAreaCodeByStationNameと同じマッチング方針(名前の完全一致→部分一致→
+// 緯度経度が最も近い地点、の順)を使うが、区域コードだけでなく都道府県名・
+// 市区町村名も一緒に取り出したいため、マッチング処理そのものを共通化している。
+//
+// 【重要】eqdbの観測点名(例: "苫前町旭＊")は市区町村名から始まり、都道府県名は
+// 含まれない(気象庁 震度データベースAPIの実際のレスポンスで確認済み)。
+// そのため都道府県は文字列解析では判別できず、緯度経度・地点名を観測点マスタと
+// 突き合わせて、マスタ側が持つpref.name(都道府県名)を借りてくる必要がある。
+function findBestStationMatch(stations, name, lat, lon) {
+  if (!stations || stations.length === 0) return null;
 
   let candidates = name ? stations.filter(s => s.name === name) : [];
 
@@ -2576,8 +2544,8 @@ function findAreaCodeByStationName(stations, name, lat, lon, areasGeoJSON) {
     fellBackToAll = true;
   }
 
-  if (candidates.length === 1) return candidates[0]?.area?.code || null;
-  if (lat == null || lon == null) return candidates[0]?.area?.code || null;
+  if (candidates.length === 1) return candidates[0];
+  if (lat == null || lon == null) return candidates[0] || null;
 
   let best = null, bestDist = Infinity;
   for (const c of candidates) {
@@ -2592,7 +2560,32 @@ function findAreaCodeByStationName(stations, name, lat, lon, areasGeoJSON) {
     const cLat = parseFloat(best.lat), cLon = parseFloat(best.lon);
     if (Math.abs(cLat - lat) > 0.05 || Math.abs(cLon - lon) > 0.05) return null;
   }
-  return best.area?.code || null;
+  return best;
+}
+
+function findAreaCodeByStationName(stations, name, lat, lon, areasGeoJSON) {
+  const byPoint = findAreaCodeByPoint(areasGeoJSON, lat, lon);
+  if (byPoint) return byPoint;
+
+  const match = findBestStationMatch(stations, name, lat, lon);
+  return match?.area?.code || null;
+}
+
+// eqdbの観測点名(name)・緯度経度から、観測点マスタ上の都道府県名・市区町村名を
+// 借りてくる。マッチした市区町村名がnameの先頭に含まれていれば、見出しと
+// 二重表示にならないようそこを取り除いた残りをaddrとして一緒に返す
+// (例: マスタ側city.name="苫前町"、name="苫前町旭＊" → addr="旭＊")。
+// マッチしなかった場合はpref/cityともnullとし、addrは元のnameのまま返す。
+function resolvePrefCityForEqdbPoint(stations, name, lat, lon) {
+  const match = findBestStationMatch(stations, name, lat, lon);
+  const pref = match?.pref?.name || null;
+  const city = match?.city?.name || null;
+  let addr = name;
+  if (city && name && name.startsWith(city)) {
+    const rest = name.slice(city.length);
+    if (rest) addr = rest;
+  }
+  return { pref, city, addr };
 }
 
 // eqdbのmode=eventレスポンスを、アプリ内の「地震カード」共通形式に変換する。
@@ -2622,18 +2615,17 @@ function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
     const scale = eqdbIntensityStringToScale(pt.int || "");
     if (scale <= 0) return null;
     const pLat = parseFloat(pt.lat), pLon = parseFloat(pt.lon);
-    // eqdbは観測点名(pt.name)しか返さず、都道府県を単独のフィールドとしては
-    // 持たないため、名前の先頭から都道府県・市区町村を判別して補う
-    // (通常のP2P地震情報由来の地点と同じ「都道府県ごとの階層表示」に
-    //  乗せられるようにするため)。
-    const { pref, city, rest } = extractPrefFromStationName(pt.name);
-    // 都道府県+市区町村を取り除いた残りをaddrとして使う(見出しと二重にならないように)。
-    // 残りが空(＝観測点名が「都道府県+市区町村」でちょうど終わっている)場合は、
-    // 表示する文字列が無くなってしまわないよう、元の名前にフォールバックする。
+    // eqdbは観測点名(pt.name。例: "苫前町旭＊")しか返さず、都道府県名は
+    // 含まれない(市区町村名から始まる)。そのため観測点マスタ(stations)と
+    // 名前・緯度経度で突き合わせて、マスタ側が持つ都道府県名・市区町村名を
+    // 借りてくる(通常のP2P地震情報由来の地点と同じ「都道府県ごとの階層表示」に
+    // 乗せられるようにするため)。マスタに見つからなければpref/cityともnullのまま
+    // (今まで通り、階層表示では「その他」等の扱いにフォールバックする)。
+    const { pref, city, addr } = resolvePrefCityForEqdbPoint(stations, pt.name, pLat, pLon);
     return {
       pref,
       city,
-      addr: rest || pt.name,
+      addr,
       intensityKey: maxScaleToIntensityKey(scale),
       latitude: Number.isFinite(pLat) ? pLat : null,
       longitude: Number.isFinite(pLon) ? pLon : null,
