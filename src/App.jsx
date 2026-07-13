@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.7e";
+const APP_VERSION = "1.1.0";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2670,7 +2670,227 @@ function buildEqdbQuakeCard(detail, listItem, stations, areasGeoJSON) {
   };
 }
 
-// 検索結果一覧(mode=searchの生データ)の1件を、QuakeListRowでそのまま表示できる
+/* ─────────────────────────────────────────────────────
+   発震機構解(CMT解) — 「この地震の詳細」用
+
+   気象庁の発震機構解(精査後)ページ(data.jma.go.jp/eqev/data/mech/cmt/…)は
+   正式なJSON APIではなく、月別の一覧HTMLページと、地震ごとの詳細HTMLページから
+   なる。fetchでの取得(CORS)自体は実機で確認済み。
+   
+   1. 対象地震の発生月から一覧ページ(cmtYYYYMM.html)を取得し、時刻・位置が
+      近い行を探す(=CMT解が求まっている地震かどうか、どれに対応するかを判別)。
+   2. 一致した行の発生時刻から、詳細ページのURL(cmtYYYYMMDDHHMMSS.html)を
+      組み立てて取得し、震源球画像・モーメントテンソル・P/T/N軸などの
+      詳しい情報を得る。
+   ───────────────────────────────────────────────────── */
+
+const CMT_LIST_BASE = "https://www.data.jma.go.jp/eqev/data/mech/cmt/";
+const CMT_FIG_BASE = "https://www.data.jma.go.jp/eqev/data/mech/cmt/fig/";
+
+// "33度17.8分N" のような度分表記を10進の度(符号付き)に変換する。
+// S(南緯)・W(西経)の場合は負の値にする。
+function cmtParseDegMin(str) {
+  if (!str) return null;
+  const m = String(str).match(/([\d.]+)度([\d.]+)分([NSEW])/);
+  if (!m) return null;
+  const deg = parseFloat(m[1]) + parseFloat(m[2]) / 60;
+  return (m[3] === "S" || m[3] === "W") ? -deg : deg;
+}
+
+// "2026-07-09 21:58:58.8" のような気象庁側の時刻文字列(日本時間)を、
+// 比較に使えるエポックミリ秒に変換する。
+function cmtParseTimeToEpochMs(str) {
+  if (!str) return null;
+  const m = String(str).trim().match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  const [, y, mo, d, hh, mm, ss] = m.map(Number);
+  // 気象庁のページはすべて日本時間(UTC+9)表記のため、UTCとして組み立ててから9時間引く。
+  return Date.UTC(y, mo - 1, d, hh, mm, ss) - 9 * 3600 * 1000;
+}
+
+// アプリ内の地震オブジェクトが持つ time("YYYY/MM/DD HH:mm[:ss]"、日本時間)を
+// 同じくエポックミリ秒に変換する。cmtParseTimeToEpochMsと単位を揃えるための対。
+function quakeTimeToEpochMs(timeStr) {
+  if (!timeStr) return null;
+  const m = String(timeStr).trim().match(/(\d{4})\/(\d{2})\/(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return null;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const hh = Number(m[4]), mm = Number(m[5]), ss = m[6] ? Number(m[6]) : 0;
+  return Date.UTC(y, mo - 1, d, hh, mm, ss) - 9 * 3600 * 1000;
+}
+
+// 発生時刻(気象庁ページの文字列)から、詳細ページのURLに使うタイムスタンプ
+// (YYYYMMDDHHMMSS)を組み立てる。
+function cmtTimeToUrlStamp(str) {
+  const m = String(str).trim().match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (!m) return null;
+  return m[1] + m[2] + m[3] + m[4] + m[5] + m[6];
+}
+
+// 月別一覧ページ(cmtYYYYMM.html)を取得し、行ごとに構造化データへ変換する。
+// 同じ月内で複数回この一覧が必要になることがあるため、簡単なメモ化キャッシュを持つ。
+const cmtMonthCache = new Map(); // "YYYYMM" -> Promise<rows>
+
+function fetchCmtMonthList(yyyymm) {
+  if (cmtMonthCache.has(yyyymm)) return cmtMonthCache.get(yyyymm);
+
+  const promise = (async () => {
+    const res = await fetch(`${CMT_LIST_BASE}cmt${yyyymm}.html`);
+    if (!res.ok) throw new Error(`CMT一覧の取得に失敗しました(status ${res.status})`);
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const rows = [...doc.querySelectorAll("table tr")];
+
+    const out = [];
+    for (const tr of rows) {
+      const cells = [...tr.querySelectorAll("td")].map(td => td.textContent.trim());
+      // データ行は14列(発生時刻,緯度,経度,深さ,M,震央地域名,Mw,走向1,傾斜1,すべり角1,走向2,傾斜2,すべり角2,詳細)。
+      // ヘッダー行(列数が違う・数値が入っていない)はここで自然に弾かれる。
+      if (cells.length < 13) continue;
+      const timeMs = cmtParseTimeToEpochMs(cells[0]);
+      if (timeMs == null) continue;
+      const lat = cmtParseDegMin(cells[1]);
+      const lon = cmtParseDegMin(cells[2]);
+      const depthMatch = cells[3].match(/\d+/);
+      out.push({
+        timeStr: cells[0],
+        timeMs,
+        lat, lon,
+        depth: depthMatch ? parseInt(depthMatch[0], 10) : null,
+        magnitude: parseFloat(cells[4]) || null,
+        place: cells[5] || "",
+        mw: parseFloat(cells[6]) || null,
+        plane1: { strike: cells[7], dip: cells[8], rake: cells[9] },
+        plane2: { strike: cells[10], dip: cells[11], rake: cells[12] },
+        detailUrlStamp: cmtTimeToUrlStamp(cells[0]),
+      });
+    }
+    return out;
+  })();
+
+  cmtMonthCache.set(yyyymm, promise);
+  // 失敗した月はキャッシュに残さない(一時的なネットワーク障害等で、以後ずっと
+  // 失敗扱いのままになるのを防ぐ)。
+  promise.catch(() => cmtMonthCache.delete(yyyymm));
+  return promise;
+}
+
+// 対象の地震(time・緯度経度)に最も近いCMT解の行を探す。
+// 発生時刻が近い(±3分以内)ことを必須とし、その中で最も時刻が近いものを採用する
+// (連続発生時に別の地震を誤って拾わないよう、念のため緯度経度も大きく離れて
+//  いないか確認する)。
+const CMT_MATCH_TOLERANCE_MS = 3 * 60 * 1000;
+const CMT_MATCH_MAX_DEGREES = 2.0;
+
+async function findCmtMatchForQuake(quake) {
+  const quakeMs = quakeTimeToEpochMs(quake.time);
+  if (quakeMs == null) return null;
+
+  const d = new Date(quakeMs);
+  // 発生時刻が月初め近くの場合、CMT解の一覧側は「発生時刻」(=同じ日本時間)なので
+  // 基本的には地震自身と同じ月の一覧に載っているはずだが、念のため前月分も
+  // 候補に含めておく(月境界をまたぐタイミングのずれ対策)。
+  const yyyymmThis = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+  const prevMonthDate = new Date(quakeMs - 24 * 3600 * 1000);
+  const yyyymmPrev = `${prevMonthDate.getUTCFullYear()}${String(prevMonthDate.getUTCMonth() + 1).padStart(2, "0")}`;
+  const monthKeys = yyyymmThis === yyyymmPrev ? [yyyymmThis] : [yyyymmThis, yyyymmPrev];
+
+  let candidates = [];
+  for (const key of monthKeys) {
+    try {
+      const rows = await fetchCmtMonthList(key);
+      candidates = candidates.concat(rows);
+    } catch {
+      // その月の一覧が取れなくても、もう片方の月で見つかる可能性があるので続行する。
+    }
+  }
+
+  let best = null, bestDiff = Infinity;
+  for (const row of candidates) {
+    const diff = Math.abs(row.timeMs - quakeMs);
+    if (diff > CMT_MATCH_TOLERANCE_MS) continue;
+    if (quake.latitude != null && quake.longitude != null && row.lat != null && row.lon != null) {
+      const dist = Math.abs(row.lat - quake.latitude) + Math.abs(row.lon - quake.longitude);
+      if (dist > CMT_MATCH_MAX_DEGREES) continue;
+    }
+    if (diff < bestDiff) { bestDiff = diff; best = row; }
+  }
+  return best;
+}
+
+// 地震ごとの詳細ページ(cmtYYYYMMDDHHMMSS.html)を取得し、震源球画像や
+// モーメントテンソル・発震機構解(P/T/N軸込み)・観測点数などを取り出す。
+async function fetchCmtDetail(detailUrlStamp) {
+  const url = `${CMT_FIG_BASE}cmt${detailUrlStamp}.html`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`CMT詳細の取得に失敗しました(status ${res.status})`);
+  const html = await res.text();
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  // ページ内には複数の<table>があり、順番は固定(見出し文言で対応するテーブルを探す)。
+  // h2見出しの直後の最初のtableを、その見出しのテーブルとみなす。
+  function tableAfterHeading(keyword) {
+    const heading = [...doc.querySelectorAll("h2")].find(h => h.textContent.includes(keyword));
+    if (!heading) return null;
+    let el = heading.nextElementSibling;
+    while (el && el.tagName !== "TABLE") el = el.nextElementSibling;
+    return el;
+  }
+  function rowCells(table, rowIndex) {
+    if (!table) return [];
+    const trs = table.querySelectorAll("tr");
+    const tr = trs[rowIndex];
+    if (!tr) return [];
+    return [...tr.querySelectorAll("td,th")].map(c => c.textContent.trim());
+  }
+
+  const hypoTable = tableAfterHeading("地震発生時刻と震源位置");
+  const hypo = rowCells(hypoTable, 1); // [発生時刻, 緯度, 経度, 深さ, M]
+
+  const centroidTable = tableAfterHeading("セントロイド時刻");
+  const centroid = rowCells(centroidTable, 1); // [セントロイド時刻, 緯度, 経度, 深さ, Mw]
+
+  const mechTable = tableAfterHeading("発震機構解");
+  const plane1Row = rowCells(mechTable, 1); // [断層面解1, 走向, 傾斜, すべり角, 方位, P軸方位, T軸方位, N軸方位]
+  const plane2Row = rowCells(mechTable, 2); // [断層面解2, 走向, 傾斜, すべり角, 傾斜, P軸傾斜, T軸傾斜, N軸傾斜]
+
+  const stationTable = tableAfterHeading("使用観測点数");
+  const stationRow = rowCells(stationTable, 0);
+
+  // 画像(震源球・周辺のCMT解)。<img>タグで直接読み込むだけなのでCORSの影響を受けない。
+  const images = [...doc.querySelectorAll("img")]
+    .map(img => img.getAttribute("src"))
+    .filter(src => src && src.includes("/mech/cmt/fig/"));
+  const beachballImg = images.find(src => !src.includes("map")) || null;
+  const surroundingMapImg = images.find(src => src.includes("map")) || null;
+
+  return {
+    sourceUrl: url,
+    hypo: {
+      time: hypo[0] || null, lat: hypo[1] || null, lon: hypo[2] || null,
+      depth: hypo[3] || null, magnitude: hypo[4] || null,
+    },
+    centroid: {
+      time: centroid[0] || null, lat: centroid[1] || null, lon: centroid[2] || null,
+      depth: centroid[3] || null, mw: centroid[4] || null,
+    },
+    plane1: { strike: plane1Row[1] || null, dip: plane1Row[2] || null, rake: plane1Row[3] || null },
+    plane2: { strike: plane2Row[1] || null, dip: plane2Row[2] || null, rake: plane2Row[3] || null },
+    // P軸・T軸・N軸は「方位」の行(plane1Row)と「傾斜」の行(plane2Row)にそれぞれ
+    // 3つずつ入っている(表が2行にまたがった構成のため)。
+    axes: {
+      p: { azimuth: plane1Row[5] || null, plunge: plane2Row[5] || null },
+      t: { azimuth: plane1Row[6] || null, plunge: plane2Row[6] || null },
+      n: { azimuth: plane1Row[7] || null, plunge: plane2Row[7] || null },
+    },
+    stationCount: stationRow[1] || null,
+    varianceReduction: stationRow[3] || null,
+    beachballImageUrl: beachballImg ? new URL(beachballImg, url).href : null,
+    surroundingMapImageUrl: surroundingMapImg ? new URL(surroundingMapImg, url).href : null,
+  };
+}
+
+
 // 「地震カード」互換の軽量プレビュー形式に変換する(観測点別震度はまだ持たない)。
 function eqdbListItemToPreview(eq) {
   const scale = eqdbIntensityStringToScale(eq.maxI || "");
@@ -3163,8 +3383,171 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
 }
 
 /* ─────────────────────────────────────────────────────
-   ZOOM CLUSTER — 縦に繋がったGlassピル
+   QUAKE MECH DETAIL PANEL — 「この地震の詳細」画面
+   
+   気象庁の発震機構解(CMT解)を取得して表示する。M5.0以上でないとそもそも
+   解析されないため、見つからない場合はその旨を案内する(エラーではない)。
    ───────────────────────────────────────────────────── */
+function QuakeMechDetailPanel({ quake }) {
+  const { tokens } = useContext(ThemeContext);
+  // "loading" | "found" | "not_found" | "error"
+  const [status, setStatus] = useState("loading");
+  const [detail, setDetail] = useState(null);
+  const [matchedRow, setMatchedRow] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setStatus("loading");
+    setDetail(null);
+    setMatchedRow(null);
+
+    (async () => {
+      try {
+        const match = await findCmtMatchForQuake(quake);
+        if (cancelled) return;
+        if (!match) { setStatus("not_found"); return; }
+        setMatchedRow(match);
+        const d = await fetchCmtDetail(match.detailUrlStamp);
+        if (cancelled) return;
+        setDetail(d);
+        setStatus("found");
+      } catch (err) {
+        console.error("発震機構解の取得に失敗:", err);
+        if (!cancelled) setStatus("error");
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [quake.id]);
+
+  const rowLabelStyle = { fontSize: 11, color: tokens.textSecondary };
+  const rowValueStyle = { fontSize: 13, fontWeight: 700, color: tokens.text };
+
+  function DataRow({ label, value }) {
+    if (value == null || value === "") return null;
+    return (
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, padding: "6px 0" }}>
+        <span style={rowLabelStyle}>{label}</span>
+        <span style={rowValueStyle}>{value}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "2px 14px 16px" }}>
+      <Glass radius={14} style={{ padding: "14px 16px", marginBottom: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: tokens.text, marginBottom: 2 }}>
+          発震機構解(CMT解)
+        </div>
+        <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5 }}>
+          気象庁の解析結果です。マグニチュード5.0程度以上の地震のみ解析されるため、
+          対象の地震でも掲載されていない場合があります。
+        </div>
+      </Glass>
+
+      {status === "loading" && (
+        <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: tokens.textSecondary }}>気象庁のデータを確認しています…</div>
+        </Glass>
+      )}
+
+      {status === "not_found" && (
+        <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.6 }}>
+            この地震の発震機構解は見つかりませんでした。<br/>
+            まだ解析中か、解析対象外の可能性があります。
+          </div>
+        </Glass>
+      )}
+
+      {status === "error" && (
+        <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
+          <div style={{ fontSize: 12, color: "rgba(255,140,140,0.9)", lineHeight: 1.6 }}>
+            気象庁のデータ取得に失敗しました。時間をおいて再度お試しください。
+          </div>
+        </Glass>
+      )}
+
+      {status === "found" && detail && (
+        <>
+          {detail.beachballImageUrl && (
+            <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
+              <img
+                src={detail.beachballImageUrl}
+                alt="震源球(発震機構解)"
+                style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
+              />
+              <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
+                震源球(下半球等積投影)
+              </div>
+            </Glass>
+          )}
+
+          <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
+            <DataRow label="発生時刻" value={detail.hypo.time} />
+            <DataRow label="震源位置" value={detail.hypo.lat && detail.hypo.lon ? `${detail.hypo.lat} ${detail.hypo.lon}` : null} />
+            <DataRow label="深さ" value={detail.hypo.depth} />
+            <DataRow label="M" value={detail.hypo.magnitude} />
+          </Glass>
+
+          <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
+              セントロイド・モーメントマグニチュード
+            </div>
+            <DataRow label="セントロイド時刻" value={detail.centroid.time} />
+            <DataRow label="位置" value={detail.centroid.lat && detail.centroid.lon ? `${detail.centroid.lat} ${detail.centroid.lon}` : null} />
+            <DataRow label="深さ" value={detail.centroid.depth} />
+            <DataRow label="Mw" value={detail.centroid.mw} />
+          </Glass>
+
+          <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
+              断層面解1(走向 / 傾斜 / すべり角)
+            </div>
+            <DataRow label="走向" value={detail.plane1.strike} />
+            <DataRow label="傾斜" value={detail.plane1.dip} />
+            <DataRow label="すべり角" value={detail.plane1.rake} />
+            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "10px 0 2px" }}>
+              断層面解2(走向 / 傾斜 / すべり角)
+            </div>
+            <DataRow label="走向" value={detail.plane2.strike} />
+            <DataRow label="傾斜" value={detail.plane2.dip} />
+            <DataRow label="すべり角" value={detail.plane2.rake} />
+          </Glass>
+
+          <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
+              P軸・T軸・N軸(方位 / 傾斜)
+            </div>
+            <DataRow label="P軸" value={detail.axes.p.azimuth && detail.axes.p.plunge ? `${detail.axes.p.azimuth}° / ${detail.axes.p.plunge}°` : null} />
+            <DataRow label="T軸" value={detail.axes.t.azimuth && detail.axes.t.plunge ? `${detail.axes.t.azimuth}° / ${detail.axes.t.plunge}°` : null} />
+            <DataRow label="N軸" value={detail.axes.n.azimuth && detail.axes.n.plunge ? `${detail.axes.n.azimuth}° / ${detail.axes.n.plunge}°` : null} />
+          </Glass>
+
+          <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
+            <DataRow label="使用観測点数" value={detail.stationCount} />
+            <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
+          </Glass>
+
+          <a
+            href={detail.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "block", textAlign: "center", padding: "10px 0",
+              fontSize: 12, fontWeight: 600, color: tokens.accentText || "#0A84FF",
+              textDecoration: "none",
+            }}
+          >
+            気象庁の該当ページを開く ↗
+          </a>
+        </>
+      )}
+    </div>
+  );
+}
+
+
 /* ─────────────────────────────────────────────────────
    TOGGLE (iOS-style)
    ───────────────────────────────────────────────────── */
@@ -3660,19 +4043,32 @@ function BottomDock({
   // StationPointsList内の✕ボタンだけでなく、フローティングの外にある丸い
   // 「戻る」ボタンでも閉じられるようにするため、stateをここ(親)に持ち上げている。
   const [stationDetailOpenKey, setStationDetailOpenKey] = useState(null);
+  // 「この地震の詳細」(発震機構解)画面を開いているかどうか。
+  // stationDetailOpenKeyと同様、外の「戻る」ボタンで閉じられるよう親に持ち上げている。
+  const [mechDetailOpen, setMechDetailOpen] = useState(false);
   useEffect(() => {
-    if (selectedQuakeId == null) { setNearbyQuakeFor(null); setNearbyOriginId(null); setStationDetailOpenKey(null); }
+    if (selectedQuakeId == null) {
+      setNearbyQuakeFor(null);
+      setNearbyOriginId(null);
+      setStationDetailOpenKey(null);
+      setMechDetailOpen(false);
+    }
   }, [selectedQuakeId]);
 
   // 地震タブの「戻る」ボタン(フローティングの外にある丸ボタン)の挙動。
   // 手前で開いている画面から順に閉じていくスタック式:
-  //   1. 「各地の震度」の詳細画面(震度キーごとの地域一覧)を開いていれば、まずそれを閉じる
-  //   2. 「近傍の地震」一覧を開いていれば、それを閉じる
-  //   3. 近傍一覧から選んだ地震の詳細を見ていれば、元の地震の近傍一覧に戻す
-  //   4. どれでもなければ、選択解除して一覧に戻る
+  //   1. 「この地震の詳細」(発震機構解)画面を開いていれば、まずそれを閉じる
+  //   2. 「各地の震度」の詳細画面(震度キーごとの地域一覧)を開いていれば、それを閉じる
+  //   3. 「近傍の地震」一覧を開いていれば、それを閉じる
+  //   4. 近傍一覧から選んだ地震の詳細を見ていれば、元の地震の近傍一覧に戻す
+  //   5. どれでもなければ、選択解除して一覧に戻る
   // ✕ボタン(StationPointsList内)はこれとは別に残したままにしている。
   function handleBackFromQuake() {
     killScrollMomentum();
+    if (mechDetailOpen) {
+      setMechDetailOpen(false);
+      return;
+    }
     if (stationDetailOpenKey != null) {
       setStationDetailOpenKey(null);
       return;
@@ -3703,6 +4099,7 @@ function BottomDock({
     onSelectQuake(null);
   }
   const backFromQuakeLabel =
+    mechDetailOpen ? "地震の詳細に戻る" :
     stationDetailOpenKey != null ? "地震の詳細に戻る" :
     nearbyQuakeFor ? "地震の詳細に戻る" :
     nearbyOriginId ? "近傍地震一覧に戻る" :
@@ -3779,7 +4176,7 @@ function BottomDock({
     // 中身の高さだけ変わる。これらの変化時にscrollTopをリセットしないと、深くスクロール
     // した状態で戻った時、新しい(短い)中身に対して古い(大きい)scrollTopが残ったままになり、
     // 中身が全部スクロールアウトして「フローティング内が何も表示されない」ように見える不具合が起きる。
-  }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor, settingsPath, stationDetailOpenKey]);
+  }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor, settingsPath, stationDetailOpenKey, mechDetailOpen]);
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
@@ -4317,6 +4714,13 @@ function BottomDock({
                         </div>
                       );
                     }
+                    if (mechDetailOpen) {
+                      return (
+                        <div key={`${selected.id}:mech`}>
+                          <QuakeMechDetailPanel quake={selected}/>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={selected.id}>
                         <QuakeDetailCard quake={selected}/>
@@ -4347,6 +4751,29 @@ function BottomDock({
                         {stationPoints.length > 0 && (
                           <StationPointsList points={stationPoints} displayMode={stationListDisplayMode}
                             openKey={stationDetailOpenKey} onOpenKeyChange={setStationDetailOpenKey}/>
+                        )}
+                        {/* 発震機構解はおおむねM5.0以上でないと気象庁側で解析されないため、
+                            それ未満の地震ではボタン自体を出さない。 */}
+                        {selected.magnitude != null && selected.magnitude >= 5.0 && (
+                          <div style={{ margin: "8px 14px 4px" }}>
+                            <PressableButton
+                              type="button"
+                              onClick={() => {
+                                if (scrollRef.current) scrollRef.current.scrollTop = 0;
+                                setMechDetailOpen(true);
+                              }}
+                              style={{
+                                width: "100%", padding: "10px 12px", borderRadius: 12,
+                                border: "none", cursor: "pointer",
+                                background: `rgba(${tokens.ink},0.08)`,
+                                boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.14)`,
+                                color: tokens.text, fontSize: 13, fontWeight: 600,
+                                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                              }}
+                            >
+                              この地震の詳細
+                            </PressableButton>
+                          </div>
                         )}
                       </div>
                     );
@@ -5848,7 +6275,7 @@ function StationListDisplayModeSettings({ value, onChange }) {
 // LICENSEファイルの内容が変わっても表示側の修正なしに追従できるようにしている。
 // 前提: Viteの public/ ディレクトリに LICENSE ファイルが置かれていること。
 // (このプロジェクトは vite.config.ts を使っており、GitHub Pagesには
-//  skotm.github.io/MeteoQuake/ というサブパスで公開されている。publicディレクトリの
+//  skotm.github.io/ewwt/ というサブパスで公開されている。publicディレクトリの
 //  中身はビルド時にそのままそのサブパス配下にコピーされるため、リポジトリ直下に
 //  置いただけのファイルはビルド成果物に含まれず配信されない。
 //  import.meta.env.BASE_URL でサブパスを解決しているので、コード側での
