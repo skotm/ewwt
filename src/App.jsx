@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.7c";
+const APP_VERSION = "1.0.7d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3765,7 +3765,12 @@ function BottomDock({
       el.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
     }
     prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
-  }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor]);
+    // settingsPath(設定の階層メニュー内の画面遷移。例: ライセンス一覧→個別ライセンス詳細)や
+    // stationDetailOpenKey(「各地の震度」の詳細画面)は、同じscrollRefを共有したまま
+    // 中身の高さだけ変わる。これらの変化時にscrollTopをリセットしないと、深くスクロール
+    // した状態で戻った時、新しい(短い)中身に対して古い(大きい)scrollTopが残ったままになり、
+    // 中身が全部スクロールアウトして「フローティング内が何も表示されない」ように見える不具合が起きる。
+  }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor, settingsPath, stationDetailOpenKey]);
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
