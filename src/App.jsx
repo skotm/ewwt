@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.0.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3470,19 +3470,6 @@ function QuakeMechDetailPanel({ quake }) {
 
       {status === "found" && detail && (
         <>
-          {detail.beachballImageUrl && (
-            <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
-              <img
-                src={detail.beachballImageUrl}
-                alt="震源球(発震機構解)"
-                style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
-              />
-              <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
-                震源球(下半球等積投影)
-              </div>
-            </Glass>
-          )}
-
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
             <DataRow label="発生時刻" value={detail.hypo.time} />
             <DataRow label="震源位置" value={detail.hypo.lat && detail.hypo.lon ? `${detail.hypo.lat} ${detail.hypo.lon}` : null} />
@@ -3528,6 +3515,21 @@ function QuakeMechDetailPanel({ quake }) {
             <DataRow label="使用観測点数" value={detail.stationCount} />
             <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
           </Glass>
+
+          {/* 震源球の図はパネルの最下部に置く(数値情報を先に読んでから、
+              最後に図で確認する流れにするため)。 */}
+          {detail.beachballImageUrl && (
+            <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
+              <img
+                src={detail.beachballImageUrl}
+                alt="震源球(発震機構解)"
+                style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
+              />
+              <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
+                震源球(下半球等積投影)
+              </div>
+            </Glass>
+          )}
 
           <a
             href={detail.sourceUrl}
