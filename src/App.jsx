@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.2b";
+const APP_VERSION = "1.1.2c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -876,15 +876,14 @@ function MapCanvas({
           //
           // 配色はプレート境界・断層とも、種別ごとの派手な色分けはせず、
           // 控えめなグレー系で統一する。
-          // ・ハロー(縁取り):テーマの文字色と同じ「ink」トーン
-          //   (ダーク=白系・ライト=黒系)。ink自体がこのアプリの海・陸の
-          //   配色に対して読みやすくなるよう選ばれている色なので、地図の
-          //   どの配色に対しても縁取りとして視認性が確保できる。
-          // ・中の線:テーマの背景色「pageBg」(ダーク=ほぼ黒・ライト=ほぼ白)。
-          //   inkとpageBgは元々「文字色 vs 背景色」として明暗が逆になる
-          //   組み合わせなので、ハローと中の線が同じ色に見えず、
-          //   縁取り+芯のある二層構造がはっきり読み取れる。
-          // 全体の主張が強くなりすぎないよう、不透明度は控えめにしてある。
+          // ・ハロー(縁取り)・中の線とも、あえて半透明(rgba)にせず不透明の
+          //   実色にしている。半透明にすると、線同士が交差・分岐する箇所
+          //   (断層の枝分かれ・プレート境界同士の交点など)でアルファが
+          //   重なって不自然に濃く見えてしまうため、それを避けるため。
+          // ・ハロー=mapBoundaryHalo(海・陸どちらの上でもくっきり見える
+          //   明るめ/濃いめのグレー)、中の線=mapBoundaryLine(pageBgと同じ
+          //   色)という組み合わせで、縁取りと芯の明暗がはっきり分かれる
+          //   ようにしている。
           // 「線の先端を丸く」という見た目のため、太めのハローレイヤーを下に敷き、
           // その上に細めの中の線を重ねる「ケースドライン」の手法を使う
           // (halo→mainの順にaddLayerすることで、両方ともstation-points-symbolの
@@ -892,8 +891,8 @@ function MapCanvas({
           const boundaryLineLayout = { visibility: "none", "line-cap": "round", "line-join": "round" };
           const boundaryHaloWidth = ["interpolate", ["linear"], ["zoom"], 4, 2.2, 8, 3.6, 12, 5.2];
           const boundaryLineWidth = ["interpolate", ["linear"], ["zoom"], 4, 1.0, 8, 1.6, 12, 2.2];
-          const initInk = themeTokensRef.current.ink;
-          const initPageBg = themeTokensRef.current.pageBg;
+          const initHalo = themeTokensRef.current.mapBoundaryHalo;
+          const initCore = themeTokensRef.current.mapBoundaryLine;
 
           map.addSource("plate-boundaries", {
             type: "geojson",
@@ -904,14 +903,14 @@ function MapCanvas({
             type: "line",
             source: "plate-boundaries",
             layout: boundaryLineLayout,
-            paint: { "line-color": `rgba(${initInk},0.4)`, "line-width": boundaryHaloWidth },
+            paint: { "line-color": initHalo, "line-width": boundaryHaloWidth },
           }, "station-points-symbol");
           map.addLayer({
             id: "plate-boundaries-layer",
             type: "line",
             source: "plate-boundaries",
             layout: boundaryLineLayout,
-            paint: { "line-color": initPageBg, "line-opacity": 0.85, "line-width": boundaryLineWidth },
+            paint: { "line-color": initCore, "line-width": boundaryLineWidth },
           }, "station-points-symbol");
 
           map.addSource("faults", {
@@ -923,14 +922,14 @@ function MapCanvas({
             type: "line",
             source: "faults",
             layout: boundaryLineLayout,
-            paint: { "line-color": `rgba(${initInk},0.4)`, "line-width": boundaryHaloWidth },
+            paint: { "line-color": initHalo, "line-width": boundaryHaloWidth },
           }, "station-points-symbol");
           map.addLayer({
             id: "faults-layer",
             type: "line",
             source: "faults",
             layout: boundaryLineLayout,
-            paint: { "line-color": initPageBg, "line-opacity": 0.85, "line-width": boundaryLineWidth },
+            paint: { "line-color": initCore, "line-width": boundaryLineWidth },
           }, "station-points-symbol");
 
           // 震源マーカー用のソース・レイヤー。観測点レイヤーより後にaddLayerすることで、
@@ -1280,12 +1279,12 @@ function MapCanvas({
     map.setPaintProperty("prefectures-fill", "fill-color", themeTokens.mapPrefFill);
     map.setPaintProperty("prefectures-line", "line-color", themeTokens.mapPrefLine);
     if (map.getLayer("plate-boundaries-halo-layer")) {
-      map.setPaintProperty("plate-boundaries-halo-layer", "line-color", `rgba(${themeTokens.ink},0.4)`);
-      map.setPaintProperty("plate-boundaries-layer", "line-color", themeTokens.pageBg);
+      map.setPaintProperty("plate-boundaries-halo-layer", "line-color", themeTokens.mapBoundaryHalo);
+      map.setPaintProperty("plate-boundaries-layer", "line-color", themeTokens.mapBoundaryLine);
     }
     if (map.getLayer("faults-halo-layer")) {
-      map.setPaintProperty("faults-halo-layer", "line-color", `rgba(${themeTokens.ink},0.4)`);
-      map.setPaintProperty("faults-layer", "line-color", themeTokens.pageBg);
+      map.setPaintProperty("faults-halo-layer", "line-color", themeTokens.mapBoundaryHalo);
+      map.setPaintProperty("faults-layer", "line-color", themeTokens.mapBoundaryLine);
     }
   }, [themeTokens, status]);
 
@@ -1657,6 +1656,12 @@ const THEME_TOKENS = {
     mapWorldLine: "rgba(255,255,255,0.08)",
     mapPrefFill: "#3a3a3c",   // 都道府県(日本)
     mapPrefLine: "rgba(255,255,255,0.18)",
+    // 断層・プレート境界レイヤーの縁取り(halo)と中の線(core)。
+    // 半透明のrgbaにすると、線同士が交差・重複する場所だけアルファが
+    // 重なって濃く見えてしまうため、あえて不透明(アルファ無し)の実色にして、
+    // 何本重なっても同じ色にしかならないようにしている。
+    mapBoundaryHalo: "#b4b4ba", // 縁取り(海・陸どちらの上でもくっきり見える明るめグレー)
+    mapBoundaryLine: "#121214", // 中の線(pageBgと同じ、縁取りとの明暗差で芯が見える)
   },
   light: {
     pageBg: "#eef0f3",
@@ -1682,6 +1687,9 @@ const THEME_TOKENS = {
     mapWorldLine: "rgba(21,22,26,0.12)",
     mapPrefFill: "#f2f0ea",   // 都道府県(日本)
     mapPrefLine: "rgba(21,22,26,0.22)",
+    // 断層・プレート境界レイヤーの縁取り(halo)と中の線(core)。ダーク側と同じ理由で不透明にする。
+    mapBoundaryHalo: "#4a4a4f", // 縁取り(海・陸どちらの上でもくっきり見える濃いめグレー)
+    mapBoundaryLine: "#eef0f3", // 中の線(pageBgと同じ、縁取りとの明暗差で芯が見える)
   },
 };
 
