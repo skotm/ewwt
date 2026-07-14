@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1g";
+const APP_VERSION = "1.1.2";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -607,6 +607,31 @@ function loadGeoData() {
 }
 
 /* ─────────────────────────────────────────────────────
+   断層(faults.geojson)・プレート境界(plate-boundaries.json)データ。
+   いずれも数MB規模のファイルのため、world.json等とは違いアプリ起動時には
+   読み込まず、設定でトグルが最初にONにされたタイミングで遅延読み込みする
+   (loadGeoDataと同様、一度取得したPromiseはキャッシュして使い回す)。
+   ファイル構成:
+     public/
+     └─ map/
+        ├─ faults.geojson
+        └─ plate-boundaries.json
+   ───────────────────────────────────────────────────── */
+let faultsDataPromise = null;
+function loadFaultsData() {
+  if (faultsDataPromise) return faultsDataPromise;
+  faultsDataPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/faults.geojson`);
+  return faultsDataPromise;
+}
+
+let plateBoundariesDataPromise = null;
+function loadPlateBoundariesData() {
+  if (plateBoundariesDataPromise) return plateBoundariesDataPromise;
+  plateBoundariesDataPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/plate-boundaries.json`);
+  return plateBoundariesDataPromise;
+}
+
+/* ─────────────────────────────────────────────────────
    MAPLIBREスタイル生成
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
    そのままGeoJSONソースとしてMapLibreに渡し、ダークテーマで塗り分ける。
@@ -671,6 +696,7 @@ function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.d
 function MapCanvas({
   onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
+  faultsEnabled, plateBoundariesEnabled,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -839,6 +865,50 @@ function MapCanvas({
             },
           });
 
+          // プレート境界(plate-boundaries.json)・断層(faults.geojson)レイヤー。
+          // いずれも数MB規模のファイルのため、初期状態では空のFeatureCollectionだけ
+          // 登録しておき、実データは対応するトグルが最初にONにされた時点で
+          // 遅延読み込みする(下方の専用useEffectでsetDataにより差し替える)。
+          // トグルOFF時はvisibility:noneで非表示にするだけでレイヤー自体は
+          // 削除しない(再ON時に読み込み直さずに済むようにするため)。
+          // beforeIdに"station-points-symbol"を指定し、観測点マーカーより
+          // 必ず下に来るようにする。
+          //
+          // プレート境界は元データ(properties.stroke)に境界種別ごとの色
+          // (トランスフォーム=赤・発散=緑・収束=青 など)が入っているため、
+          // それをそのまま使い、値が無い場合のみ既定色にフォールバックする。
+          map.addSource("plate-boundaries", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "plate-boundaries-layer",
+            type: "line",
+            source: "plate-boundaries",
+            layout: { visibility: "none" },
+            paint: {
+              "line-color": ["coalesce", ["get", "stroke"], "#ff5a36"],
+              "line-width": 1.4,
+              "line-opacity": 0.85,
+            },
+          }, "station-points-symbol");
+
+          map.addSource("faults", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "faults-layer",
+            type: "line",
+            source: "faults",
+            layout: { visibility: "none" },
+            paint: {
+              "line-color": "#e67e22",
+              "line-width": 1.2,
+              "line-opacity": 0.9,
+            },
+          }, "station-points-symbol");
+
           // 震源マーカー用のソース・レイヤー。観測点レイヤーより後にaddLayerすることで、
           // MapLibreのレイヤー順だけで「震源は常に観測点より上」を保証する。
           map.addSource("hypocenter-point", {
@@ -945,6 +1015,55 @@ function MapCanvas({
     });
     paintedAreaCodesRef.current = codes;
   }, [stationPoints, status, colorScheme, areaFillEnabled]);
+
+  // 断層(faults.geojson)の表示ON/OFF。トグルがONになった最初の1回だけ
+  // 実データ(数MB)を取得してsetDataで流し込み、以降のON/OFF切り替えは
+  // レイヤーのvisibilityを変えるだけ(再取得しない)にすることで、
+  // OFFのままなら通信自体が発生しないようにしている。
+  const faultsLoadedRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("faults-layer")) return;
+
+    map.setLayoutProperty("faults-layer", "visibility", faultsEnabled ? "visible" : "none");
+
+    if (faultsEnabled && !faultsLoadedRef.current) {
+      faultsLoadedRef.current = true;
+      loadFaultsData()
+        .then((geojson) => {
+          const source = map.getSource("faults");
+          if (source) source.setData(geojson);
+        })
+        .catch((err) => {
+          console.error("断層データの読み込みに失敗しました:", err);
+          faultsLoadedRef.current = false; // 失敗時は次回ONで再試行できるようにする
+        });
+    }
+  }, [faultsEnabled, status]);
+
+  // プレート境界(plate-boundaries.json)の表示ON/OFF。断層と同様の遅延読み込み。
+  const plateBoundariesLoadedRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("plate-boundaries-layer")) return;
+
+    map.setLayoutProperty("plate-boundaries-layer", "visibility", plateBoundariesEnabled ? "visible" : "none");
+
+    if (plateBoundariesEnabled && !plateBoundariesLoadedRef.current) {
+      plateBoundariesLoadedRef.current = true;
+      loadPlateBoundariesData()
+        .then((geojson) => {
+          const source = map.getSource("plate-boundaries");
+          if (source) source.setData(geojson);
+        })
+        .catch((err) => {
+          console.error("プレート境界データの読み込みに失敗しました:", err);
+          plateBoundariesLoadedRef.current = false; // 失敗時は次回ONで再試行できるようにする
+        });
+    }
+  }, [plateBoundariesEnabled, status]);
 
   // 選択中の地震(hypocenters)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源(複数の場合は全件)+周辺の観測点がちょうど収まる範囲へズームする。
@@ -1618,6 +1737,58 @@ function saveAreaFillEnabled(enabled) {
     localStorage.setItem(AREA_FILL_ENABLED_STORAGE_KEY, String(enabled));
   } catch (err) {
     console.warn("細分区域塗りつぶしの表示設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   断層(faults.geojson)の表示ON/OFF設定。
+   推計震度分布などと同様、localStorageに保存し次回起動時も覚えておく。
+   ファイルサイズが大きい(数MB)ため、デフォルトはOFF
+   (明示的にONにした場合のみデータを読み込む)。
+   ───────────────────────────────────────────────────── */
+const FAULTS_ENABLED_STORAGE_KEY = "showFaults";
+
+function loadStoredFaultsEnabled() {
+  try {
+    const saved = localStorage.getItem(FAULTS_ENABLED_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+  } catch (err) {
+    console.warn("断層表示の設定を読み込めませんでした:", err);
+  }
+  return false;
+}
+
+function saveFaultsEnabled(enabled) {
+  try {
+    localStorage.setItem(FAULTS_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("断層表示の設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   プレート境界(plate-boundaries.json)の表示ON/OFF設定。
+   断層と同様、ファイルサイズが大きいためデフォルトはOFF。
+   ───────────────────────────────────────────────────── */
+const PLATE_BOUNDARIES_ENABLED_STORAGE_KEY = "showPlateBoundaries";
+
+function loadStoredPlateBoundariesEnabled() {
+  try {
+    const saved = localStorage.getItem(PLATE_BOUNDARIES_ENABLED_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+  } catch (err) {
+    console.warn("プレート境界表示の設定を読み込めませんでした:", err);
+  }
+  return false;
+}
+
+function savePlateBoundariesEnabled(enabled) {
+  try {
+    localStorage.setItem(PLATE_BOUNDARIES_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("プレート境界表示の設定を保存できませんでした:", err);
   }
 }
 
@@ -4037,6 +4208,8 @@ function BottomDock({
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
+  faultsEnabled, onChangeFaultsEnabled,
+  plateBoundariesEnabled, onChangePlateBoundariesEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
   stations, searchQuake, onFoundSearchQuake,
@@ -4901,6 +5074,10 @@ function BottomDock({
                   onChangeEstIntensityEnabled={onChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
                   onChangeAreaFillEnabled={onChangeAreaFillEnabled}
+                  faultsEnabled={faultsEnabled}
+                  onChangeFaultsEnabled={onChangeFaultsEnabled}
+                  plateBoundariesEnabled={plateBoundariesEnabled}
+                  onChangePlateBoundariesEnabled={onChangePlateBoundariesEnabled}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={onChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
@@ -6407,6 +6584,8 @@ function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
+  faultsEnabled, onChangeFaultsEnabled,
+  plateBoundariesEnabled, onChangePlateBoundariesEnabled,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
 }) {
@@ -6481,6 +6660,31 @@ function SettingsBody({
     );
   }
 
+  // 断層・プレート境界(地震カテゴリの項目)の中身。
+  // いずれもファイルサイズが大きいデータのため、初期設定は両方OFF。
+  if (category === "quake" && leaf === "boundaries") {
+    return (
+      <>
+        <SettingsHeader title="断層・プレート境界"/>
+        <SettingsCard>
+          <SettingsToggleRow
+            label="断層を表示"
+            description="日本の主な活断層を地図に重ねて表示します。"
+            checked={faultsEnabled}
+            onChange={() => onChangeFaultsEnabled(!faultsEnabled)}
+          />
+          <SettingsCardDivider/>
+          <SettingsToggleRow
+            label="プレート境界を表示"
+            description="世界のプレート境界を地図に重ねて表示します。"
+            checked={plateBoundariesEnabled}
+            onChange={() => onChangePlateBoundariesEnabled(!plateBoundariesEnabled)}
+          />
+        </SettingsCard>
+      </>
+    );
+  }
+
   // 各地の震度リストの表示方法(地震カテゴリの項目)の中身
   if (category === "quake" && leaf === "stationListDisplay") {
     return (
@@ -6511,6 +6715,8 @@ function SettingsBody({
           <SettingsMenuRow label="震度配色" onClick={() => onNavigate([...path, "colorScheme"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="地図塗りつぶし" onClick={() => onNavigate([...path, "mapFill"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="断層・プレート境界" onClick={() => onNavigate([...path, "boundaries"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
           <SettingsCardDivider/>
@@ -6703,6 +6909,23 @@ export default function App() {
     saveAreaFillEnabled(next);
   }
 
+  // 断層(faults.geojson)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
+  // localStorageに永続化する。ファイルサイズが大きいためデフォルトはOFF。
+  const [faultsEnabled, setFaultsEnabledState] = useState(loadStoredFaultsEnabled);
+
+  function handleChangeFaultsEnabled(next) {
+    setFaultsEnabledState(next);
+    saveFaultsEnabled(next);
+  }
+
+  // プレート境界(plate-boundaries.json)の表示ON/OFF。断層と同様。
+  const [plateBoundariesEnabled, setPlateBoundariesEnabledState] = useState(loadStoredPlateBoundariesEnabled);
+
+  function handleChangePlateBoundariesEnabled(next) {
+    setPlateBoundariesEnabledState(next);
+    savePlateBoundariesEnabled(next);
+  }
+
   // 震度観測点リスト(各地の震度)の表示方法。"grouped"(階層表示、既定) | "list"(一覧表示)。
   // 設定タブ「地震」内から切り替え、localStorageに永続化する。
   const [stationListDisplayMode, setStationListDisplayModeState] = useState(loadStoredStationListDisplayMode);
@@ -6891,6 +7114,8 @@ export default function App() {
           maxIntensityKey={selectedQuake?.maxIntensity}
           estIntensityEnabled={estIntensityEnabled}
           areaFillEnabled={areaFillEnabled}
+          faultsEnabled={faultsEnabled}
+          plateBoundariesEnabled={plateBoundariesEnabled}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
@@ -6966,6 +7191,10 @@ export default function App() {
                   onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
                   areaFillEnabled={areaFillEnabled}
                   onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+                  faultsEnabled={faultsEnabled}
+                  onChangeFaultsEnabled={handleChangeFaultsEnabled}
+                  plateBoundariesEnabled={plateBoundariesEnabled}
+                  onChangePlateBoundariesEnabled={handleChangePlateBoundariesEnabled}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
@@ -6995,6 +7224,10 @@ export default function App() {
               onChangeEstIntensityEnabled={handleChangeEstIntensityEnabled}
               areaFillEnabled={areaFillEnabled}
               onChangeAreaFillEnabled={handleChangeAreaFillEnabled}
+              faultsEnabled={faultsEnabled}
+              onChangeFaultsEnabled={handleChangeFaultsEnabled}
+              plateBoundariesEnabled={plateBoundariesEnabled}
+              onChangePlateBoundariesEnabled={handleChangePlateBoundariesEnabled}
               quakeFetchLimit={quakeFetchLimit}
               onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
               stationListDisplayMode={stationListDisplayMode}
