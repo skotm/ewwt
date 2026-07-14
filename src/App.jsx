@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1a";
+const APP_VERSION = "1.1.1b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3443,6 +3443,31 @@ function QuakeMechDetailPanel({ quake }) {
     );
   }
 
+  // 深さ・M(またはMw)のように、単独の行だと空きスペースが目立つ2項目を
+  // 1行に横並びで表示する(左右それぞれで見出し/値のペア)。
+  // 片方だけ値が無い場合は、そちら側だけ非表示にする。
+  function DataRowPair({ left, right }) {
+    const leftHas = left.value != null && left.value !== "";
+    const rightHas = right.value != null && right.value !== "";
+    if (!leftHas && !rightHas) return null;
+    return (
+      <div style={{ display: "flex", gap: 10, padding: "6px 0" }}>
+        {leftHas && (
+          <div style={{ flex: 1, display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span style={rowLabelStyle}>{left.label}</span>
+            <span style={rowValueStyle}>{left.value}</span>
+          </div>
+        )}
+        {rightHas && (
+          <div style={{ flex: 1, display: "flex", justifyContent: "space-between", gap: 8 }}>
+            <span style={rowLabelStyle}>{right.label}</span>
+            <span style={rowValueStyle}>{right.value}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <>
       <QuakeDetailCard quake={quake}/>
@@ -3472,15 +3497,17 @@ function QuakeMechDetailPanel({ quake }) {
 
       {status === "found" && detail && (
         <>
-          {/* 使用観測点数・精度(左)と震源球の図(右)を横並びにする。 */}
+          {/* 使用観測点数・精度(左)と震源球の図(右)を横並びにする。
+              左側は中身の幅だけ確保し(space-betweenで間延びさせない)、
+              余った分は震源球の画像を大きく見せる方に回す。 */}
           <Glass radius={14} style={{ padding: 16, marginBottom: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+              <div style={{ flexShrink: 0 }}>
                 <DataRow label="使用観測点数" value={detail.stationCount} />
                 <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
               </div>
               {detail.beachballImageUrl && (
-                <div style={{ flexShrink: 0, width: 96, textAlign: "center" }}>
+                <div style={{ flexShrink: 0, width: 130, textAlign: "center" }}>
                   {!imgLoadFailed ? (
                     <img
                       src={detail.beachballImageUrl}
@@ -3506,8 +3533,10 @@ function QuakeMechDetailPanel({ quake }) {
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
             <DataRow label="発生時刻" value={detail.hypo.time} />
             <DataRow label="震源位置" value={detail.hypo.lat && detail.hypo.lon ? `${detail.hypo.lat} ${detail.hypo.lon}` : null} />
-            <DataRow label="深さ" value={detail.hypo.depth} />
-            <DataRow label="M" value={detail.hypo.magnitude} />
+            <DataRowPair
+              left={{ label: "深さ", value: detail.hypo.depth }}
+              right={{ label: "M", value: detail.hypo.magnitude }}
+            />
           </Glass>
 
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
@@ -3516,23 +3545,37 @@ function QuakeMechDetailPanel({ quake }) {
             </div>
             <DataRow label="セントロイド時刻" value={detail.centroid.time} />
             <DataRow label="位置" value={detail.centroid.lat && detail.centroid.lon ? `${detail.centroid.lat} ${detail.centroid.lon}` : null} />
-            <DataRow label="深さ" value={detail.centroid.depth} />
-            <DataRow label="Mw" value={detail.centroid.mw} />
+            <DataRowPair
+              left={{ label: "深さ", value: detail.centroid.depth }}
+              right={{ label: "Mw", value: detail.centroid.mw }}
+            />
           </Glass>
 
+          {/* 断層面解1・2は片方ずつだと余白が目立つため、真ん中に区切り線を入れて
+              横に2つ並べる。 */}
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
-              断層面解1(走向 / 傾斜 / すべり角)
+            <div style={{ display: "flex", gap: 14 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
+                  断層面解1
+                </div>
+                <DataRow label="走向" value={detail.plane1.strike} />
+                <DataRow label="傾斜" value={detail.plane1.dip} />
+                <DataRow label="すべり角" value={detail.plane1.rake} />
+              </div>
+              <div style={{ width: 1, alignSelf: "stretch", background: tokens.divider, flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "8px 0 2px" }}>
+                  断層面解2
+                </div>
+                <DataRow label="走向" value={detail.plane2.strike} />
+                <DataRow label="傾斜" value={detail.plane2.dip} />
+                <DataRow label="すべり角" value={detail.plane2.rake} />
+              </div>
             </div>
-            <DataRow label="走向" value={detail.plane1.strike} />
-            <DataRow label="傾斜" value={detail.plane1.dip} />
-            <DataRow label="すべり角" value={detail.plane1.rake} />
-            <div style={{ fontSize: 12, fontWeight: 700, color: tokens.text, padding: "10px 0 2px" }}>
-              断層面解2(走向 / 傾斜 / すべり角)
+            <div style={{ fontSize: 10, color: tokens.textSecondary, textAlign: "center", marginTop: 4 }}>
+              走向 / 傾斜 / すべり角
             </div>
-            <DataRow label="走向" value={detail.plane2.strike} />
-            <DataRow label="傾斜" value={detail.plane2.dip} />
-            <DataRow label="すべり角" value={detail.plane2.rake} />
           </Glass>
 
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
