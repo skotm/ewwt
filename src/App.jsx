@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1b";
+const APP_VERSION = "1.1.1c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3453,13 +3453,13 @@ function QuakeMechDetailPanel({ quake }) {
     return (
       <div style={{ display: "flex", gap: 10, padding: "6px 0" }}>
         {leftHas && (
-          <div style={{ flex: 1, display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ flex: 1, display: "flex", justifyContent: "flex-start", gap: 8 }}>
             <span style={rowLabelStyle}>{left.label}</span>
             <span style={rowValueStyle}>{left.value}</span>
           </div>
         )}
         {rightHas && (
-          <div style={{ flex: 1, display: "flex", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ flex: 1, display: "flex", justifyContent: "flex-start", gap: 8 }}>
             <span style={rowLabelStyle}>{right.label}</span>
             <span style={rowValueStyle}>{right.value}</span>
           </div>
@@ -3499,15 +3499,22 @@ function QuakeMechDetailPanel({ quake }) {
         <>
           {/* 使用観測点数・精度(左)と震源球の図(右)を横並びにする。
               左側は中身の幅だけ確保し(space-betweenで間延びさせない)、
-              余った分は震源球の画像を大きく見せる方に回す。 */}
+              余った分は震源球の画像を大きく見せる方に回す。
+              「震源球(下半球等積投影)」のキャプションは画像の下ではなく、
+              左側の解の精度の下に矢印つきで置くことで、画像により幅を割ける。 */}
           <Glass radius={14} style={{ padding: 16, marginBottom: 10 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
               <div style={{ flexShrink: 0 }}>
                 <DataRow label="使用観測点数" value={detail.stationCount} />
                 <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
+                {detail.beachballImageUrl && !imgLoadFailed && (
+                  <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
+                    震源球(下半球等積投影)→
+                  </div>
+                )}
               </div>
               {detail.beachballImageUrl && (
-                <div style={{ flexShrink: 0, width: 130, textAlign: "center" }}>
+                <div style={{ flexShrink: 0, width: 150, textAlign: "center" }}>
                   {!imgLoadFailed ? (
                     <img
                       src={detail.beachballImageUrl}
@@ -3523,11 +3530,6 @@ function QuakeMechDetailPanel({ quake }) {
                 </div>
               )}
             </div>
-            {detail.beachballImageUrl && !imgLoadFailed && (
-              <div style={{ fontSize: 10, color: tokens.textSecondary, textAlign: "right", marginTop: 4 }}>
-                震源球(下半球等積投影)
-              </div>
-            )}
           </Glass>
 
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
@@ -3572,9 +3574,6 @@ function QuakeMechDetailPanel({ quake }) {
                 <DataRow label="傾斜" value={detail.plane2.dip} />
                 <DataRow label="すべり角" value={detail.plane2.rake} />
               </div>
-            </div>
-            <div style={{ fontSize: 10, color: tokens.textSecondary, textAlign: "center", marginTop: 4 }}>
-              走向 / 傾斜 / すべり角
             </div>
           </Glass>
 
@@ -4831,6 +4830,7 @@ function BottomDock({
                               onClick={() => {
                                 if (scrollRef.current) scrollRef.current.scrollTop = 0;
                                 setMechDetailOpen(true);
+                                setSnapIndex(3);
                               }}
                               style={{
                                 width: "100%", padding: "10px 12px", borderRadius: 12,
