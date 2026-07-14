@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.0a";
+const APP_VERSION = "1.0.7b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2858,11 +2858,16 @@ async function fetchCmtDetail(detailUrlStamp) {
   const stationRow = rowCells(stationTable, 0);
 
   // 画像(震源球・周辺のCMT解)。<img>タグで直接読み込むだけなのでCORSの影響を受けない。
+  // ページ内のsrc属性は相対パス("cmt....png"など)で書かれていることがあるため、
+  // 文字列にパスが含まれているかで絞り込む前に、必ずURLを絶対パスへ解決してから
+  // 判定する(でないと相対パスの画像を取りこぼす)。
   const images = [...doc.querySelectorAll("img")]
     .map(img => img.getAttribute("src"))
-    .filter(src => src && src.includes("/mech/cmt/fig/"));
-  const beachballImg = images.find(src => !src.includes("map")) || null;
-  const surroundingMapImg = images.find(src => src.includes("map")) || null;
+    .filter(Boolean)
+    .map(src => new URL(src, url).href)
+    .filter(src => !src.includes("jma.go.jp/jma/com/images/")); // 気象庁ロゴなど共通画像を除外
+  const beachballImg = images.find(src => !/map/i.test(src)) || null;
+  const surroundingMapImg = images.find(src => /map/i.test(src)) || null;
 
   return {
     sourceUrl: url,
@@ -2885,8 +2890,8 @@ async function fetchCmtDetail(detailUrlStamp) {
     },
     stationCount: stationRow[1] || null,
     varianceReduction: stationRow[3] || null,
-    beachballImageUrl: beachballImg ? new URL(beachballImg, url).href : null,
-    surroundingMapImageUrl: surroundingMapImg ? new URL(surroundingMapImg, url).href : null,
+    beachballImageUrl: beachballImg,
+    surroundingMapImageUrl: surroundingMapImg,
   };
 }
 
@@ -3394,12 +3399,17 @@ function QuakeMechDetailPanel({ quake }) {
   const [status, setStatus] = useState("loading");
   const [detail, setDetail] = useState(null);
   const [matchedRow, setMatchedRow] = useState(null);
+  // 震源球画像のURLが取れても、実際には読み込みに失敗する(ページ構成の想定違いで
+  // 誤ったURLを組み立ててしまった等)ことがあるため、<img>のonErrorで検知して
+  // 壊れた画像アイコンの代わりに案内文を出す。
+  const [imgLoadFailed, setImgLoadFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setStatus("loading");
     setDetail(null);
     setMatchedRow(null);
+    setImgLoadFailed(false);
 
     (async () => {
       try {
@@ -3520,14 +3530,24 @@ function QuakeMechDetailPanel({ quake }) {
               最後に図で確認する流れにするため)。 */}
           {detail.beachballImageUrl && (
             <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
-              <img
-                src={detail.beachballImageUrl}
-                alt="震源球(発震機構解)"
-                style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
-              />
-              <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
-                震源球(下半球等積投影)
-              </div>
+              {!imgLoadFailed ? (
+                <>
+                  <img
+                    src={detail.beachballImageUrl}
+                    alt="震源球(発震機構解)"
+                    style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
+                    onError={() => setImgLoadFailed(true)}
+                  />
+                  <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
+                    震源球(下半球等積投影)
+                  </div>
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.6 }}>
+                  震源球の画像を読み込めませんでした。<br/>
+                  下の気象庁のページから確認できます。
+                </div>
+              )}
             </Glass>
           )}
 
