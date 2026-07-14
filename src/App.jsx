@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1c";
+const APP_VERSION = "1.1.1d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3453,13 +3453,13 @@ function QuakeMechDetailPanel({ quake }) {
     return (
       <div style={{ display: "flex", gap: 10, padding: "6px 0" }}>
         {leftHas && (
-          <div style={{ flex: 1, display: "flex", justifyContent: "flex-start", gap: 8 }}>
+          <div style={{ flex: 1, display: "flex", justifyContent: "center", gap: 8 }}>
             <span style={rowLabelStyle}>{left.label}</span>
             <span style={rowValueStyle}>{left.value}</span>
           </div>
         )}
         {rightHas && (
-          <div style={{ flex: 1, display: "flex", justifyContent: "flex-start", gap: 8 }}>
+          <div style={{ flex: 1, display: "flex", justifyContent: "center", gap: 8 }}>
             <span style={rowLabelStyle}>{right.label}</span>
             <span style={rowValueStyle}>{right.value}</span>
           </div>
