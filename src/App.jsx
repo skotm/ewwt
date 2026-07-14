@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1f";
+const APP_VERSION = "1.1.1g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3511,8 +3511,8 @@ function QuakeMechDetailPanel({ quake }) {
               「震源球(下半球等積投影)」のキャプションは画像の下ではなく、
               左側の解の精度の下に矢印つきで置くことで、画像により幅を割ける。 */}
           <Glass radius={14} style={{ padding: 16, marginBottom: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
-              <div style={{ flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, minWidth: 0 }}>
+              <div style={{ flexShrink: 1, minWidth: 0 }}>
                 <DataRow label="使用観測点数" value={detail.stationCount} />
                 <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
                 {detail.beachballImageUrl && !imgLoadFailed && (
@@ -3522,12 +3522,12 @@ function QuakeMechDetailPanel({ quake }) {
                 )}
               </div>
               {detail.beachballImageUrl && (
-                <div style={{ flexShrink: 0, width: 150, textAlign: "center" }}>
+                <div style={{ flex: "0 1 150px", minWidth: 0, maxWidth: 150, textAlign: "center" }}>
                   {!imgLoadFailed ? (
                     <img
                       src={detail.beachballImageUrl}
                       alt="震源球(発震機構解)"
-                      style={{ width: "100%", borderRadius: 8, background: "#fff" }}
+                      style={{ display: "block", width: "100%", maxWidth: "100%", height: "auto", borderRadius: 8, background: "#fff" }}
                       onError={() => setImgLoadFailed(true)}
                     />
                   ) : (
