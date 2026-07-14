@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1e";
+const APP_VERSION = "1.1.1f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3395,6 +3395,14 @@ function StationPointsList({ points, displayMode = "list", openKey, onOpenKeyCha
    ───────────────────────────────────────────────────── */
 function QuakeMechDetailPanel({ quake }) {
   const { tokens } = useContext(ThemeContext);
+  // ホーム画面に追加したPWA(スタンドアロン表示)かどうか。
+  // iOSのスタンドアロンPWAには「新しいタブ」という概念が無いため、
+  // target="_blank"のリンクを踏むとOSがSafari側にまるごと処理を渡してしまい、
+  // 「戻る」で復帰した時にPWA側のWebViewがメモリから破棄されていて
+  // アプリ全体がリロードされてしまうことがある(=開いていた画面が消える不具合)。
+  // スタンドアロン時だけtarget="_blank"を外し、同じWebView内で遷移させることで、
+  // これを避ける。
+  const isStandalonePwa = useIsStandalonePwa();
   // "loading" | "found" | "not_found" | "error"
   const [status, setStatus] = useState("loading");
   const [detail, setDetail] = useState(null);
@@ -3588,8 +3596,7 @@ function QuakeMechDetailPanel({ quake }) {
 
           <a
             href={detail.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+            {...(isStandalonePwa ? {} : { target: "_blank", rel: "noopener noreferrer" })}
             style={{
               display: "block", textAlign: "center", padding: "10px 0",
               fontSize: 12, fontWeight: 600, color: tokens.accentText || "#0A84FF",
