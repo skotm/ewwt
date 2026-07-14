@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.1";
+const APP_VERSION = "1.1.1a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3444,17 +3444,9 @@ function QuakeMechDetailPanel({ quake }) {
   }
 
   return (
-    <div style={{ padding: "2px 14px 16px" }}>
-      <Glass radius={14} style={{ padding: "14px 16px", marginBottom: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: tokens.text, marginBottom: 2 }}>
-          発震機構解(CMT解)
-        </div>
-        <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5 }}>
-          気象庁の解析結果です。マグニチュード5.0程度以上の地震のみ解析されるため、
-          対象の地震でも掲載されていない場合があります。
-        </div>
-      </Glass>
-
+    <>
+      <QuakeDetailCard quake={quake}/>
+      <div style={{ padding: "2px 14px 16px" }}>
       {status === "loading" && (
         <Glass radius={14} style={{ padding: "24px 16px", textAlign: "center" }}>
           <div style={{ fontSize: 12, color: tokens.textSecondary }}>気象庁のデータを確認しています…</div>
@@ -3480,32 +3472,35 @@ function QuakeMechDetailPanel({ quake }) {
 
       {status === "found" && detail && (
         <>
-          {/* 震源球の図・使用観測点数・精度をまとめた「概要」カードを最上部に置く
-              (数値の中身より先に、まず図で全体像を掴めるようにするため)。 */}
-          <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
-            {detail.beachballImageUrl && !imgLoadFailed && (
-              <>
-                <img
-                  src={detail.beachballImageUrl}
-                  alt="震源球(発震機構解)"
-                  style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
-                  onError={() => setImgLoadFailed(true)}
-                />
-                <div style={{ fontSize: 10, color: tokens.textSecondary, margin: "6px 0 4px" }}>
-                  震源球(下半球等積投影)
+          {/* 使用観測点数・精度(左)と震源球の図(右)を横並びにする。 */}
+          <Glass radius={14} style={{ padding: 16, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <DataRow label="使用観測点数" value={detail.stationCount} />
+                <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
+              </div>
+              {detail.beachballImageUrl && (
+                <div style={{ flexShrink: 0, width: 96, textAlign: "center" }}>
+                  {!imgLoadFailed ? (
+                    <img
+                      src={detail.beachballImageUrl}
+                      alt="震源球(発震機構解)"
+                      style={{ width: "100%", borderRadius: 8, background: "#fff" }}
+                      onError={() => setImgLoadFailed(true)}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 10, color: tokens.textSecondary, lineHeight: 1.5 }}>
+                      画像を読み込めませんでした
+                    </div>
+                  )}
                 </div>
-              </>
-            )}
-            {detail.beachballImageUrl && imgLoadFailed && (
-              <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.6, marginBottom: 8 }}>
-                震源球の画像を読み込めませんでした。<br/>
-                下の気象庁のページから確認できます。
+              )}
+            </div>
+            {detail.beachballImageUrl && !imgLoadFailed && (
+              <div style={{ fontSize: 10, color: tokens.textSecondary, textAlign: "right", marginTop: 4 }}>
+                震源球(下半球等積投影)
               </div>
             )}
-            <div style={{ textAlign: "left" }}>
-              <DataRow label="使用観測点数" value={detail.stationCount} />
-              <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
-            </div>
           </Glass>
 
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
@@ -3563,7 +3558,19 @@ function QuakeMechDetailPanel({ quake }) {
           </a>
         </>
       )}
-    </div>
+
+      {/* CMT解についての注意書きは最下部に置く */}
+      <Glass radius={14} style={{ padding: "14px 16px", marginTop: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: tokens.text, marginBottom: 2 }}>
+          発震機構解(CMT解)
+        </div>
+        <div style={{ fontSize: 11, color: tokens.textSecondary, lineHeight: 1.5 }}>
+          気象庁の解析結果です。マグニチュード5.0程度以上の地震のみ解析されるため、
+          対象の地震でも掲載されていない場合があります。
+        </div>
+      </Glass>
+      </div>
+    </>
   );
 }
 
