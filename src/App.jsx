@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.2";
+const APP_VERSION = "1.1.2a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -874,23 +874,37 @@ function MapCanvas({
           // beforeIdに"station-points-symbol"を指定し、観測点マーカーより
           // 必ず下に来るようにする。
           //
-          // プレート境界は元データ(properties.stroke)に境界種別ごとの色
-          // (トランスフォーム=赤・発散=緑・収束=青 など)が入っているため、
-          // それをそのまま使い、値が無い場合のみ既定色にフォールバックする。
+          // 配色はプレート境界・断層とも、種別ごとの派手な色分けはせず、
+          // テーマの文字色と同じ「ink」トーン(ダーク=白系・ライト=黒系)の
+          // 控えめなグレーで統一する。ink自体がこのアプリの海・陸の配色に対して
+          // 読みやすくなるよう選ばれている色なので、地図のどの配色に対しても
+          // 自然と視認性が確保できる。
+          // 「線の先端を丸く」という見た目のため、太めで低不透明度のハロー(縁取り)
+          // レイヤーを下に敷き、その上に細めで高不透明度のメインの線を重ねる
+          // 「ケースドライン」の手法を使う(halo→mainの順にaddLayerすることで、
+          // 両方ともstation-points-symbolの直下・halo→mainの順で正しく積み重なる)。
+          const boundaryLineLayout = { visibility: "none", "line-cap": "round", "line-join": "round" };
+          const boundaryHaloWidth = ["interpolate", ["linear"], ["zoom"], 4, 2.6, 8, 4.5, 12, 7];
+          const boundaryLineWidth = ["interpolate", ["linear"], ["zoom"], 4, 1.1, 8, 1.8, 12, 2.6];
+          const initInk = themeTokensRef.current.ink;
+
           map.addSource("plate-boundaries", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
           });
           map.addLayer({
+            id: "plate-boundaries-halo-layer",
+            type: "line",
+            source: "plate-boundaries",
+            layout: boundaryLineLayout,
+            paint: { "line-color": `rgba(${initInk},0.32)`, "line-width": boundaryHaloWidth },
+          }, "station-points-symbol");
+          map.addLayer({
             id: "plate-boundaries-layer",
             type: "line",
             source: "plate-boundaries",
-            layout: { visibility: "none" },
-            paint: {
-              "line-color": ["coalesce", ["get", "stroke"], "#ff5a36"],
-              "line-width": 1.4,
-              "line-opacity": 0.85,
-            },
+            layout: boundaryLineLayout,
+            paint: { "line-color": `rgba(${initInk},0.8)`, "line-width": boundaryLineWidth },
           }, "station-points-symbol");
 
           map.addSource("faults", {
@@ -898,15 +912,18 @@ function MapCanvas({
             data: { type: "FeatureCollection", features: [] },
           });
           map.addLayer({
+            id: "faults-halo-layer",
+            type: "line",
+            source: "faults",
+            layout: boundaryLineLayout,
+            paint: { "line-color": `rgba(${initInk},0.32)`, "line-width": boundaryHaloWidth },
+          }, "station-points-symbol");
+          map.addLayer({
             id: "faults-layer",
             type: "line",
             source: "faults",
-            layout: { visibility: "none" },
-            paint: {
-              "line-color": "#e67e22",
-              "line-width": 1.2,
-              "line-opacity": 0.9,
-            },
+            layout: boundaryLineLayout,
+            paint: { "line-color": `rgba(${initInk},0.8)`, "line-width": boundaryLineWidth },
           }, "station-points-symbol");
 
           // 震源マーカー用のソース・レイヤー。観測点レイヤーより後にaddLayerすることで、
@@ -1026,7 +1043,9 @@ function MapCanvas({
     if (!map || status !== "ready") return;
     if (!map.getLayer("faults-layer")) return;
 
-    map.setLayoutProperty("faults-layer", "visibility", faultsEnabled ? "visible" : "none");
+    const v = faultsEnabled ? "visible" : "none";
+    map.setLayoutProperty("faults-halo-layer", "visibility", v);
+    map.setLayoutProperty("faults-layer", "visibility", v);
 
     if (faultsEnabled && !faultsLoadedRef.current) {
       faultsLoadedRef.current = true;
@@ -1049,7 +1068,9 @@ function MapCanvas({
     if (!map || status !== "ready") return;
     if (!map.getLayer("plate-boundaries-layer")) return;
 
-    map.setLayoutProperty("plate-boundaries-layer", "visibility", plateBoundariesEnabled ? "visible" : "none");
+    const v = plateBoundariesEnabled ? "visible" : "none";
+    map.setLayoutProperty("plate-boundaries-halo-layer", "visibility", v);
+    map.setLayoutProperty("plate-boundaries-layer", "visibility", v);
 
     if (plateBoundariesEnabled && !plateBoundariesLoadedRef.current) {
       plateBoundariesLoadedRef.current = true;
@@ -1251,6 +1272,14 @@ function MapCanvas({
     map.setPaintProperty("world-line", "line-color", themeTokens.mapWorldLine);
     map.setPaintProperty("prefectures-fill", "fill-color", themeTokens.mapPrefFill);
     map.setPaintProperty("prefectures-line", "line-color", themeTokens.mapPrefLine);
+    if (map.getLayer("plate-boundaries-halo-layer")) {
+      map.setPaintProperty("plate-boundaries-halo-layer", "line-color", `rgba(${themeTokens.ink},0.32)`);
+      map.setPaintProperty("plate-boundaries-layer", "line-color", `rgba(${themeTokens.ink},0.8)`);
+    }
+    if (map.getLayer("faults-halo-layer")) {
+      map.setPaintProperty("faults-halo-layer", "line-color", `rgba(${themeTokens.ink},0.32)`);
+      map.setPaintProperty("faults-layer", "line-color", `rgba(${themeTokens.ink},0.8)`);
+    }
   }, [themeTokens, status]);
 
   return (
