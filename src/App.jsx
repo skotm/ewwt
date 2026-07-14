@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.0.7b";
+const APP_VERSION = "1.1.1";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3480,6 +3480,34 @@ function QuakeMechDetailPanel({ quake }) {
 
       {status === "found" && detail && (
         <>
+          {/* 震源球の図・使用観測点数・精度をまとめた「概要」カードを最上部に置く
+              (数値の中身より先に、まず図で全体像を掴めるようにするため)。 */}
+          <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
+            {detail.beachballImageUrl && !imgLoadFailed && (
+              <>
+                <img
+                  src={detail.beachballImageUrl}
+                  alt="震源球(発震機構解)"
+                  style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
+                  onError={() => setImgLoadFailed(true)}
+                />
+                <div style={{ fontSize: 10, color: tokens.textSecondary, margin: "6px 0 4px" }}>
+                  震源球(下半球等積投影)
+                </div>
+              </>
+            )}
+            {detail.beachballImageUrl && imgLoadFailed && (
+              <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.6, marginBottom: 8 }}>
+                震源球の画像を読み込めませんでした。<br/>
+                下の気象庁のページから確認できます。
+              </div>
+            )}
+            <div style={{ textAlign: "left" }}>
+              <DataRow label="使用観測点数" value={detail.stationCount} />
+              <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
+            </div>
+          </Glass>
+
           <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
             <DataRow label="発生時刻" value={detail.hypo.time} />
             <DataRow label="震源位置" value={detail.hypo.lat && detail.hypo.lon ? `${detail.hypo.lat} ${detail.hypo.lon}` : null} />
@@ -3520,36 +3548,6 @@ function QuakeMechDetailPanel({ quake }) {
             <DataRow label="T軸" value={detail.axes.t.azimuth && detail.axes.t.plunge ? `${detail.axes.t.azimuth}° / ${detail.axes.t.plunge}°` : null} />
             <DataRow label="N軸" value={detail.axes.n.azimuth && detail.axes.n.plunge ? `${detail.axes.n.azimuth}° / ${detail.axes.n.plunge}°` : null} />
           </Glass>
-
-          <Glass radius={14} style={{ padding: "6px 16px", marginBottom: 10 }}>
-            <DataRow label="使用観測点数" value={detail.stationCount} />
-            <DataRow label="解の精度(V.R.)" value={detail.varianceReduction} />
-          </Glass>
-
-          {/* 震源球の図はパネルの最下部に置く(数値情報を先に読んでから、
-              最後に図で確認する流れにするため)。 */}
-          {detail.beachballImageUrl && (
-            <Glass radius={14} style={{ padding: 16, marginBottom: 10, textAlign: "center" }}>
-              {!imgLoadFailed ? (
-                <>
-                  <img
-                    src={detail.beachballImageUrl}
-                    alt="震源球(発震機構解)"
-                    style={{ maxWidth: "70%", borderRadius: 8, background: "#fff" }}
-                    onError={() => setImgLoadFailed(true)}
-                  />
-                  <div style={{ fontSize: 10, color: tokens.textSecondary, marginTop: 6 }}>
-                    震源球(下半球等積投影)
-                  </div>
-                </>
-              ) : (
-                <div style={{ fontSize: 12, color: tokens.textSecondary, lineHeight: 1.6 }}>
-                  震源球の画像を読み込めませんでした。<br/>
-                  下の気象庁のページから確認できます。
-                </div>
-              )}
-            </Glass>
-          )}
 
           <a
             href={detail.sourceUrl}
