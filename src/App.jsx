@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.2c";
+const APP_VERSION = "1.1.3";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -696,7 +696,7 @@ function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.d
 function MapCanvas({
   onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
-  faultsEnabled, plateBoundariesEnabled,
+  faultsEnabled, plateBoundariesEnabled, boundaryLineColorId,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -713,6 +713,11 @@ function MapCanvas({
   // 別のuseEffectでsetPaintPropertyして行う(下方)。
   const themeTokensRef = useRef(themeTokens);
   themeTokensRef.current = themeTokens;
+
+  // 断層・プレート境界の「枠内の色」の現在値をrefでも持っておき、
+  // map.on("load")内(初回マウント時のみ実行)で最新の選択値を読めるようにする。
+  const boundaryLineColorIdRef = useRef(boundaryLineColorId);
+  boundaryLineColorIdRef.current = boundaryLineColorId;
 
   useEffect(() => {
     let cancelled = false;
@@ -875,15 +880,16 @@ function MapCanvas({
           // 必ず下に来るようにする。
           //
           // 配色はプレート境界・断層とも、種別ごとの派手な色分けはせず、
-          // 控えめなグレー系で統一する。
-          // ・ハロー(縁取り)・中の線とも、あえて半透明(rgba)にせず不透明の
-          //   実色にしている。半透明にすると、線同士が交差・分岐する箇所
-          //   (断層の枝分かれ・プレート境界同士の交点など)でアルファが
-          //   重なって不自然に濃く見えてしまうため、それを避けるため。
-          // ・ハロー=mapBoundaryHalo(海・陸どちらの上でもくっきり見える
-          //   明るめ/濃いめのグレー)、中の線=mapBoundaryLine(pageBgと同じ
-          //   色)という組み合わせで、縁取りと芯の明暗がはっきり分かれる
-          //   ようにしている。
+          // 「縁取り(halo)は共通の固定グレー」「枠内の色(core)はユーザーが
+          // 設定で選べる」という組み合わせにする。
+          // ・縁取り(halo)はライト/ダーク共通の固定色(BOUNDARY_HALO_COLOR)。
+          //   どちらのテーマでも海・陸に対して十分なコントラストが出る
+          //   中間グレーを採用している。
+          // ・枠内の色(core)は設定(BOUNDARY_LINE_COLORS)から選んだ色を使う。
+          // ・どちらも、あえて半透明(rgba)にせず不透明の実色にしている。
+          //   半透明にすると、線同士が交差・分岐する箇所(断層の枝分かれ・
+          //   プレート境界同士の交点など)でアルファが重なって不自然に濃く
+          //   見えてしまうため、それを避けるため。
           // 「線の先端を丸く」という見た目のため、太めのハローレイヤーを下に敷き、
           // その上に細めの中の線を重ねる「ケースドライン」の手法を使う
           // (halo→mainの順にaddLayerすることで、両方ともstation-points-symbolの
@@ -891,8 +897,8 @@ function MapCanvas({
           const boundaryLineLayout = { visibility: "none", "line-cap": "round", "line-join": "round" };
           const boundaryHaloWidth = ["interpolate", ["linear"], ["zoom"], 4, 2.2, 8, 3.6, 12, 5.2];
           const boundaryLineWidth = ["interpolate", ["linear"], ["zoom"], 4, 1.0, 8, 1.6, 12, 2.2];
-          const initHalo = themeTokensRef.current.mapBoundaryHalo;
-          const initCore = themeTokensRef.current.mapBoundaryLine;
+          const initHalo = BOUNDARY_HALO_COLOR;
+          const initCore = (BOUNDARY_LINE_COLORS[boundaryLineColorIdRef.current] || BOUNDARY_LINE_COLORS.gray).color;
 
           map.addSource("plate-boundaries", {
             type: "geojson",
@@ -1278,15 +1284,21 @@ function MapCanvas({
     map.setPaintProperty("world-line", "line-color", themeTokens.mapWorldLine);
     map.setPaintProperty("prefectures-fill", "fill-color", themeTokens.mapPrefFill);
     map.setPaintProperty("prefectures-line", "line-color", themeTokens.mapPrefLine);
-    if (map.getLayer("plate-boundaries-halo-layer")) {
-      map.setPaintProperty("plate-boundaries-halo-layer", "line-color", themeTokens.mapBoundaryHalo);
-      map.setPaintProperty("plate-boundaries-layer", "line-color", themeTokens.mapBoundaryLine);
-    }
-    if (map.getLayer("faults-halo-layer")) {
-      map.setPaintProperty("faults-halo-layer", "line-color", themeTokens.mapBoundaryHalo);
-      map.setPaintProperty("faults-layer", "line-color", themeTokens.mapBoundaryLine);
-    }
   }, [themeTokens, status]);
+
+  // 断層・プレート境界の「枠内の色」を、設定で選んだ色に合わせて塗り替える。
+  // 縁取り(halo)はライト/ダーク・設定を問わず固定色なので、ここでは更新しない。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const core = (BOUNDARY_LINE_COLORS[boundaryLineColorId] || BOUNDARY_LINE_COLORS.gray).color;
+    if (map.getLayer("plate-boundaries-layer")) {
+      map.setPaintProperty("plate-boundaries-layer", "line-color", core);
+    }
+    if (map.getLayer("faults-layer")) {
+      map.setPaintProperty("faults-layer", "line-color", core);
+    }
+  }, [boundaryLineColorId, status]);
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: themeTokens.mapBg }}>
@@ -1526,6 +1538,23 @@ function registerStationIcons(map, scheme) {
   });
 }
 
+/* ─────────────────────────────────────────────────────
+   断層・プレート境界レイヤーの配色。
+   ・縁取り(halo)はライト/ダーク共通の固定色にする(どちらのテーマでも
+     海・陸に対して十分なコントラストが出る中間グレーを採用)。
+   ・枠内の色(core)は設定画面でユーザーが選べるようにする。
+   ───────────────────────────────────────────────────── */
+const BOUNDARY_HALO_COLOR = "#86868c";
+
+const BOUNDARY_LINE_COLORS = {
+  gray:   { label: "グレー",   color: "#48484a" },
+  orange: { label: "オレンジ", color: "#ff9500" },
+  red:    { label: "レッド",   color: "#ff3b30" },
+  blue:   { label: "ブルー",   color: "#0a84ff" },
+  green:  { label: "グリーン", color: "#34c759" },
+  purple: { label: "パープル", color: "#af52de" },
+};
+
 const QUAKE_COLOR_SCHEMES = {
   // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。
   legacy: {
@@ -1656,12 +1685,6 @@ const THEME_TOKENS = {
     mapWorldLine: "rgba(255,255,255,0.08)",
     mapPrefFill: "#3a3a3c",   // 都道府県(日本)
     mapPrefLine: "rgba(255,255,255,0.18)",
-    // 断層・プレート境界レイヤーの縁取り(halo)と中の線(core)。
-    // 半透明のrgbaにすると、線同士が交差・重複する場所だけアルファが
-    // 重なって濃く見えてしまうため、あえて不透明(アルファ無し)の実色にして、
-    // 何本重なっても同じ色にしかならないようにしている。
-    mapBoundaryHalo: "#b4b4ba", // 縁取り(海・陸どちらの上でもくっきり見える明るめグレー)
-    mapBoundaryLine: "#121214", // 中の線(pageBgと同じ、縁取りとの明暗差で芯が見える)
   },
   light: {
     pageBg: "#eef0f3",
@@ -1687,19 +1710,46 @@ const THEME_TOKENS = {
     mapWorldLine: "rgba(21,22,26,0.12)",
     mapPrefFill: "#f2f0ea",   // 都道府県(日本)
     mapPrefLine: "rgba(21,22,26,0.22)",
-    // 断層・プレート境界レイヤーの縁取り(halo)と中の線(core)。ダーク側と同じ理由で不透明にする。
-    mapBoundaryHalo: "#4a4a4f", // 縁取り(海・陸どちらの上でもくっきり見える濃いめグレー)
-    mapBoundaryLine: "#eef0f3", // 中の線(pageBgと同じ、縁取りとの明暗差で芯が見える)
   },
 };
 
 // UIのベースになる配色トークンを、モード("dark"|"light")込みでアプリ全体に配るcontext。
-// { mode, tokens, setMode } の形。tokensはTHEME_TOKENS[mode]そのもの。
+// mode: 実際に適用中のライト/ダーク("dark"|"light"、"system"選択時はデバイス設定から解決した結果)。
+// modePref: ユーザーが選んだ設定そのもの("system"|"light"|"dark"、初期設定は"system")。
+// setModePref: modePrefを変更する関数。
 const ThemeContext = createContext({
   mode: "dark",
   tokens: THEME_TOKENS.dark,
-  setMode: () => {},
+  modePref: "system",
+  setModePref: () => {},
 });
+
+// デバイスの配色設定(prefers-color-scheme)をライブで監視するフック。
+// "デバイスの設定に合わせる"がONの間、この値をそのままthemeMode解決に使う。
+// 端末側でライト/ダークが切り替わった場合もリアルタイムに追従する。
+function useSystemThemeMode() {
+  const [systemMode, setSystemMode] = useState(() => {
+    try {
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    } catch (err) {
+      return "dark";
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const handleChange = (e) => setSystemMode(e.matches ? "light" : "dark");
+    if (mq.addEventListener) mq.addEventListener("change", handleChange);
+    else if (mq.addListener) mq.addListener(handleChange); // 古いSafari向けフォールバック
+    return () => {
+      if (mq.removeEventListener) mq.removeEventListener("change", handleChange);
+      else if (mq.removeListener) mq.removeListener(handleChange);
+    };
+  }, []);
+
+  return systemMode;
+}
 
 // ナビ等のハイライトピルを指で押している間だけ本物のガラス(backdrop-filter)に
 // する際のぼかし量。ライトモードは背景の色情報が少なく、ダークと同じ強さでは
@@ -1710,22 +1760,23 @@ function touchGlassBackdropFilter(mode) {
     : "blur(16px) saturate(160%)";
 }
 
-// テーマの選択はlocalStorageに保存し、次回起動時も覚えておく。初期設定はダーク。
+// テーマの選択はlocalStorageに保存し、次回起動時も覚えておく。
+// 値は"system"(デバイスの設定に合わせる。初期設定) | "light" | "dark"。
 const THEME_MODE_STORAGE_KEY = "themeMode";
 
-function loadStoredThemeMode() {
+function loadStoredThemeModePref() {
   try {
     const saved = localStorage.getItem(THEME_MODE_STORAGE_KEY);
-    if (saved === "light" || saved === "dark") return saved;
+    if (saved === "light" || saved === "dark" || saved === "system") return saved;
   } catch (err) {
     console.warn("テーマ設定を読み込めませんでした:", err);
   }
-  return "dark";
+  return "system";
 }
 
-function saveThemeMode(mode) {
+function saveThemeModePref(modePref) {
   try {
-    localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, modePref);
   } catch (err) {
     console.warn("テーマ設定を保存できませんでした:", err);
   }
@@ -1833,6 +1884,31 @@ function savePlateBoundariesEnabled(enabled) {
     localStorage.setItem(PLATE_BOUNDARIES_ENABLED_STORAGE_KEY, String(enabled));
   } catch (err) {
     console.warn("プレート境界表示の設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   断層・プレート境界の「枠内の色」設定。
+   縁取り(halo)はライト/ダーク共通の固定色だが、枠内の色はBOUNDARY_LINE_COLORSの
+   中からユーザーが選べるようにし、localStorageに保存する。デフォルトは"gray"。
+   ───────────────────────────────────────────────────── */
+const BOUNDARY_LINE_COLOR_STORAGE_KEY = "boundaryLineColorId";
+
+function loadStoredBoundaryLineColorId() {
+  try {
+    const saved = localStorage.getItem(BOUNDARY_LINE_COLOR_STORAGE_KEY);
+    if (saved && BOUNDARY_LINE_COLORS[saved]) return saved;
+  } catch (err) {
+    console.warn("断層・プレート境界の色設定を読み込めませんでした:", err);
+  }
+  return "gray";
+}
+
+function saveBoundaryLineColorId(id) {
+  try {
+    localStorage.setItem(BOUNDARY_LINE_COLOR_STORAGE_KEY, id);
+  } catch (err) {
+    console.warn("断層・プレート境界の色設定を保存できませんでした:", err);
   }
 }
 
@@ -4254,6 +4330,7 @@ function BottomDock({
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
+  boundaryLineColorId, onChangeBoundaryLineColorId,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
   stations, searchQuake, onFoundSearchQuake,
@@ -5122,6 +5199,8 @@ function BottomDock({
                   onChangeFaultsEnabled={onChangeFaultsEnabled}
                   plateBoundariesEnabled={plateBoundariesEnabled}
                   onChangePlateBoundariesEnabled={onChangePlateBoundariesEnabled}
+                  boundaryLineColorId={boundaryLineColorId}
+                  onChangeBoundaryLineColorId={onChangeBoundaryLineColorId}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={onChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
@@ -6624,12 +6703,55 @@ function LicenseFileCard() {
   );
 }
 
+// 断層・プレート境界の「枠内の色」選択画面。QuakeColorSchemeSettingsと同じ見た目のリストで、
+// 9色のミニプレビューの代わりに丸い色見本を1つ表示する。
+function BoundaryLineColorSettings({ boundaryLineColorId, onChangeBoundaryLineColorId }) {
+  const { tokens } = useContext(ThemeContext);
+
+  const entries = Object.entries(BOUNDARY_LINE_COLORS);
+  return (
+    <SettingsCard>
+      {entries.map(([id, entry], i) => {
+        const selected = boundaryLineColorId === id;
+        return (
+          <div key={id}>
+            {i > 0 && <SettingsCardDivider/>}
+            <PressableButton
+              onClick={() => onChangeBoundaryLineColorId(id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12,
+                padding: "11px 12px",
+                background: selected ? `rgba(${tokens.ink},0.07)` : "transparent",
+                border: "none", cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <div style={{
+                width: 16, height: 16, borderRadius: 8, flexShrink: 0,
+                background: entry.color,
+                boxShadow: `0 0 0 1px rgba(${tokens.ink},0.15)`,
+              }}/>
+              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>
+                {entry.label}
+              </span>
+              {selected && (
+                <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.85)` }}>✓</span>
+              )}
+            </PressableButton>
+          </div>
+        );
+      })}
+    </SettingsCard>
+  );
+}
+
+
 function SettingsBody({
   path, onNavigate, colorSchemeId, onChangeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
+  boundaryLineColorId, onChangeBoundaryLineColorId,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
 }) {
@@ -6642,7 +6764,7 @@ function SettingsBody({
   } = useContext(GlassOpaqueContext);
 
   // ライト/ダークモード切り替え用。同じくcontext経由で直接購読する。
-  const { mode: themeMode, tokens, setMode: onChangeThemeMode } = useContext(ThemeContext);
+  const { mode: themeMode, tokens, modePref: themeModePref, setModePref: onChangeThemeModePref } = useContext(ThemeContext);
 
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
@@ -6706,6 +6828,7 @@ function SettingsBody({
 
   // 断層・プレート境界(地震カテゴリの項目)の中身。
   // いずれもファイルサイズが大きいデータのため、初期設定は両方OFF。
+  // 縁取り(halo)はライト/ダーク共通の固定色だが、枠内の色はここで選べる。
   if (category === "quake" && leaf === "boundaries") {
     return (
       <>
@@ -6725,6 +6848,11 @@ function SettingsBody({
             onChange={() => onChangePlateBoundariesEnabled(!plateBoundariesEnabled)}
           />
         </SettingsCard>
+        <SettingsHeader title="枠内の色"/>
+        <BoundaryLineColorSettings
+          boundaryLineColorId={boundaryLineColorId}
+          onChangeBoundaryLineColorId={onChangeBoundaryLineColorId}
+        />
       </>
     );
   }
@@ -6770,22 +6898,37 @@ function SettingsBody({
     );
   }
 
-  // 外観(詳細設定カテゴリの項目)の中身。ライトモード/ダークモードの切り替え。
-  // 初期設定はダーク。ここではUIチューム(背景・カード・文字色など)の
-  // 基礎トークンだけを切り替えており、地図の基本配色や震度配色スキームは
-  // 対象外(別途テーマ対応が必要)。
+  // 外観(詳細設定カテゴリの項目)の中身。
+  // 「デバイスの設定に合わせる」が初期設定(ON)で、端末のライト/ダーク設定に
+  // 自動追従する。OFFにした場合のみ、ライト/ダークを手動で選べる。
+  // ここではUIチューム(背景・カード・文字色など)の基礎トークンだけを
+  // 切り替えており、地図の基本配色や震度配色スキームは対象外
+  // (別途テーマ対応が必要)。
   if (category === "advanced" && leaf === "appearance") {
+    const followSystem = themeModePref === "system";
     return (
       <>
         <SettingsHeader title="外観"/>
         <SettingsCard>
           <SettingsToggleRow
-            label="ライトモード"
-            description="オフのときはダークモード(初期設定)です。"
-            checked={themeMode === "light"}
-            onChange={() => onChangeThemeMode(themeMode === "light" ? "dark" : "light")}
+            label="デバイスの設定に合わせる"
+            description="オンにすると、端末のライト/ダークモード設定に自動で追従します(初期設定)。"
+            checked={followSystem}
+            onChange={() => onChangeThemeModePref(followSystem ? themeMode : "system")}
           />
-          <SettingsCardDivider/>
+          {!followSystem && (
+            <>
+              <SettingsCardDivider/>
+              <SettingsToggleRow
+                label="ライトモード"
+                description="オフのときはダークモードです。"
+                checked={themeModePref === "light"}
+                onChange={() => onChangeThemeModePref(themeModePref === "light" ? "dark" : "light")}
+              />
+            </>
+          )}
+        </SettingsCard>
+        <SettingsCard>
           <SettingsToggleRow
             label="フローティングを不透明にする"
             description={
@@ -6909,19 +7052,25 @@ export default function App() {
   }), [glassOpaque, glassOpaqueOverride, suspectedBackdropFilterBroken, handleChangeGlassOpaqueOverride]);
 
   // ライト/ダークモード。設定タブの「詳細設定」→「外観」から切り替える。
-  // 初期設定はダーク。選択はlocalStorageに保存し、次回起動時も復元する。
-  const [themeMode, setThemeModeState] = useState(loadStoredThemeMode); // "dark" | "light"
+  // 初期設定は"system"(デバイスの設定に合わせる)。ユーザーの選択は
+  // localStorageに保存し、次回起動時も復元する。
+  // "system"のときはuseSystemThemeMode()でデバイスのprefers-color-schemeを
+  // ライブ監視し、それをそのまま実際の表示モードとして使う。
+  const [themeModePref, setThemeModePrefState] = useState(loadStoredThemeModePref); // "system" | "light" | "dark"
+  const systemThemeMode = useSystemThemeMode(); // "dark" | "light"(デバイス設定、リアルタイム反映)
+  const themeMode = themeModePref === "system" ? systemThemeMode : themeModePref; // 実際に適用中のモード
 
-  function handleChangeThemeMode(next) {
-    setThemeModeState(next);
-    saveThemeMode(next);
+  function handleChangeThemeModePref(next) {
+    setThemeModePrefState(next);
+    saveThemeModePref(next);
   }
 
   const themeContextValue = useMemo(() => ({
     mode: themeMode,
     tokens: THEME_TOKENS[themeMode],
-    setMode: handleChangeThemeMode,
-  }), [themeMode]);
+    modePref: themeModePref,
+    setModePref: handleChangeThemeModePref,
+  }), [themeMode, themeModePref]);
 
   // App自身はThemeContext.Providerを作る側なので、自分に対してはuseContextせず
   // 計算済みのthemeContextValueから直接参照する。
@@ -6968,6 +7117,14 @@ export default function App() {
   function handleChangePlateBoundariesEnabled(next) {
     setPlateBoundariesEnabledState(next);
     savePlateBoundariesEnabled(next);
+  }
+
+  // 断層・プレート境界の「枠内の色」。設定タブ「地震」内の色選択で操作し、localStorageに永続化する。
+  const [boundaryLineColorId, setBoundaryLineColorIdState] = useState(loadStoredBoundaryLineColorId);
+
+  function handleChangeBoundaryLineColorId(next) {
+    setBoundaryLineColorIdState(next);
+    saveBoundaryLineColorId(next);
   }
 
   // 震度観測点リスト(各地の震度)の表示方法。"grouped"(階層表示、既定) | "list"(一覧表示)。
@@ -7160,6 +7317,7 @@ export default function App() {
           areaFillEnabled={areaFillEnabled}
           faultsEnabled={faultsEnabled}
           plateBoundariesEnabled={plateBoundariesEnabled}
+          boundaryLineColorId={boundaryLineColorId}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
@@ -7239,6 +7397,8 @@ export default function App() {
                   onChangeFaultsEnabled={handleChangeFaultsEnabled}
                   plateBoundariesEnabled={plateBoundariesEnabled}
                   onChangePlateBoundariesEnabled={handleChangePlateBoundariesEnabled}
+                  boundaryLineColorId={boundaryLineColorId}
+                  onChangeBoundaryLineColorId={handleChangeBoundaryLineColorId}
                   quakeFetchLimit={quakeFetchLimit}
                   onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
@@ -7272,6 +7432,8 @@ export default function App() {
               onChangeFaultsEnabled={handleChangeFaultsEnabled}
               plateBoundariesEnabled={plateBoundariesEnabled}
               onChangePlateBoundariesEnabled={handleChangePlateBoundariesEnabled}
+              boundaryLineColorId={boundaryLineColorId}
+              onChangeBoundaryLineColorId={handleChangeBoundaryLineColorId}
               quakeFetchLimit={quakeFetchLimit}
               onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
               stationListDisplayMode={stationListDisplayMode}
