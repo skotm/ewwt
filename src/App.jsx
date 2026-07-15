@@ -698,7 +698,7 @@ function MapCanvas({
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
   faultsEnabled, plateBoundariesEnabled, boundaryLineColorId,
   epicenterPoints = [], onSelectEpicenterPoint,
-  pointsLoading = false,
+  pointsLoading = false, epicenterLoading = false,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1477,10 +1477,11 @@ function MapCanvas({
         </div>
       )}
 
-      {/* 推計震度分布の画像→ベクター変換中、または観測点データの突き合わせ処理中に、
-          地図を隠さない小さなローディング表示を出す。両方同時に走ることもあるが、
-          その場合は推計震度分布側の文言を優先表示する(観測点データの方が先に終わることが多いため)。 */}
-      {status === "ready" && (estIntensityLoading || pointsLoading) && (
+      {/* 推計震度分布の画像→ベクター変換中、観測点データの突き合わせ処理中、
+          または震央分布の丸をバックグラウンドで読み込み中に、地図を隠さない
+          小さなローディング表示を出す。複数同時に走ることもあるが、その場合は
+          推計震度分布 → 観測点データ → 震央分布 の優先順で1つだけ文言を出す。 */}
+      {status === "ready" && (estIntensityLoading || pointsLoading || epicenterLoading) && (
         <div style={{
           position: "absolute",
           top: "calc(14px + env(safe-area-inset-top, 0px))",
@@ -1510,7 +1511,9 @@ function MapCanvas({
             animation: "spin 0.8s linear infinite",
             flexShrink: 0,
           }}/>
-          {estIntensityLoading ? "推計震度分布を計算中…" : "観測点データを処理中…"}
+          {estIntensityLoading ? "推計震度分布を計算中…"
+            : pointsLoading ? "観測点データを処理中…"
+            : "震央分布を読み込み中…"}
         </div>
       )}
 
@@ -2993,6 +2996,7 @@ function eqdbDetailToEpicenterPoint(detail, listItem) {
 // キャッシュ済みの分は即座に反映され、未取得の分は取得でき次第、順次追加されていく。
 function useEqdbEpicenterPoints(rawList) {
   const [points, setPoints] = useState([]);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -3009,11 +3013,19 @@ function useEqdbEpicenterPoints(rawList) {
 
     rebuildFromCache(); // まずキャッシュ済みの分だけ即座に反映する
 
+    const total = (rawList || []).length;
+    if (total === 0) {
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
+    setLoading(true);
+
     let nextIndex = 0;
+    let completed = 0;
     async function worker() {
       while (!cancelled) {
         const i = nextIndex++;
-        if (i >= (rawList || []).length) return;
+        if (i >= total) return;
         const item = rawList[i];
         if (!eqdbEventDetailCache.has(item.id)) {
           try {
@@ -3024,6 +3036,8 @@ function useEqdbEpicenterPoints(rawList) {
           if (cancelled) return;
           rebuildFromCache();
         }
+        completed++;
+        if (!cancelled && completed >= total) setLoading(false);
       }
     }
     const CONCURRENCY = 3;
@@ -3032,7 +3046,7 @@ function useEqdbEpicenterPoints(rawList) {
     return () => { cancelled = true; };
   }, [rawList]);
 
-  return points;
+  return { points, loading };
 }
 
 // 点(lat,lon)が、GeoJSONのリング(座標配列 [[lon,lat], ...])の内側にあるかどうかを
@@ -4610,6 +4624,7 @@ function BottomDock({
   stationListDisplayMode, onChangeStationListDisplayMode,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
+  onEpicenterLoadingChange,
   mapSelectSignal,
   uiScale = 1,
 }) {
@@ -4713,6 +4728,10 @@ function BottomDock({
      ───────────────────────────────────────────────────── */
   const [nearbyEpicenterPoints, setNearbyEpicenterPoints] = useState([]);
   const [searchEpicenterPoints, setSearchEpicenterPoints] = useState([]);
+  // 震央分布の丸を、まだ全件分バックグラウンド解決しきっていない間のフラグ。
+  // 地図側でローディング表示を出すために使う。
+  const [nearbyEpicenterLoading, setNearbyEpicenterLoading] = useState(false);
+  const [searchEpicenterLoading, setSearchEpicenterLoading] = useState(false);
 
   const selectedForMap = quakes.find(q => q.id === selectedQuakeId)
     || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
@@ -4739,6 +4758,19 @@ function BottomDock({
   useEffect(() => {
     onEpicenterPointsChange?.(activeEpicenterPoints);
   }, [activeEpicenterPoints]);
+
+  // 震央分布の丸がまだ読み込み中かどうかも、表示中の分布(近傍/検索)に応じて同様に選ぶ。
+  const activeEpicenterLoading = useMemo(() => {
+    if (active !== "quake") return false;
+    if (nearbyQuakeFor) return nearbyEpicenterLoading;
+    if (selectedForMap) return false;
+    if (quakeViewMode === "search") return searchEpicenterLoading;
+    return false;
+  }, [active, nearbyQuakeFor, nearbyEpicenterLoading, selectedForMap, quakeViewMode, searchEpicenterLoading]);
+
+  useEffect(() => {
+    onEpicenterLoadingChange?.(activeEpicenterLoading);
+  }, [activeEpicenterLoading]);
 
   // 地震タブの「戻る」ボタン(フローティングの外にある丸ボタン)の挙動。
   // 手前で開いている画面から順に閉じていくスタック式:
@@ -4952,6 +4984,11 @@ function BottomDock({
     if (mapSelectSignal !== lastMapSelectSignal.current) {
       lastMapSelectSignal.current = mapSelectSignal;
       setSnapIndex(1);
+      // 近傍の地震一覧を開いたまま丸をタップした場合、一覧側の表示を優先してしまい
+      // (a)フローティングに選んだ地震の詳細が出ない (b)他の丸が消えない、という
+      // 2つの不具合につながるため、丸タップでの選択は明示的に一覧表示を閉じる。
+      setNearbyQuakeFor(null);
+      setNearbyOriginId(null);
     }
   }, [mapSelectSignal]);
 
@@ -5403,6 +5440,7 @@ function BottomDock({
                             colorScheme={colorScheme}
                             onFoundQuake={onFoundSearchQuake}
                             onPointsChange={setNearbyEpicenterPoints}
+                            onLoadingChange={setNearbyEpicenterLoading}
                             onSelectQuake={(id) => {
                               if (scrollRef.current) nearbyListScrollTopRef.current = scrollRef.current.scrollTop;
                               setNearbyQuakeFor(null);
@@ -5491,6 +5529,7 @@ function BottomDock({
                         onSearchExecuted={() => setSnapIndex(3)}
                         scrollContainerRef={scrollRef}
                         onPointsChange={setSearchEpicenterPoints}
+                        onLoadingChange={setSearchEpicenterLoading}
                       />
                     );
                   }
@@ -6106,7 +6145,7 @@ const NEARBY_SORT_BUTTONS = [
 // 済むよう、コンポーネントの外(モジュールスコープ)にキャッシュを持たせる。
 const nearbyQuakeSearchCache = new Map();
 
-function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake, onPointsChange }) {
+function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake, onPointsChange, onLoadingChange }) {
   const { tokens } = useContext(ThemeContext);
 
   const cached = nearbyQuakeSearchCache.get(place);
@@ -6117,11 +6156,16 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
   const [loadingId, setLoadingId] = useState(null);
 
   // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
-  // 呼び出し元(BottomDock)へ伝える。
-  const epicenterPoints = useEqdbEpicenterPoints(results);
+  // 呼び出し元(BottomDock)へ伝える。まだ解決しきっていない間はonLoadingChangeで
+  // 「読み込み中」も伝え、地図上にローディング表示を出せるようにする。
+  const { points: epicenterPoints, loading: epicenterLoading } = useEqdbEpicenterPoints(results);
   useEffect(() => {
     onPointsChange?.(epicenterPoints);
   }, [epicenterPoints]);
+  useEffect(() => {
+    onLoadingChange?.(epicenterLoading);
+    return () => onLoadingChange?.(false);
+  }, [epicenterLoading]);
 
   useEffect(() => {
     if (nearbyQuakeSearchCache.has(place)) return; // キャッシュ済みなら検索し直さない
@@ -6244,7 +6288,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
    通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef, onPointsChange }) {
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef, onPointsChange, onLoadingChange }) {
   const { tokens, mode } = useContext(ThemeContext);
 
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
@@ -6255,11 +6299,16 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
   } = search;
 
   // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
-  // 呼び出し元(BottomDock)へ伝える。
-  const epicenterPoints = useEqdbEpicenterPoints(results);
+  // 呼び出し元(BottomDock)へ伝える。まだ解決しきっていない間はonLoadingChangeで
+  // 「読み込み中」も伝え、地図上にローディング表示を出せるようにする。
+  const { points: epicenterPoints, loading: epicenterLoading } = useEqdbEpicenterPoints(results);
   useEffect(() => {
     onPointsChange?.(epicenterPoints);
   }, [epicenterPoints]);
+  useEffect(() => {
+    onLoadingChange?.(epicenterLoading);
+    return () => onLoadingChange?.(false);
+  }, [epicenterLoading]);
 
   // 検索条件・結果一覧の状態は、選択解除で再マウントされても消えないよう
   // 親(BottomDock)側で保持している。ここでは差分だけをマージして書き戻す。
@@ -7532,6 +7581,9 @@ export default function App() {
   // 震央分布(地図上の丸)。今どの一覧(P2P一覧/近傍地震検索/データベース検索)を
   // 表示中かに応じて、BottomDock側で計算した点の配列をそのまま受け取る。
   const [epicenterPoints, setEpicenterPoints] = useState([]);
+  // 震央分布の丸が、まだ全件分バックグラウンド解決しきっていない間true。
+  // 地図側でローディング表示を出すために使う。
+  const [epicenterLoading, setEpicenterLoading] = useState(false);
 
   // 震央分布の丸をタップして選択するたびに1増える信号。BottomDock側では
   // この値が変わるたびに、フローティングの高さを「中」に揃える
@@ -7744,6 +7796,7 @@ export default function App() {
           epicenterPoints={epicenterPoints}
           onSelectEpicenterPoint={handleSelectEpicenterPoint}
           pointsLoading={stationPointsProcessing}
+          epicenterLoading={epicenterLoading}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
@@ -7833,6 +7886,7 @@ export default function App() {
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
                   onEpicenterPointsChange={setEpicenterPoints}
+                  onEpicenterLoadingChange={setEpicenterLoading}
                   mapSelectSignal={mapSelectSignal}
                 />
               </div>
@@ -7870,6 +7924,7 @@ export default function App() {
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
               onEpicenterPointsChange={setEpicenterPoints}
+              onEpicenterLoadingChange={setEpicenterLoading}
               mapSelectSignal={mapSelectSignal}
             />
           )}
