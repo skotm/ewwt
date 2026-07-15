@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.2d";
+const APP_VERSION = "1.1.3e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1379,13 +1379,21 @@ function MapCanvas({
 
   // 震央分布(P2P地震一覧・近傍地震検索・データベース検索)のデータを反映する。
   // 呼び出し元(App/BottomDock)側で、今どの一覧を表示中かに応じて渡す点の
-  // 配列を切り替えているので、ここでは受け取った配列をそのままGeoJSON化するだけ。
+  // 配列を切り替えているので、ここでは受け取った配列をGeoJSON化するだけ。
+  // MapLibreのcircleレイヤーには「z-index」に相当するものが無く、重なった時の
+  // 上下関係はソースの配列順(後ろにあるものほど上)がそのまま描画順になるため、
+  // 最大震度が大きいものほど後ろに来るよう昇順にソートしてから渡す。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     const source = map.getSource("epicenter-points");
     if (!source) return;
-    const features = (epicenterPoints || [])
+    const sortedPoints = [...(epicenterPoints || [])].sort((a, b) => {
+      const ra = QUAKE_INTENSITY_RANK[a.maxIntensityKey] ?? -1;
+      const rb = QUAKE_INTENSITY_RANK[b.maxIntensityKey] ?? -1;
+      return ra - rb;
+    });
+    const features = sortedPoints
       .filter(p => Number.isFinite(p.latitude) && Number.isFinite(p.longitude))
       .map(p => ({
         type: "Feature",
@@ -2578,7 +2586,19 @@ function buildEstIntensityFillColorExpr(colorScheme) {
 }
 
 // 震央分布(circleレイヤー)の色分けに使う、震度キーの全パターン。
-const QUAKE_INTENSITY_KEYS = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7", "?"];
+// "5"/"6"(弱/強の区分が無い旧震度階級)も含める。QUAKE_COLOR_SCHEMESの各配色は
+// これらを既にスキーム内の色(5弱/6弱と同じ色)として持っているため、そのまま
+// 拾えば「今ある配色に従う」ことになる。
+const QUAKE_INTENSITY_KEYS = ["0", "1", "2", "3", "4", "5", "5-", "5+", "6", "6-", "6+", "7", "?"];
+
+// 震央分布を「最大震度が大きいものほど上(=後から描画)」にするための重み。
+// 数字が大きいほど後で描画される=他の丸に重なった時に上に来る。
+// "5"/"6"(旧震度階級)は、実際の強さとしては5弱/6弱相当なのでそこに合わせておく。
+// "?"(不明)は最も弱い扱いにする。
+const QUAKE_INTENSITY_RANK = {
+  "?": -1, "0": 0, "1": 1, "2": 2, "3": 3, "4": 4,
+  "5": 5, "5-": 5, "5+": 6, "6": 7, "6-": 7, "6+": 8, "7": 9,
+};
 
 // 現在の震度配色スキームから、震央分布(circle-color/circle-stroke-color)用の
 // match式を組み立てる。P2P地震一覧・近傍地震検索・データベース検索、
@@ -4587,6 +4607,7 @@ function BottomDock({
   stationListDisplayMode, onChangeStationListDisplayMode,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
+  mapSelectSignal,
   uiScale = 1,
 }) {
   const { tokens, mode } = useContext(ThemeContext);
@@ -4918,6 +4939,18 @@ function BottomDock({
       setSnapIndex(layerOpen ? (active === "quake" ? 3 : 4) : 0);
     }
   }, [layerOpen, active]);
+
+  // 震央分布(地図上の丸)をタップして地震を選択した時も、一覧内から選んだ時
+  // (handleSelectQuakeForScroll)と同じく、フローティングの高さを「中」に揃える。
+  // mapSelectSignalは「丸がタップされるたびに1増える」だけの値なので、
+  // 初回マウント時(値が変わっていない)には反応しないようにしておく。
+  const lastMapSelectSignal = useRef(mapSelectSignal);
+  useEffect(() => {
+    if (mapSelectSignal !== lastMapSelectSignal.current) {
+      lastMapSelectSignal.current = mapSelectSignal;
+      setSnapIndex(1);
+    }
+  }, [mapSelectSignal]);
 
   // 地震の選択が「あり→なし」に変わった(=戻るボタンで選択解除された)ら、
   // 詳細カード表示の「中」から一覧表示の「中高」へ戻す。
@@ -7477,6 +7510,11 @@ export default function App() {
   // 表示中かに応じて、BottomDock側で計算した点の配列をそのまま受け取る。
   const [epicenterPoints, setEpicenterPoints] = useState([]);
 
+  // 震央分布の丸をタップして選択するたびに1増える信号。BottomDock側では
+  // この値が変わるたびに、フローティングの高さを「中」に揃える
+  // (一覧内から選んだ時のhandleSelectQuakeForScrollと同じ挙動にするため)。
+  const [mapSelectSignal, setMapSelectSignal] = useState(0);
+
   // 震央分布の丸がタップされた時の選択処理。
   // ・P2P地震一覧由来の点(id=通常の地震ID)は、そのままselectedQuakeIdにする。
   // ・近傍地震検索・データベース検索由来の点(id="eqdb_"始まり)は、
@@ -7491,10 +7529,12 @@ export default function App() {
         const card = buildEqdbQuakeCard(point._eqdbDetail, point._eqdbListItem, stations, geo?.areas);
         setSearchQuake(card);
         setSelectedQuakeId(card.id);
+        setMapSelectSignal(n => n + 1);
       });
       return;
     }
     setSelectedQuakeId(id);
+    setMapSelectSignal(n => n + 1);
   }
 
   const toggleLayer = id => {
@@ -7745,6 +7785,7 @@ export default function App() {
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
                   onEpicenterPointsChange={setEpicenterPoints}
+                  mapSelectSignal={mapSelectSignal}
                 />
               </div>
             </Glass>
@@ -7781,6 +7822,7 @@ export default function App() {
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
               onEpicenterPointsChange={setEpicenterPoints}
+              mapSelectSignal={mapSelectSignal}
             />
           )}
         </div>
