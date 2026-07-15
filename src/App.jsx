@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.3b";
+const APP_VERSION = "1.1.2c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -897,7 +897,7 @@ function MapCanvas({
           const boundaryLineLayout = { visibility: "none", "line-cap": "round", "line-join": "round" };
           const boundaryHaloWidth = ["interpolate", ["linear"], ["zoom"], 4, 2.2, 8, 3.6, 12, 5.2];
           const boundaryLineWidth = ["interpolate", ["linear"], ["zoom"], 4, 1.0, 8, 1.6, 12, 2.2];
-          const initHalo = BOUNDARY_HALO_COLOR;
+          const initHalo = getBoundaryHaloColor(boundaryLineColorIdRef.current);
           const initCore = (BOUNDARY_LINE_COLORS[boundaryLineColorIdRef.current] || BOUNDARY_LINE_COLORS.gray).color;
 
           map.addSource("plate-boundaries", {
@@ -1287,16 +1287,20 @@ function MapCanvas({
   }, [themeTokens, status]);
 
   // 断層・プレート境界の「枠内の色」を、設定で選んだ色に合わせて塗り替える。
-  // 縁取り(halo)はライト/ダーク・設定を問わず固定色なので、ここでは更新しない。
+  // 縁取り(halo)は基本的にライト/ダーク・設定を問わず固定色だが、
+  // 枠内の色が「グレー」の時だけ白にして、芯とのコントラストを保つ。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     const core = (BOUNDARY_LINE_COLORS[boundaryLineColorId] || BOUNDARY_LINE_COLORS.gray).color;
+    const halo = getBoundaryHaloColor(boundaryLineColorId);
     if (map.getLayer("plate-boundaries-layer")) {
       map.setPaintProperty("plate-boundaries-layer", "line-color", core);
+      map.setPaintProperty("plate-boundaries-halo-layer", "line-color", halo);
     }
     if (map.getLayer("faults-layer")) {
       map.setPaintProperty("faults-layer", "line-color", core);
+      map.setPaintProperty("faults-halo-layer", "line-color", halo);
     }
   }, [boundaryLineColorId, status]);
 
@@ -1545,6 +1549,15 @@ function registerStationIcons(map, scheme) {
    ・枠内の色(core)は設定画面でユーザーが選べるようにする。
    ───────────────────────────────────────────────────── */
 const BOUNDARY_HALO_COLOR = "#86868c";
+
+// 枠内の色が「グレー」の時だけ、縁取り(halo)を白にする。
+// core・halo両方が似た中間グレーだと、二層構造(縁取り+芯)のコントラストが
+// なくなって見分けにくくなるため、グレー選択時だけ縁取りを明るくして
+// 芯とのコントラストを保つ。それ以外の色(オレンジ等)は、既に彩度差で
+// haloとの区別がつくため、共通の固定グレーのままにする。
+function getBoundaryHaloColor(colorId) {
+  return colorId === "gray" ? "#ffffff" : BOUNDARY_HALO_COLOR;
+}
 
 const BOUNDARY_LINE_COLORS = {
   gray:   { label: "グレー",   color: "#9a9a9f" },
