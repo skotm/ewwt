@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.2c";
+const APP_VERSION = "1.1.2d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -697,6 +697,7 @@ function MapCanvas({
   onReady, stationPoints, hypocenters, isWide,
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
   faultsEnabled, plateBoundariesEnabled, boundaryLineColorId,
+  epicenterPoints = [], onSelectEpicenterPoint,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -705,6 +706,22 @@ function MapCanvas({
   // 現在選択中の震度配色スキーム。観測点マーカー・震度分布の塗り分けの両方で使う。
   const colorSchemeId = useContext(QuakeColorSchemeContext);
   const colorScheme = QUAKE_COLOR_SCHEMES[colorSchemeId] || QUAKE_COLOR_SCHEMES.fill;
+  // 震央分布(circleレイヤー)は map.on("load") 内(初回マウント時のみ実行)で
+  // 作るため、生成時点の最新配色をrefで参照できるようにしておく
+  // (切り替え時の反映は別のuseEffectでsetPaintPropertyする。下方)。
+  const colorSchemeRef = useRef(colorScheme);
+  colorSchemeRef.current = colorScheme;
+
+  // 震央分布の丸をホバー/タッチした時に出す簡易ツールチップ。
+  // { x, y, title, text } | null。x,yは地図コンテナ基準のスクリーン座標
+  // (MapLibreのe.pointがそのままその座標系なので、変換不要で使える)。
+  const [epicenterTooltip, setEpicenterTooltip] = useState(null);
+
+  // 震央分布の丸をタップした時に呼ぶ選択コールバック。
+  // map.on("load")内の登録は初回マウント時の1回きりなので、refで最新の
+  // 関数を参照できるようにしておく。
+  const onSelectEpicenterPointRef = useRef(onSelectEpicenterPoint);
+  onSelectEpicenterPointRef.current = onSelectEpicenterPoint;
   // 地図の基本配色(海・陸・都道府県境界線)。ライト/ダークモードで切り替える。
   const { tokens: themeTokens, mode } = useContext(ThemeContext);
   const tokens = themeTokens; // 下方で自動変換されたtokens.*参照のためのエイリアス
@@ -938,6 +955,34 @@ function MapCanvas({
             paint: { "line-color": initCore, "line-width": boundaryLineWidth },
           }, "station-points-symbol");
 
+          // 震央分布(P2P地震一覧・近傍地震検索・データベース検索の結果を、
+          // 震度配色の丸として地図上に重ねて表示する)。
+          // 独自のcanvasレイヤーではなくMapLibre標準のcircleレイヤーにすることで、
+          // map.on('click'/'mousemove', layerId, ...)によるタップ選択・
+          // ホバー/タッチ時のツールチップ表示がそのまま使える。
+          // beforeIdを指定していないため、ここまでに作った他のレイヤー
+          // (観測点・断層・プレート境界など)より上に、かつこの後に作る
+          // hypocenter-point-symbol(選択中の地震の×印)より下に積み重なる。
+          map.addSource("epicenter-points", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "epicenter-points-layer",
+            type: "circle",
+            source: "epicenter-points",
+            paint: {
+              // 参考にしたLeaflet版(circleMarker)と同じ考え方で、マグニチュードに
+              // 応じた固定ピクセル半径にする(ズームで拡大縮小しない)。
+              "circle-radius": ["max", ["*", ["coalesce", ["get", "mag"], 4], 2.2], 5],
+              "circle-color": buildEpicenterCircleColorExpr(colorSchemeRef.current),
+              "circle-opacity": 0.45,
+              "circle-stroke-color": buildEpicenterCircleColorExpr(colorSchemeRef.current),
+              "circle-stroke-width": 1.4,
+              "circle-stroke-opacity": 0.95,
+            },
+          });
+
           // 震源マーカー用のソース・レイヤー。観測点レイヤーより後にaddLayerすることで、
           // MapLibreのレイヤー順だけで「震源は常に観測点より上」を保証する。
           map.addSource("hypocenter-point", {
@@ -955,6 +1000,34 @@ function MapCanvas({
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
             },
+          });
+
+          // 震央分布の丸のタップ選択・ホバー/タッチ時のツールチップ表示。
+          map.on("mouseenter", "epicenter-points-layer", () => {
+            map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", "epicenter-points-layer", () => {
+            map.getCanvas().style.cursor = "";
+            setEpicenterTooltip(null);
+          });
+          map.on("mousemove", "epicenter-points-layer", (e) => {
+            if (!e.features || !e.features.length) return;
+            const p = e.features[0].properties || {};
+            const magNum = Number(p.mag);
+            const magText = Number.isFinite(magNum) && magNum > 0 ? `M${magNum.toFixed(1)}` : "M不明";
+            const depthNum = Number(p.depth);
+            const depthText = depthNum === 0 ? "ごく浅い" : (Number.isFinite(depthNum) && depthNum > 0 ? `${depthNum}km` : "深さ不明");
+            setEpicenterTooltip({
+              x: e.point.x,
+              y: e.point.y,
+              title: p.place || "震源地不明",
+              text: `${p.time || ""}　${magText}　深さ${depthText}`,
+            });
+          });
+          map.on("click", "epicenter-points-layer", (e) => {
+            if (!e.features || !e.features.length) return;
+            setEpicenterTooltip(null);
+            onSelectEpicenterPointRef.current?.(e.features[0].properties.id);
           });
 
           setStatus("ready");
@@ -1304,6 +1377,41 @@ function MapCanvas({
     }
   }, [boundaryLineColorId, status]);
 
+  // 震央分布(P2P地震一覧・近傍地震検索・データベース検索)のデータを反映する。
+  // 呼び出し元(App/BottomDock)側で、今どの一覧を表示中かに応じて渡す点の
+  // 配列を切り替えているので、ここでは受け取った配列をそのままGeoJSON化するだけ。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const source = map.getSource("epicenter-points");
+    if (!source) return;
+    const features = (epicenterPoints || [])
+      .filter(p => Number.isFinite(p.latitude) && Number.isFinite(p.longitude))
+      .map(p => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+        properties: {
+          id: p.id,
+          mag: p.magnitude,
+          depth: p.depth,
+          scaleKey: p.maxIntensityKey,
+          time: p.time,
+          place: p.place,
+        },
+      }));
+    source.setData({ type: "FeatureCollection", features });
+  }, [epicenterPoints, status]);
+
+  // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("epicenter-points-layer")) return;
+    const expr = buildEpicenterCircleColorExpr(colorScheme);
+    map.setPaintProperty("epicenter-points-layer", "circle-color", expr);
+    map.setPaintProperty("epicenter-points-layer", "circle-stroke-color", expr);
+  }, [colorScheme, status]);
+
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: themeTokens.mapBg }}>
       <div
@@ -1333,6 +1441,30 @@ function MapCanvas({
             animation: "spin 0.8s linear infinite",
           }}/>
           <span style={{ fontSize: 12 }}>地図を読み込み中…</span>
+        </div>
+      )}
+
+      {/* 震央分布の丸をホバー/タッチした時に出る簡易ツールチップ */}
+      {epicenterTooltip && (
+        <div style={{
+          position: "absolute",
+          left: epicenterTooltip.x,
+          top: epicenterTooltip.y,
+          transform: "translate(-50%, -100%) translateY(-10px)",
+          pointerEvents: "none",
+          zIndex: 20,
+          padding: "6px 10px",
+          borderRadius: 10,
+          background: mode === "dark" ? "rgba(28,28,30,0.92)" : "rgba(255,255,255,0.95)",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.35)",
+          color: tokens.text,
+          fontSize: 11,
+          lineHeight: 1.4,
+          whiteSpace: "nowrap",
+          maxWidth: 220,
+        }}>
+          <div style={{ fontWeight: 700, marginBottom: 2 }}>{epicenterTooltip.title}</div>
+          <div>{epicenterTooltip.text}</div>
         </div>
       )}
 
@@ -2445,6 +2577,21 @@ function buildEstIntensityFillColorExpr(colorScheme) {
   return expr;
 }
 
+// 震央分布(circleレイヤー)の色分けに使う、震度キーの全パターン。
+const QUAKE_INTENSITY_KEYS = ["0", "1", "2", "3", "4", "5-", "5+", "6-", "6+", "7", "?"];
+
+// 現在の震度配色スキームから、震央分布(circle-color/circle-stroke-color)用の
+// match式を組み立てる。P2P地震一覧・近傍地震検索・データベース検索、
+// どの震央分布も同じ配色ルールで塗る。
+function buildEpicenterCircleColorExpr(colorScheme) {
+  const expr = ["match", ["get", "scaleKey"]];
+  for (const key of QUAKE_INTENSITY_KEYS) {
+    expr.push(key, (colorScheme.colors[key] || colorScheme.colors["0"]).bg);
+  }
+  expr.push((colorScheme.colors["?"] || colorScheme.colors["0"]).bg);
+  return expr;
+}
+
 // 直近の地震情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
 // limit: 設定画面で指定された取得件数(1〜1000、デフォルト100)。
 //
@@ -2772,6 +2919,97 @@ async function fetchEqdbEvent(id) {
   const data = await res.json();
   if (data.res && Array.isArray(data.res.hyp) && data.res.hyp.length > 0) return data.res;
   return null;
+}
+
+/* ─────────────────────────────────────────────────────
+   震央分布(地図上の丸)用: 気象庁 震度データベース(eqdb)の座標プリフェッチ。
+   eqdbの一覧検索(mode=search、近傍地震検索・データベース検索で使用)は
+   震央の緯度経度を返さない。座標が分かるのは1件ごとの詳細(mode=event)
+   だけなので、一覧が決まったらバックグラウンドで少しずつ詳細を取得し、
+   震央分布に反映していく。
+   取得済みの詳細はモジュールスコープのキャッシュ(id→detail)に載せておき、
+   一覧をタップして選択する時にも同じデータをそのまま使い回せるようにする
+   (二重に同じ地震を取得しないため)。
+   ───────────────────────────────────────────────────── */
+const eqdbEventDetailCache = new Map();
+
+async function fetchEqdbEventCached(id) {
+  if (eqdbEventDetailCache.has(id)) return eqdbEventDetailCache.get(id);
+  const detail = await fetchEqdbEvent(id);
+  if (detail) eqdbEventDetailCache.set(id, detail);
+  return detail;
+}
+
+// eqdbのmode=event詳細(+検索一覧の元データ)から、震央分布1点分の情報を作る。
+// 選択(タップ)時にそのままbuildEqdbQuakeCardへ渡せるよう、元データも持たせておく。
+function eqdbDetailToEpicenterPoint(detail, listItem) {
+  if (!detail || !Array.isArray(detail.hyp) || !detail.hyp[0]) return null;
+  const hyp = detail.hyp[0];
+  const lat = parseFloat(hyp.lat), lon = parseFloat(hyp.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const scale = eqdbIntensityStringToScale(hyp.maxI || "");
+  const mag = parseFloat(hyp.mag);
+  const depMatch = (hyp.dep || "").match(/\d+/);
+  return {
+    id: `eqdb_${listItem?.id || hyp.name}`,
+    latitude: lat,
+    longitude: lon,
+    magnitude: Number.isFinite(mag) && mag > 0 ? mag : null,
+    maxIntensityKey: scale > 0 ? maxScaleToIntensityKey(scale) : "?",
+    time: eqdbIdToTimeDisplay(listItem?.id) || (listItem?.ot || ""),
+    depth: depMatch ? parseInt(depMatch[0], 10) : null,
+    place: hyp.name || listItem?.name || "震源地不明",
+    _eqdbListItem: listItem,
+    _eqdbDetail: detail,
+  };
+}
+
+// 近傍地震検索・データベース検索の結果一覧(rawList、座標を持たない生のeqdb一覧項目)
+// から、震央分布用の点をバックグラウンドで少しずつ解決していくフック。
+// 同時に取得するのは3件までにして、APIへの負荷と表示までの速さのバランスを取る。
+// キャッシュ済みの分は即座に反映され、未取得の分は取得でき次第、順次追加されていく。
+function useEqdbEpicenterPoints(rawList) {
+  const [points, setPoints] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    function rebuildFromCache() {
+      const next = [];
+      for (const item of rawList || []) {
+        const detail = eqdbEventDetailCache.get(item.id);
+        const point = detail ? eqdbDetailToEpicenterPoint(detail, item) : null;
+        if (point) next.push(point);
+      }
+      if (!cancelled) setPoints(next);
+    }
+
+    rebuildFromCache(); // まずキャッシュ済みの分だけ即座に反映する
+
+    let nextIndex = 0;
+    async function worker() {
+      while (!cancelled) {
+        const i = nextIndex++;
+        if (i >= (rawList || []).length) return;
+        const item = rawList[i];
+        if (!eqdbEventDetailCache.has(item.id)) {
+          try {
+            await fetchEqdbEventCached(item.id);
+          } catch (err) {
+            // この1件は諦めて次へ(震央分布は「取れた分だけ表示」でよいため)
+          }
+          if (cancelled) return;
+          rebuildFromCache();
+        }
+      }
+    }
+    const CONCURRENCY = 3;
+    for (let i = 0; i < CONCURRENCY; i++) worker();
+
+    return () => { cancelled = true; };
+  }, [rawList]);
+
+  return points;
 }
 
 // 点(lat,lon)が、GeoJSONのリング(座標配列 [[lon,lat], ...])の内側にあるかどうかを
@@ -4348,6 +4586,7 @@ function BottomDock({
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
   stations, searchQuake, onFoundSearchQuake,
+  onEpicenterPointsChange,
   uiScale = 1,
 }) {
   const { tokens, mode } = useContext(ThemeContext);
@@ -4438,6 +4677,44 @@ function BottomDock({
       setMechDetailOpen(false);
     }
   }, [selectedQuakeId]);
+
+  /* ─────────────────────────────────────────────────────
+     震央分布(地図上に丸で重ねて表示し、タップで選択できるようにする機能)。
+     P2P地震一覧(quakes)・近傍地震検索(NearbyQuakesPanel)・データベース検索
+     (QuakeSearchPanel)のうち、「今どれを表示中か」に応じて1つだけをMapCanvasに
+     渡す。個別の地震を選択して詳細を見ている間は、震源のバツ印だけで十分なため
+     分布は消す。
+     近傍・検索の2つは、生の一覧に座標が無く、子コンポーネント側で
+     バックグラウンド解決した点をonPointsChangeで受け取って保持している。
+     ───────────────────────────────────────────────────── */
+  const [nearbyEpicenterPoints, setNearbyEpicenterPoints] = useState([]);
+  const [searchEpicenterPoints, setSearchEpicenterPoints] = useState([]);
+
+  const selectedForMap = quakes.find(q => q.id === selectedQuakeId)
+    || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
+
+  const activeEpicenterPoints = useMemo(() => {
+    if (active !== "quake") return [];
+    if (nearbyQuakeFor) return nearbyEpicenterPoints;
+    if (selectedForMap) return []; // 個別の地震の詳細表示中は分布を出さない
+    if (quakeViewMode === "search") return searchEpicenterPoints;
+    return quakes
+      .filter(q => Number.isFinite(q.latitude) && Number.isFinite(q.longitude))
+      .map(q => ({
+        id: q.id,
+        latitude: q.latitude,
+        longitude: q.longitude,
+        magnitude: q.magnitude,
+        maxIntensityKey: q.maxIntensity,
+        time: q.time,
+        depth: q.depth,
+        place: q.place,
+      }));
+  }, [active, nearbyQuakeFor, nearbyEpicenterPoints, selectedForMap, quakeViewMode, searchEpicenterPoints, quakes]);
+
+  useEffect(() => {
+    onEpicenterPointsChange?.(activeEpicenterPoints);
+  }, [activeEpicenterPoints]);
 
   // 地震タブの「戻る」ボタン(フローティングの外にある丸ボタン)の挙動。
   // 手前で開いている画面から順に閉じていくスタック式:
@@ -5089,6 +5366,7 @@ function BottomDock({
                             stations={stations}
                             colorScheme={colorScheme}
                             onFoundQuake={onFoundSearchQuake}
+                            onPointsChange={setNearbyEpicenterPoints}
                             onSelectQuake={(id) => {
                               if (scrollRef.current) nearbyListScrollTopRef.current = scrollRef.current.scrollTop;
                               setNearbyQuakeFor(null);
@@ -5176,6 +5454,7 @@ function BottomDock({
                         onChangeSearch={setEqdbSearch}
                         onSearchExecuted={() => setSnapIndex(3)}
                         scrollContainerRef={scrollRef}
+                        onPointsChange={setSearchEpicenterPoints}
                       />
                     );
                   }
@@ -5772,7 +6051,7 @@ const NEARBY_SORT_BUTTONS = [
 // 済むよう、コンポーネントの外(モジュールスコープ)にキャッシュを持たせる。
 const nearbyQuakeSearchCache = new Map();
 
-function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake }) {
+function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake, onPointsChange }) {
   const { tokens } = useContext(ThemeContext);
 
   const cached = nearbyQuakeSearchCache.get(place);
@@ -5781,6 +6060,13 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
   const [sortKey, setSortKey] = useState("maxInt");
   const [sortDesc, setSortDesc] = useState(true);
   const [loadingId, setLoadingId] = useState(null);
+
+  // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
+  // 呼び出し元(BottomDock)へ伝える。
+  const epicenterPoints = useEqdbEpicenterPoints(results);
+  useEffect(() => {
+    onPointsChange?.(epicenterPoints);
+  }, [epicenterPoints]);
 
   useEffect(() => {
     if (nearbyQuakeSearchCache.has(place)) return; // キャッシュ済みなら検索し直さない
@@ -5830,7 +6116,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
     if (loadingId) return;
     setLoadingId(eq.id);
     try {
-      const [detail, geo] = await Promise.all([fetchEqdbEvent(eq.id), loadGeoData()]);
+      const [detail, geo] = await Promise.all([fetchEqdbEventCached(eq.id), loadGeoData()]);
       if (!detail) return;
       const card = buildEqdbQuakeCard(detail, eq, stations, geo?.areas);
       onFoundQuake(card);
@@ -5902,7 +6188,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
    通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef }) {
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef, onPointsChange }) {
   const { tokens, mode } = useContext(ThemeContext);
 
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
@@ -5911,6 +6197,13 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     startDate, endDate, minMag, maxInt, sort,
     status, isSearching, hasSearched, results, loadingId,
   } = search;
+
+  // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
+  // 呼び出し元(BottomDock)へ伝える。
+  const epicenterPoints = useEqdbEpicenterPoints(results);
+  useEffect(() => {
+    onPointsChange?.(epicenterPoints);
+  }, [epicenterPoints]);
 
   // 検索条件・結果一覧の状態は、選択解除で再マウントされても消えないよう
   // 親(BottomDock)側で保持している。ここでは差分だけをマージして書き戻す。
@@ -6004,7 +6297,7 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
     if (loadingId) return;
     patch({ loadingId: eq.id, status: `「${eq.name}」の震度データを取得中…` });
     try {
-      const [detail, geo] = await Promise.all([fetchEqdbEvent(eq.id), loadGeoData()]);
+      const [detail, geo] = await Promise.all([fetchEqdbEventCached(eq.id), loadGeoData()]);
       if (!detail) {
         patch({ status: "詳細データの取得に失敗しました" });
         return;
@@ -7180,6 +7473,30 @@ export default function App() {
   // ここだけで別管理する(P2P地震情報のWebSocket更新・件数上限に巻き込まれないようにするため)。
   const [searchQuake, setSearchQuake] = useState(null);
 
+  // 震央分布(地図上の丸)。今どの一覧(P2P一覧/近傍地震検索/データベース検索)を
+  // 表示中かに応じて、BottomDock側で計算した点の配列をそのまま受け取る。
+  const [epicenterPoints, setEpicenterPoints] = useState([]);
+
+  // 震央分布の丸がタップされた時の選択処理。
+  // ・P2P地震一覧由来の点(id=通常の地震ID)は、そのままselectedQuakeIdにする。
+  // ・近傍地震検索・データベース検索由来の点(id="eqdb_"始まり)は、
+  //   プリフェッチ済みのeqdb詳細(_eqdbDetail)を使って即座に検索結果と同じ形の
+  //   quakeカードを組み立て、searchQuakeにセットしてから選択する
+  //   (座標を取得済みということは詳細も取得済みなので、再取得は不要)。
+  function handleSelectEpicenterPoint(id) {
+    if (typeof id === "string" && id.startsWith("eqdb_")) {
+      const point = epicenterPoints.find(p => p.id === id);
+      if (!point || !point._eqdbDetail) return;
+      loadGeoData().then(geo => {
+        const card = buildEqdbQuakeCard(point._eqdbDetail, point._eqdbListItem, stations, geo?.areas);
+        setSearchQuake(card);
+        setSelectedQuakeId(card.id);
+      });
+      return;
+    }
+    setSelectedQuakeId(id);
+  }
+
   const toggleLayer = id => {
     // 「推計震度分布」レイヤーだけは、layers配列ではなく設定と共有のestIntensityEnabled側で管理する
     if (id === "estIntensity") {
@@ -7337,6 +7654,8 @@ export default function App() {
           faultsEnabled={faultsEnabled}
           plateBoundariesEnabled={plateBoundariesEnabled}
           boundaryLineColorId={boundaryLineColorId}
+          epicenterPoints={epicenterPoints}
+          onSelectEpicenterPoint={handleSelectEpicenterPoint}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
@@ -7425,6 +7744,7 @@ export default function App() {
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
+                  onEpicenterPointsChange={setEpicenterPoints}
                 />
               </div>
             </Glass>
@@ -7460,6 +7780,7 @@ export default function App() {
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
+              onEpicenterPointsChange={setEpicenterPoints}
             />
           )}
         </div>
