@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.3e";
+const APP_VERSION = "1.1.3f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -698,6 +698,7 @@ function MapCanvas({
   quakeTimeStr, maxIntensityKey, estIntensityEnabled, areaFillEnabled,
   faultsEnabled, plateBoundariesEnabled, boundaryLineColorId,
   epicenterPoints = [], onSelectEpicenterPoint,
+  pointsLoading = false,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1476,8 +1477,10 @@ function MapCanvas({
         </div>
       )}
 
-      {/* 推計震度分布を画像→ベクター変換している間の、地図を隠さない小さなローディング表示 */}
-      {status === "ready" && estIntensityLoading && (
+      {/* 推計震度分布の画像→ベクター変換中、または観測点データの突き合わせ処理中に、
+          地図を隠さない小さなローディング表示を出す。両方同時に走ることもあるが、
+          その場合は推計震度分布側の文言を優先表示する(観測点データの方が先に終わることが多いため)。 */}
+      {status === "ready" && (estIntensityLoading || pointsLoading) && (
         <div style={{
           position: "absolute",
           top: "calc(14px + env(safe-area-inset-top, 0px))",
@@ -1507,7 +1510,7 @@ function MapCanvas({
             animation: "spin 0.8s linear infinite",
             flexShrink: 0,
           }}/>
-          推計震度分布を計算中…
+          {estIntensityLoading ? "推計震度分布を計算中…" : "観測点データを処理中…"}
         </div>
       )}
 
@@ -5827,7 +5830,7 @@ function SearchGlassIcon({ size = 18 }) {
    QUAKE LIST ROW
    地震一覧の1行分。「直近の一覧」と「検索結果一覧」の両方から共通で使う。
    ───────────────────────────────────────────────────── */
-function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
+function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = false }) {
   const { tokens } = useContext(ThemeContext);
 
   const style = getIntensityStyleFromScheme(colorScheme, q.maxIntensity || "1");
@@ -5835,29 +5838,46 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
     <div>
       {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 18 }}/>}
       <PressableButton
-        onClick={onSelect}
+        onClick={loading ? undefined : onSelect}
         style={{
           width: "100%", display: "flex", alignItems: "center", gap: 10,
           padding: "9px 14px",
           background: "transparent",
           textAlign: "left",
+          opacity: loading ? 0.5 : 1,
+          pointerEvents: loading ? "none" : "auto",
         }}
       >
-        <span style={{
-          flexShrink: 0, width: 28, height: 22, borderRadius: 6,
-          background: style.bg, color: style.fg,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: q.isForeign ? 9 : 11, fontWeight: 800,
-        }}>
-          {q.isForeign ? "遠地" : style.label}
-        </span>
+        {loading ? (
+          <span style={{
+            flexShrink: 0, width: 28, height: 22, borderRadius: 6,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{
+              width: 13, height: 13, borderRadius: "50%",
+              border: `2px solid rgba(${tokens.ink},0.25)`,
+              borderTopColor: `rgba(${tokens.ink},0.9)`,
+              animation: "spin 0.8s linear infinite",
+              display: "block",
+            }}/>
+          </span>
+        ) : (
+          <span style={{
+            flexShrink: 0, width: 28, height: 22, borderRadius: 6,
+            background: style.bg, color: style.fg,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: q.isForeign ? 9 : 11, fontWeight: 800,
+          }}>
+            {q.isForeign ? "遠地" : style.label}
+          </span>
+        )}
         <span style={{
           flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
-          {q.place}
+          {loading ? `${q.place}を読み込み中…` : q.place}
         </span>
-        {(q.magnitude != null || q.depth != null) && (
+        {!loading && (q.magnitude != null || q.depth != null) && (
           <span className="mono" style={{
             fontSize: 11, color: `rgba(${tokens.ink},0.5)`,
             flexShrink: 0, whiteSpace: "nowrap",
@@ -5865,9 +5885,11 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect }) {
             M{q.magnitude != null ? q.magnitude.toFixed(1) : "-"}{q.depth != null ? (q.depth === 0 ? "・ごく浅い" : `・深さ${q.depth}km`) : "・深さ-"}
           </span>
         )}
-        <span className="mono" style={{ fontSize: 10, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
-          {q.isEqdb ? q.time?.slice(0, 10) : q.time?.slice(5, 16)}
-        </span>
+        {!loading && (
+          <span className="mono" style={{ fontSize: 10, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
+            {q.isEqdb ? q.time?.slice(0, 10) : q.time?.slice(5, 16)}
+          </span>
+        )}
       </PressableButton>
     </div>
   );
@@ -6207,6 +6229,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
           showDivider={i > 0}
           colorScheme={colorScheme}
           onSelect={() => handlePick(eq)}
+          loading={loadingId === eq.id}
         />
       ))}
     </div>
@@ -6414,14 +6437,14 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
         )
       ) : (
         results.map((eq, i) => (
-          <div key={eq.id} style={loadingId === eq.id ? { opacity: 0.5, pointerEvents: "none" } : undefined}>
-            <QuakeListRow
-              quake={eqdbListItemToPreview(eq)}
-              showDivider={i > 0}
-              colorScheme={colorScheme}
-              onSelect={() => handleSelect(eq)}
-            />
-          </div>
+          <QuakeListRow
+            key={eq.id}
+            quake={eqdbListItemToPreview(eq)}
+            showDivider={i > 0}
+            colorScheme={colorScheme}
+            onSelect={() => handleSelect(eq)}
+            loading={loadingId === eq.id}
+          />
         ))
       )}
     </div>
@@ -7567,12 +7590,36 @@ export default function App() {
   // そちらも見つからなかった場合のフォールバックとして探す。
   const selectedQuake = quakes.find(q => q.id === selectedQuakeId)
     || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
-  const selectedQuakePoints = useMemo(() => {
-    if (!selectedQuake) return [];
+
+  // 観測点データが多い地震(震度データベース検索由来ではない、通常の地震一覧からの選択)は、
+  // 観測点マスタとの突き合わせ(resolveStationPoints)が重くなり、選択直後に一瞬固まって
+  // 見えることがある。selectedQuakeが変わった直後にまずローディング表示を出し、
+  // 次のタスクにずらして計算することで、その間に「観測点データを処理中…」を描画させる。
+  const [selectedQuakePoints, setSelectedQuakePoints] = useState([]);
+  const [stationPointsProcessing, setStationPointsProcessing] = useState(false);
+  useEffect(() => {
+    if (!selectedQuake) {
+      setSelectedQuakePoints([]);
+      setStationPointsProcessing(false);
+      return;
+    }
     // eqdb由来の地震は、観測点の緯度経度を自前で解決済み(resolvedPoints)なのでそのまま使う。
-    if (selectedQuake.resolvedPoints) return selectedQuake.resolvedPoints;
-    if (!stations) return [];
-    return resolveStationPoints(selectedQuake.points, stations);
+    if (selectedQuake.resolvedPoints) {
+      setSelectedQuakePoints(selectedQuake.resolvedPoints);
+      setStationPointsProcessing(false);
+      return;
+    }
+    if (!stations) {
+      setSelectedQuakePoints([]);
+      return;
+    }
+    setStationPointsProcessing(true);
+    const points = selectedQuake.points;
+    const timer = setTimeout(() => {
+      setSelectedQuakePoints(resolveStationPoints(points, stations));
+      setStationPointsProcessing(false);
+    }, 0);
+    return () => clearTimeout(timer);
   }, [selectedQuake, stations]);
 
   // 震源(バツ印表示・ズーム用)。複数震源(eqdbのhypocenters)があればその全件、
@@ -7696,6 +7743,7 @@ export default function App() {
           boundaryLineColorId={boundaryLineColorId}
           epicenterPoints={epicenterPoints}
           onSelectEpicenterPoint={handleSelectEpicenterPoint}
+          pointsLoading={stationPointsProcessing}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
