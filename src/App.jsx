@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.1.3a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1547,7 +1547,7 @@ function registerStationIcons(map, scheme) {
 const BOUNDARY_HALO_COLOR = "#86868c";
 
 const BOUNDARY_LINE_COLORS = {
-  gray:   { label: "グレー",   color: "#48484a" },
+  gray:   { label: "グレー",   color: "#9a9a9f" },
   orange: { label: "オレンジ", color: "#ff9500" },
   red:    { label: "レッド",   color: "#ff3b30" },
   blue:   { label: "ブルー",   color: "#0a84ff" },
@@ -6703,43 +6703,39 @@ function LicenseFileCard() {
   );
 }
 
-// 断層・プレート境界の「枠内の色」選択画面。QuakeColorSchemeSettingsと同じ見た目のリストで、
-// 9色のミニプレビューの代わりに丸い色見本を1つ表示する。
+// 断層・プレート境界の「枠内の色」選択画面。色名は出さず、色つきの丸(スウォッチ)を
+// 横に並べるだけのシンプルなUIにする。選択中の丸には白いチェックマークを重ねる。
 function BoundaryLineColorSettings({ boundaryLineColorId, onChangeBoundaryLineColorId }) {
   const { tokens } = useContext(ThemeContext);
 
   const entries = Object.entries(BOUNDARY_LINE_COLORS);
   return (
     <SettingsCard>
-      {entries.map(([id, entry], i) => {
-        const selected = boundaryLineColorId === id;
-        return (
-          <div key={id}>
-            {i > 0 && <SettingsCardDivider/>}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, padding: "14px 16px" }}>
+        {entries.map(([id, entry]) => {
+          const selected = boundaryLineColorId === id;
+          return (
             <PressableButton
+              key={id}
               onClick={() => onChangeBoundaryLineColorId(id)}
+              aria-label={entry.label}
               style={{
-                width: "100%", display: "flex", alignItems: "center", gap: 12,
-                padding: "11px 12px",
-                background: selected ? `rgba(${tokens.ink},0.07)` : "transparent",
-                border: "none", cursor: "pointer", textAlign: "left",
+                width: 34, height: 34, borderRadius: 17, flexShrink: 0,
+                background: entry.color,
+                border: "none", padding: 0, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: selected
+                  ? `0 0 0 2px ${tokens.pageBg}, 0 0 0 3.5px rgba(${tokens.ink},0.4)`
+                  : `0 0 0 1px rgba(${tokens.ink},0.15)`,
               }}
             >
-              <div style={{
-                width: 16, height: 16, borderRadius: 8, flexShrink: 0,
-                background: entry.color,
-                boxShadow: `0 0 0 1px rgba(${tokens.ink},0.15)`,
-              }}/>
-              <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text, flex: 1 }}>
-                {entry.label}
-              </span>
               {selected && (
-                <span style={{ fontSize: 13, color: `rgba(${tokens.ink},0.85)` }}>✓</span>
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#fff", lineHeight: 1 }}>✓</span>
               )}
             </PressableButton>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </SettingsCard>
   );
 }
