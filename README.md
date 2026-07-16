@@ -35,4 +35,13 @@ Webアプリケーションのため、[ウェブサイト](https://skotm.github
 - Androidの場合  
   インストールバナー または メニュー → ホーム画面に追加
 
-  
+## 利用規約・注意事項について
+
+[利用規約 - Term of use](https://github.com/skotm/MeteoQuake/blob/main/public/terms-of-use.md)
+
+[プライバシーポリシー - privacy policy](https://github.com/skotm/MeteoQuake/blob/main/public/privacy-policy.md)
+
+[注意事項 - notice](https://github.com/skotm/MeteoQuake/blob/main/public/notices.md)
+
+を必ずご確認の上ご利用ください。
+
