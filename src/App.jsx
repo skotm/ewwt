@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.4d";
+const APP_VERSION = "1.1.5";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4767,6 +4767,14 @@ function BottomDock({
     if (active !== "settings") setSettingsPath([]);
   }, [active]);
 
+  // 設定内の画面を切り替えるたびに、スクロール位置(共有の1本のscrollRef)を
+  // 先頭へ戻す。そうしないと、例えば「利用規約」を下までスクロールした状態で
+  // 「注意事項」に切り替えた時、同じスクロール位置が引き継がれてしまう。
+  function handleSettingsNavigate(nextPath) {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    setSettingsPath(nextPath);
+  }
+
   // 横画面(isWide)では、戻るボタンをガラスの外に浮かせて表示するため、
   // パネル本体(GlassOrPlainの中身)の画面上の位置を測っておく。
   const wideContentRef = useRef(null);
@@ -5666,7 +5674,7 @@ function BottomDock({
               <>
                 <SettingsBody
                   path={settingsPath}
-                  onNavigate={setSettingsPath}
+                  onNavigate={handleSettingsNavigate}
                   colorSchemeId={colorSchemeId}
                   onChangeColorScheme={onChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -7267,7 +7275,7 @@ function renderMarkdownLite(text, tokens) {
     const items = listBuffer;
     listBuffer = [];
     blocks.push(
-      <ul key={`ul-${blocks.length}`} style={{ margin: "4px 0 12px", paddingLeft: 20 }}>
+      <ul key={`ul-${blocks.length}`} style={{ margin: "4px 0 12px", paddingLeft: 20, textAlign: "left" }}>
         {items.map((item, i) => (
           <li key={i} style={{ marginBottom: 4 }}>{renderInlineMarkdown(item, `li-${blocks.length}-${i}`)}</li>
         ))}
@@ -7279,13 +7287,13 @@ function renderMarkdownLite(text, tokens) {
     const line = rawLine.trim();
     if (line.startsWith("### ")) {
       flushList();
-      blocks.push(<div key={i} style={{ fontSize: 13, fontWeight: 700, color: tokens.text, margin: "14px 0 4px" }}>{renderInlineMarkdown(line.slice(4), `h3-${i}`)}</div>);
+      blocks.push(<div key={i} style={{ fontSize: 13, fontWeight: 700, color: tokens.text, margin: "14px 0 4px", textAlign: "left" }}>{renderInlineMarkdown(line.slice(4), `h3-${i}`)}</div>);
     } else if (line.startsWith("## ")) {
       flushList();
-      blocks.push(<div key={i} style={{ fontSize: 14, fontWeight: 700, color: tokens.text, margin: "18px 0 6px" }}>{renderInlineMarkdown(line.slice(3), `h2-${i}`)}</div>);
+      blocks.push(<div key={i} style={{ fontSize: 14, fontWeight: 700, color: tokens.text, margin: "18px 0 6px", textAlign: "left" }}>{renderInlineMarkdown(line.slice(3), `h2-${i}`)}</div>);
     } else if (line.startsWith("# ")) {
       flushList();
-      blocks.push(<div key={i} style={{ fontSize: 16, fontWeight: 800, color: tokens.text, margin: "4px 0 10px" }}>{renderInlineMarkdown(line.slice(2), `h1-${i}`)}</div>);
+      blocks.push(<div key={i} style={{ fontSize: 16, fontWeight: 800, color: tokens.text, margin: "4px 0 10px", textAlign: "left" }}>{renderInlineMarkdown(line.slice(2), `h1-${i}`)}</div>);
     } else if (/^-{3,}$/.test(line)) {
       flushList();
       blocks.push(<div key={i} style={{ height: 1, background: `rgba(${tokens.ink},0.1)`, margin: "14px 0" }}/>);
@@ -7295,7 +7303,7 @@ function renderMarkdownLite(text, tokens) {
       flushList();
     } else {
       flushList();
-      blocks.push(<p key={i} style={{ margin: "0 0 10px", lineHeight: 1.9 }}>{renderInlineMarkdown(line, `p-${i}`)}</p>);
+      blocks.push(<p key={i} style={{ margin: "0 0 10px", lineHeight: 1.9, textAlign: "left" }}>{renderInlineMarkdown(line, `p-${i}`)}</p>);
     }
   });
   flushList();
@@ -7929,7 +7937,7 @@ function TermsConsentGate() {
         ))}
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "4px 16px 16px" }}>
+      <div key={activeTab} style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "4px 16px 16px" }}>
         <div style={{
           borderRadius: 16,
           background: `rgba(${tokens.ink},0.04)`,
