@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.3f";
+const APP_VERSION = "1.1.4";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -4986,9 +4986,11 @@ function BottomDock({
       setSnapIndex(1);
       // 近傍の地震一覧を開いたまま丸をタップした場合、一覧側の表示を優先してしまい
       // (a)フローティングに選んだ地震の詳細が出ない (b)他の丸が消えない、という
-      // 2つの不具合につながるため、丸タップでの選択は明示的に一覧表示を閉じる。
+      // 2つの不具合につながるため、丸タップでの選択は一覧表示(nearbyQuakeFor)を
+      // 閉じる。ただしnearbyOriginIdは残す — これは一覧内の行をタップして選んだ時
+      // (NearbyQuakesPanelのonSelectQuake)と同じ挙動で、これを消してしまうと
+      // 「戻る」を押した時に近傍一覧へ戻れず、最初の画面まで戻ってしまう。
       setNearbyQuakeFor(null);
-      setNearbyOriginId(null);
     }
   }, [mapSelectSignal]);
 
