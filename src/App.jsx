@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.4a";
+const APP_VERSION = "1.1.4b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -731,6 +731,10 @@ function MapCanvas({
   // 別のuseEffectでsetPaintPropertyして行う(下方)。
   const themeTokensRef = useRef(themeTokens);
   themeTokensRef.current = themeTokens;
+  // 震央分布の縁取り色(震度1・気象庁配色のみライトモードで黒にする)の判定に、
+  // 生成時点のライト/ダーク状態も同様にrefで参照できるようにしておく。
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   // 断層・プレート境界の「枠内の色」の現在値をrefでも持っておき、
   // map.on("load")内(初回マウント時のみ実行)で最新の選択値を読めるようにする。
@@ -978,7 +982,7 @@ function MapCanvas({
               "circle-radius": ["max", ["*", ["coalesce", ["get", "mag"], 4], 2.2], 5],
               "circle-color": buildEpicenterCircleColorExpr(colorSchemeRef.current),
               "circle-opacity": 0.45,
-              "circle-stroke-color": buildEpicenterCircleColorExpr(colorSchemeRef.current),
+              "circle-stroke-color": buildEpicenterCircleStrokeColorExpr(colorSchemeRef.current, modeRef.current),
               "circle-stroke-width": 1.4,
               "circle-stroke-opacity": 0.95,
             },
@@ -1412,14 +1416,14 @@ function MapCanvas({
   }, [epicenterPoints, status]);
 
   // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
+  // 縁取り色はライト/ダークでも変わりうるため(気象庁配色の震度1のみ)、modeも依存に含める。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     if (!map.getLayer("epicenter-points-layer")) return;
-    const expr = buildEpicenterCircleColorExpr(colorScheme);
-    map.setPaintProperty("epicenter-points-layer", "circle-color", expr);
-    map.setPaintProperty("epicenter-points-layer", "circle-stroke-color", expr);
-  }, [colorScheme, status]);
+    map.setPaintProperty("epicenter-points-layer", "circle-color", buildEpicenterCircleColorExpr(colorScheme));
+    map.setPaintProperty("epicenter-points-layer", "circle-stroke-color", buildEpicenterCircleStrokeColorExpr(colorScheme, mode));
+  }, [colorScheme, mode, status]);
 
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: themeTokens.mapBg }}>
@@ -1632,7 +1636,9 @@ const INTENSITY_ORDER = ["0","1","2","3","4","5","5-","5+","6","6-","6+","7"];
 const STATION_ICON_BASE_RADIUS = 32; // bitmap側の半径(px)。icon-sizeで実際の大きさへスケールする。
 
 // withText=falseの場合は数字を描かない(低ズームで円が小さいときに文字が潰れるのを避けるため)。
-function buildStationIconCanvas(bg, fg, label, withText) {
+// strokeColorは通常は白固定だが、配色によっては塗りが白に近く縁が見えなくなる
+// 震度キーがあるため、呼び出し側(registerStationIcons)で個別に上書きできるようにしている。
+function buildStationIconCanvas(bg, fg, label, withText, strokeColor = "#ffffff") {
   const size = STATION_ICON_BASE_RADIUS * 2;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -1645,7 +1651,7 @@ function buildStationIconCanvas(bg, fg, label, withText) {
   ctx.fillStyle = bg;
   ctx.fill();
   ctx.lineWidth = 3;
-  ctx.strokeStyle = "#ffffff";
+  ctx.strokeStyle = strokeColor;
   ctx.stroke();
 
   if (withText) {
@@ -1679,8 +1685,11 @@ function registerStationIcons(map, scheme) {
     const style = scheme.colors[key] || scheme.colors["0"];
     // 地図上の丸には「5弱」「6強」ではなくキー表記(5-,6+等)をそのまま出す。
     const label = key;
-    const dotImg = buildStationIconCanvas(style.bg, style.fg, label, false);
-    const numImg = buildStationIconCanvas(style.bg, style.fg, label, true);
+    // 気象庁配色の震度1は塗りがほぼ白(#F2F2FF)なので、既定の白い縁のままだと
+    // 塗りと縁が同化して見分けづらい。この組み合わせの時だけ縁を黒にする。
+    const strokeColor = (scheme.id === "jma" && key === "1") ? "#000000" : "#ffffff";
+    const dotImg = buildStationIconCanvas(style.bg, style.fg, label, false, strokeColor);
+    const numImg = buildStationIconCanvas(style.bg, style.fg, label, true, strokeColor);
     const dotId = `station-icon-${key}-dot`;
     const numId = `station-icon-${key}-num`;
     if (map.hasImage(dotId)) map.updateImage(dotId, dotImg); else map.addImage(dotId, dotImg);
@@ -1718,6 +1727,7 @@ const BOUNDARY_LINE_COLORS = {
 const QUAKE_COLOR_SCHEMES = {
   // 過去のLeaflet版(getIntensityColor)と全く同じ、鮮やかなApple風パレット。
   legacy: {
+    id: "legacy",
     label: "eqs viewer配色",
     colors: {
       "0":  { bg: "#8E8E93", fg: "#fff" },
@@ -1740,6 +1750,7 @@ const QUAKE_COLOR_SCHEMES = {
   // 震度7:(180,0,104) 6強:(165,0,33) 6弱:(255,40,0) 5強:(255,153,0) 5弱:(255,230,0)
   // 4:(250,230,150) 3:(0,65,255) 2:(0,170,255) 1:(242,242,255)
   jma: {
+    id: "jma",
     label: "気象庁配色",
     colors: {
       "0":  { bg: "#E5E5EA", fg: "#0B0B0C" }, // 震度0は指針に規定が無いため、背景に馴染む薄いグレーにしている
@@ -1759,6 +1770,7 @@ const QUAKE_COLOR_SCHEMES = {
   },
   // このアプリで震度分布の塗りつぶし・バッジに元々使っていた配色。
   fill: {
+    id: "fill",
     label: "",
     colors: {
       "0":  { bg: "#3A3A3C", fg: "#fff" },
@@ -2632,13 +2644,26 @@ const QUAKE_INTENSITY_RANK = {
   "5": 5, "5-": 5, "5+": 6, "6": 7, "6-": 7, "6+": 8, "7": 9,
 };
 
-// 現在の震度配色スキームから、震央分布(circle-color/circle-stroke-color)用の
-// match式を組み立てる。P2P地震一覧・近傍地震検索・データベース検索、
-// どの震央分布も同じ配色ルールで塗る。
+// 現在の震度配色スキームから、震央分布(circle-color)の塗り用match式を組み立てる。
+// P2P地震一覧・近傍地震検索・データベース検索、どの震央分布も同じ配色ルールで塗る。
 function buildEpicenterCircleColorExpr(colorScheme) {
   const expr = ["match", ["get", "scaleKey"]];
   for (const key of QUAKE_INTENSITY_KEYS) {
     expr.push(key, (colorScheme.colors[key] || colorScheme.colors["0"]).bg);
+  }
+  expr.push((colorScheme.colors["?"] || colorScheme.colors["0"]).bg);
+  return expr;
+}
+
+// 震央分布(circle-stroke-color)用のmatch式。基本は塗りと同じ色だが、
+// 気象庁配色の震度1はほぼ白(#F2F2FF)のため、塗りと同色の縁だとライトモードの
+// (白系の)地図に溶け込んでしまう。ライトモードの時だけ縁を黒にする
+// (ダークモードは暗い地図に対してそのままでも十分見えるため据え置き)。
+function buildEpicenterCircleStrokeColorExpr(colorScheme, mode) {
+  const expr = ["match", ["get", "scaleKey"]];
+  for (const key of QUAKE_INTENSITY_KEYS) {
+    const useBlack = colorScheme.id === "jma" && key === "1" && mode === "light";
+    expr.push(key, useBlack ? "#000000" : (colorScheme.colors[key] || colorScheme.colors["0"]).bg);
   }
   expr.push((colorScheme.colors["?"] || colorScheme.colors["0"]).bg);
   return expr;
