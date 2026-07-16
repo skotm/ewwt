@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.4b";
+const APP_VERSION = "1.1.4c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2657,13 +2657,13 @@ function buildEpicenterCircleColorExpr(colorScheme) {
 
 // 震央分布(circle-stroke-color)用のmatch式。基本は塗りと同じ色だが、
 // 気象庁配色の震度1はほぼ白(#F2F2FF)のため、塗りと同色の縁だとライトモードの
-// (白系の)地図に溶け込んでしまう。ライトモードの時だけ縁を黒にする
+// (白系の)地図に溶け込んでしまう。ライトモードの時だけ縁を薄いグレーにする
 // (ダークモードは暗い地図に対してそのままでも十分見えるため据え置き)。
 function buildEpicenterCircleStrokeColorExpr(colorScheme, mode) {
   const expr = ["match", ["get", "scaleKey"]];
   for (const key of QUAKE_INTENSITY_KEYS) {
-    const useBlack = colorScheme.id === "jma" && key === "1" && mode === "light";
-    expr.push(key, useBlack ? "#000000" : (colorScheme.colors[key] || colorScheme.colors["0"]).bg);
+    const useGray = colorScheme.id === "jma" && key === "1" && mode === "light";
+    expr.push(key, useGray ? "#C7C7CC" : (colorScheme.colors[key] || colorScheme.colors["0"]).bg);
   }
   expr.push((colorScheme.colors["?"] || colorScheme.colors["0"]).bg);
   return expr;
