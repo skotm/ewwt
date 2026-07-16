@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.4";
+const APP_VERSION = "1.1.4a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2048,6 +2048,32 @@ function savePlateBoundariesEnabled(enabled) {
 }
 
 /* ─────────────────────────────────────────────────────
+   震央分布(地図上の丸)の表示ON/OFF設定。
+   一覧を開くたびに丸が大量に出ると地図が見づらいという声があるため、
+   デフォルトはOFFにしておき、必要な人だけ設定でONにしてもらう。
+   ───────────────────────────────────────────────────── */
+const EPICENTER_CIRCLES_ENABLED_STORAGE_KEY = "showEpicenterCircles";
+
+function loadStoredEpicenterCirclesEnabled() {
+  try {
+    const saved = localStorage.getItem(EPICENTER_CIRCLES_ENABLED_STORAGE_KEY);
+    if (saved === "true") return true;
+    if (saved === "false") return false;
+  } catch (err) {
+    console.warn("震央分布表示の設定を読み込めませんでした:", err);
+  }
+  return false;
+}
+
+function saveEpicenterCirclesEnabled(enabled) {
+  try {
+    localStorage.setItem(EPICENTER_CIRCLES_ENABLED_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("震央分布表示の設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
    断層・プレート境界の「枠内の色」設定。
    縁取り(halo)はライト/ダーク共通の固定色だが、枠内の色はBOUNDARY_LINE_COLORSの
    中からユーザーが選べるようにし、localStorageに保存する。デフォルトは"gray"。
@@ -2994,6 +3020,10 @@ function eqdbDetailToEpicenterPoint(detail, listItem) {
 // から、震央分布用の点をバックグラウンドで少しずつ解決していくフック。
 // 同時に取得するのは3件までにして、APIへの負荷と表示までの速さのバランスを取る。
 // キャッシュ済みの分は即座に反映され、未取得の分は取得でき次第、順次追加されていく。
+// 震央分布の設定がOFFの時、useEqdbEpicenterPointsに毎回新しい[]を渡すと
+// (依存配列の参照比較で)無駄にeffectが再実行されてしまうため、固定の空配列を使う。
+const EMPTY_EQDB_LIST = [];
+
 function useEqdbEpicenterPoints(rawList) {
   const [points, setPoints] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -4619,6 +4649,7 @@ function BottomDock({
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
+  epicenterCirclesEnabled, onChangeEpicenterCirclesEnabled,
   boundaryLineColorId, onChangeBoundaryLineColorId,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
@@ -4737,6 +4768,7 @@ function BottomDock({
     || (searchQuake && searchQuake.id === selectedQuakeId ? searchQuake : null);
 
   const activeEpicenterPoints = useMemo(() => {
+    if (!epicenterCirclesEnabled) return []; // 設定でOFFなら常に非表示
     if (active !== "quake") return [];
     if (nearbyQuakeFor) return nearbyEpicenterPoints;
     if (selectedForMap) return []; // 個別の地震の詳細表示中は分布を出さない
@@ -4753,7 +4785,7 @@ function BottomDock({
         depth: q.depth,
         place: q.place,
       }));
-  }, [active, nearbyQuakeFor, nearbyEpicenterPoints, selectedForMap, quakeViewMode, searchEpicenterPoints, quakes]);
+  }, [epicenterCirclesEnabled, active, nearbyQuakeFor, nearbyEpicenterPoints, selectedForMap, quakeViewMode, searchEpicenterPoints, quakes]);
 
   useEffect(() => {
     onEpicenterPointsChange?.(activeEpicenterPoints);
@@ -4761,12 +4793,13 @@ function BottomDock({
 
   // 震央分布の丸がまだ読み込み中かどうかも、表示中の分布(近傍/検索)に応じて同様に選ぶ。
   const activeEpicenterLoading = useMemo(() => {
+    if (!epicenterCirclesEnabled) return false;
     if (active !== "quake") return false;
     if (nearbyQuakeFor) return nearbyEpicenterLoading;
     if (selectedForMap) return false;
     if (quakeViewMode === "search") return searchEpicenterLoading;
     return false;
-  }, [active, nearbyQuakeFor, nearbyEpicenterLoading, selectedForMap, quakeViewMode, searchEpicenterLoading]);
+  }, [epicenterCirclesEnabled, active, nearbyQuakeFor, nearbyEpicenterLoading, selectedForMap, quakeViewMode, searchEpicenterLoading]);
 
   useEffect(() => {
     onEpicenterLoadingChange?.(activeEpicenterLoading);
@@ -5443,6 +5476,7 @@ function BottomDock({
                             onFoundQuake={onFoundSearchQuake}
                             onPointsChange={setNearbyEpicenterPoints}
                             onLoadingChange={setNearbyEpicenterLoading}
+                            epicenterCirclesEnabled={epicenterCirclesEnabled}
                             onSelectQuake={(id) => {
                               if (scrollRef.current) nearbyListScrollTopRef.current = scrollRef.current.scrollTop;
                               setNearbyQuakeFor(null);
@@ -5532,6 +5566,7 @@ function BottomDock({
                         scrollContainerRef={scrollRef}
                         onPointsChange={setSearchEpicenterPoints}
                         onLoadingChange={setSearchEpicenterLoading}
+                        epicenterCirclesEnabled={epicenterCirclesEnabled}
                       />
                     );
                   }
@@ -5569,6 +5604,8 @@ function BottomDock({
                   onChangeFaultsEnabled={onChangeFaultsEnabled}
                   plateBoundariesEnabled={plateBoundariesEnabled}
                   onChangePlateBoundariesEnabled={onChangePlateBoundariesEnabled}
+                  epicenterCirclesEnabled={epicenterCirclesEnabled}
+                  onChangeEpicenterCirclesEnabled={onChangeEpicenterCirclesEnabled}
                   boundaryLineColorId={boundaryLineColorId}
                   onChangeBoundaryLineColorId={onChangeBoundaryLineColorId}
                   quakeFetchLimit={quakeFetchLimit}
@@ -6147,7 +6184,7 @@ const NEARBY_SORT_BUTTONS = [
 // 済むよう、コンポーネントの外(モジュールスコープ)にキャッシュを持たせる。
 const nearbyQuakeSearchCache = new Map();
 
-function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake, onPointsChange, onLoadingChange }) {
+function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelectQuake, onPointsChange, onLoadingChange, epicenterCirclesEnabled }) {
   const { tokens } = useContext(ThemeContext);
 
   const cached = nearbyQuakeSearchCache.get(place);
@@ -6160,7 +6197,9 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
   // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
   // 呼び出し元(BottomDock)へ伝える。まだ解決しきっていない間はonLoadingChangeで
   // 「読み込み中」も伝え、地図上にローディング表示を出せるようにする。
-  const { points: epicenterPoints, loading: epicenterLoading } = useEqdbEpicenterPoints(results);
+  // 設定でOFFの場合は、そもそも表示しないデータを無駄に取得しないよう、
+  // 解決対象を空配列にしてバックグラウンド取得自体を行わない。
+  const { points: epicenterPoints, loading: epicenterLoading } = useEqdbEpicenterPoints(epicenterCirclesEnabled ? results : EMPTY_EQDB_LIST);
   useEffect(() => {
     onPointsChange?.(epicenterPoints);
   }, [epicenterPoints]);
@@ -6290,7 +6329,7 @@ function NearbyQuakesPanel({ place, stations, colorScheme, onFoundQuake, onSelec
    通常の地震カード(QuakeDetailCard等)と全く同じ見た目で表示できる形に変換して
    onFoundQuakeで親(App)に渡し、onSelectQuakeで選択状態にする。
    ───────────────────────────────────────────────────── */
-function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef, onPointsChange, onLoadingChange }) {
+function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, search, onChangeSearch, onSearchExecuted, scrollContainerRef, onPointsChange, onLoadingChange, epicenterCirclesEnabled }) {
   const { tokens, mode } = useContext(ThemeContext);
 
   const maxEndDate = eqdbMaxEndDate(); // 終了日に選べる最新日(=現在の2日前)。固定なので毎回同じ値。
@@ -6303,7 +6342,9 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
   // 震央分布(地図上の丸)用に、resultsの座標をバックグラウンドで少しずつ解決し、
   // 呼び出し元(BottomDock)へ伝える。まだ解決しきっていない間はonLoadingChangeで
   // 「読み込み中」も伝え、地図上にローディング表示を出せるようにする。
-  const { points: epicenterPoints, loading: epicenterLoading } = useEqdbEpicenterPoints(results);
+  // 設定でOFFの場合は、そもそも表示しないデータを無駄に取得しないよう、
+  // 解決対象を空配列にしてバックグラウンド取得自体を行わない。
+  const { points: epicenterPoints, loading: epicenterLoading } = useEqdbEpicenterPoints(epicenterCirclesEnabled ? results : EMPTY_EQDB_LIST);
   useEffect(() => {
     onPointsChange?.(epicenterPoints);
   }, [epicenterPoints]);
@@ -7168,6 +7209,7 @@ function SettingsBody({
   areaFillEnabled, onChangeAreaFillEnabled,
   faultsEnabled, onChangeFaultsEnabled,
   plateBoundariesEnabled, onChangePlateBoundariesEnabled,
+  epicenterCirclesEnabled, onChangeEpicenterCirclesEnabled,
   boundaryLineColorId, onChangeBoundaryLineColorId,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
@@ -7308,6 +7350,13 @@ function SettingsBody({
           <SettingsMenuRow label="地図塗りつぶし" onClick={() => onNavigate([...path, "mapFill"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="断層・プレート境界" onClick={() => onNavigate([...path, "boundaries"])}/>
+          <SettingsCardDivider/>
+          <SettingsToggleRow
+            label="震央分布を表示"
+            description="近傍/データベース検索の地震一覧を開いた時、地図上に震央の丸を表示します。震度が大きい地震ほど上に重なって表示されます。"
+            checked={epicenterCirclesEnabled}
+            onChange={() => onChangeEpicenterCirclesEnabled(!epicenterCirclesEnabled)}
+          />
           <SettingsCardDivider/>
           <SettingsMenuRow label="各地の震度の表示方法" onClick={() => onNavigate([...path, "stationListDisplay"])}/>
           <SettingsCardDivider/>
@@ -7536,6 +7585,15 @@ export default function App() {
   function handleChangePlateBoundariesEnabled(next) {
     setPlateBoundariesEnabledState(next);
     savePlateBoundariesEnabled(next);
+  }
+
+  // 震央分布(地図上の丸)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
+  // localStorageに永続化する。デフォルトはOFF。
+  const [epicenterCirclesEnabled, setEpicenterCirclesEnabledState] = useState(loadStoredEpicenterCirclesEnabled);
+
+  function handleChangeEpicenterCirclesEnabled(next) {
+    setEpicenterCirclesEnabledState(next);
+    saveEpicenterCirclesEnabled(next);
   }
 
   // 断層・プレート境界の「枠内の色」。設定タブ「地震」内の色選択で操作し、localStorageに永続化する。
@@ -7878,6 +7936,8 @@ export default function App() {
                   onChangeFaultsEnabled={handleChangeFaultsEnabled}
                   plateBoundariesEnabled={plateBoundariesEnabled}
                   onChangePlateBoundariesEnabled={handleChangePlateBoundariesEnabled}
+                  epicenterCirclesEnabled={epicenterCirclesEnabled}
+                  onChangeEpicenterCirclesEnabled={handleChangeEpicenterCirclesEnabled}
                   boundaryLineColorId={boundaryLineColorId}
                   onChangeBoundaryLineColorId={handleChangeBoundaryLineColorId}
                   quakeFetchLimit={quakeFetchLimit}
@@ -7916,6 +7976,8 @@ export default function App() {
               onChangeFaultsEnabled={handleChangeFaultsEnabled}
               plateBoundariesEnabled={plateBoundariesEnabled}
               onChangePlateBoundariesEnabled={handleChangePlateBoundariesEnabled}
+              epicenterCirclesEnabled={epicenterCirclesEnabled}
+              onChangeEpicenterCirclesEnabled={handleChangeEpicenterCirclesEnabled}
               boundaryLineColorId={boundaryLineColorId}
               onChangeBoundaryLineColorId={handleChangeBoundaryLineColorId}
               quakeFetchLimit={quakeFetchLimit}
