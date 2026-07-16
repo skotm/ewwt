@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.5";
+const APP_VERSION = "1.1.5a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6839,11 +6839,11 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
    流用せず、震度配色ピッカーで元々使っていた「角丸のグループ化カード」を
    基本デザインとして統一している。
    ───────────────────────────────────────────────────── */
-// 設定トップの一覧。以前は「地震・津波・気象・警報・詳細設定」の5項目を並べていたが、
-// 前者4つ(=ボトムナビの各タブに対応する設定)を「タブ設定」1項目にまとめ、
-// その配下(TAB_SETTINGS_CATEGORIES)に移動した。
+// 設定トップの一覧。「利用規約等・注意事項」(ライセンスもこの中に含む)は
+// 詳細設定の下ではなくトップ階層に置く。
 const SETTINGS_MENU = [
   { id: "tabSettings", label: "タブ設定" },
+  { id: "terms",       label: "利用規約等・注意事項" },
   { id: "advanced",    label: "詳細設定" },
 ];
 
@@ -6856,13 +6856,11 @@ const TAB_SETTINGS_CATEGORIES = [
   { id: "alert",    label: "警報" },
 ];
 
-// カテゴリごとの項目一覧。地震カテゴリはSettingsBody内で専用に組み立てるため
-// ここには含めない。詳細設定にはライセンス表示を追加、他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
+// カテゴリごとの項目一覧。地震・利用規約等の各カテゴリはSettingsBody内で専用に
+// 組み立てるためここには含めない。他のカテゴリは現状すべて骨組み(空のプレースホルダー画面)。
 const SETTINGS_ITEMS = {
   advanced: [
     { id: "appearance", label: "外観" },
-    { id: "terms",      label: "利用規約等・注意事項" },
-    { id: "license",    label: "ライセンス" },
   ],
 };
 
@@ -7249,15 +7247,37 @@ function LicenseFileCard() {
   );
 }
 
-// **強調** の簡易インライン処理。genuine Markdownパーサーではなく、
+// **強調** と [文字列](URL) の簡易インライン処理。genuine Markdownパーサーではなく、
 // こちらで用意する定型文書(利用規約・注意事項等)のみを想定したサブセット。
+// リンクはhttp(s)スキームのみ許可し、javascript:等は文字列として素通しする
+// (このファイル群はこちらで用意するものだが、念のための防御)。
 function renderInlineMarkdown(text, keyPrefix) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-  return parts.map((part, i) => (
-    part.startsWith("**") && part.endsWith("**") && part.length > 4
-      ? <strong key={`${keyPrefix}-${i}`}>{part.slice(2, -2)}</strong>
-      : <Fragment key={`${keyPrefix}-${i}`}>{part}</Fragment>
-  ));
+  const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^)]+\))/g);
+  return parts.map((part, i) => {
+    if (!part) return null;
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return <strong key={`${keyPrefix}-${i}`}>{part.slice(2, -2)}</strong>;
+    }
+    const linkMatch = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(part);
+    if (linkMatch) {
+      const [, label, url] = linkMatch;
+      if (!/^https?:\/\//i.test(url)) {
+        return <Fragment key={`${keyPrefix}-${i}`}>{label}</Fragment>;
+      }
+      return (
+        <a
+          key={`${keyPrefix}-${i}`}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "#0A84FF", textDecoration: "underline", wordBreak: "break-all" }}
+        >
+          {label}
+        </a>
+      );
+    }
+    return <Fragment key={`${keyPrefix}-${i}`}>{part}</Fragment>;
+  });
 }
 
 // ごく簡易的なMarkdown→JSXレンダラー。任意のMarkdown全般には対応せず、
@@ -7635,8 +7655,9 @@ function SettingsBody({
     );
   }
 
-  // 利用規約等・注意事項(詳細設定カテゴリの項目)の中身。文書一覧。
-  if (category === "advanced" && leaf === "terms" && !sub) {
+  // 利用規約等・注意事項(トップ階層のカテゴリ)の中身。文書一覧。
+  // ライセンスもこの中に含める。
+  if (category === "terms" && !leaf) {
     return (
       <>
         <SettingsHeader title="利用規約等・注意事項"/>
@@ -7646,13 +7667,15 @@ function SettingsBody({
           <SettingsMenuRow label="注意事項" onClick={() => onNavigate([...path, "notices"])}/>
           <SettingsCardDivider/>
           <SettingsMenuRow label="プライバシーポリシー" onClick={() => onNavigate([...path, "privacy"])}/>
+          <SettingsCardDivider/>
+          <SettingsMenuRow label="ライセンス" onClick={() => onNavigate([...path, "license"])}/>
         </SettingsCard>
       </>
     );
   }
 
   // 利用規約本文。public/terms-of-use.md を実行時に取得して表示する。
-  if (category === "advanced" && leaf === "terms" && sub === "tou") {
+  if (category === "terms" && leaf === "tou") {
     return (
       <>
         <SettingsHeader title="利用規約"/>
@@ -7662,7 +7685,7 @@ function SettingsBody({
   }
 
   // 注意事項本文。public/notices.md を実行時に取得して表示する。
-  if (category === "advanced" && leaf === "terms" && sub === "notices") {
+  if (category === "terms" && leaf === "notices") {
     return (
       <>
         <SettingsHeader title="注意事項"/>
@@ -7672,7 +7695,7 @@ function SettingsBody({
   }
 
   // プライバシーポリシー本文。public/privacy-policy.md を実行時に取得して表示する。
-  if (category === "advanced" && leaf === "terms" && sub === "privacy") {
+  if (category === "terms" && leaf === "privacy") {
     return (
       <>
         <SettingsHeader title="プライバシーポリシー"/>
@@ -7681,8 +7704,8 @@ function SettingsBody({
     );
   }
 
-  // ライセンス(詳細設定カテゴリの項目)の中身
-  if (category === "advanced" && leaf === "license" && !sub) {
+  // ライセンス(利用規約等・注意事項カテゴリの項目)の中身
+  if (category === "terms" && leaf === "license" && !sub) {
     return (
       <>
         <SettingsHeader title="ライセンス"/>
@@ -7710,7 +7733,7 @@ function SettingsBody({
 
   // MITライセンス本文(ライセンス項目のさらに下の階層)。新しくモーダルを作らず、
   // 他の設定画面と同じ「パネル内をその場で差し替える」ナビゲーションで表示する。
-  if (category === "advanced" && leaf === "license" && sub === "mit") {
+  if (category === "terms" && leaf === "license" && sub === "mit") {
     return (
       <>
         <SettingsHeader title="MIT License 2026 skotm"/>
