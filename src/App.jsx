@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.5b";
+const APP_VERSION = "1.1.5c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -8382,6 +8382,13 @@ export default function App() {
     return () => { cancelled = true; socket.close(); };
   }, [quakeFetchLimit]);
 
+  // 断層・プレート境界・観測点マーカー・推計震度分布・震央分布など、地震情報に
+  // 関する地図表示は、地震タブ・設定タブを見ている間だけ出す。津波・気象・警報
+  // タブを開いている間は表示をクリアする。ここで切り替えているのはMapCanvasに
+  // 渡す「実効値」だけで、faultsEnabled等の設定値そのものは変えない
+  // (地震タブに戻れば、元の設定のまま再び表示される)。
+  const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings";
+
   return (
     <ThemeContext.Provider value={themeContextValue}>
     <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
@@ -8394,20 +8401,20 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
           onReady={setMap}
-          stationPoints={selectedQuakePoints}
-          hypocenters={selectedHypocenters}
+          stationPoints={showQuakeMapLayers ? selectedQuakePoints : EMPTY_EQDB_LIST}
+          hypocenters={showQuakeMapLayers ? selectedHypocenters : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={selectedQuake?.time}
           maxIntensityKey={selectedQuake?.maxIntensity}
-          estIntensityEnabled={estIntensityEnabled}
-          areaFillEnabled={areaFillEnabled}
-          faultsEnabled={faultsEnabled}
-          plateBoundariesEnabled={plateBoundariesEnabled}
+          estIntensityEnabled={showQuakeMapLayers && estIntensityEnabled}
+          areaFillEnabled={showQuakeMapLayers && areaFillEnabled}
+          faultsEnabled={showQuakeMapLayers && faultsEnabled}
+          plateBoundariesEnabled={showQuakeMapLayers && plateBoundariesEnabled}
           boundaryLineColorId={boundaryLineColorId}
-          epicenterPoints={epicenterPoints}
+          epicenterPoints={showQuakeMapLayers ? epicenterPoints : EMPTY_EQDB_LIST}
           onSelectEpicenterPoint={handleSelectEpicenterPoint}
-          pointsLoading={stationPointsProcessing}
-          epicenterLoading={epicenterLoading}
+          pointsLoading={showQuakeMapLayers && stationPointsProcessing}
+          epicenterLoading={showQuakeMapLayers && epicenterLoading}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
