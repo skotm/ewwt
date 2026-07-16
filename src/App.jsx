@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.4c";
+const APP_VERSION = "1.1.4d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6783,12 +6783,21 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
    流用せず、震度配色ピッカーで元々使っていた「角丸のグループ化カード」を
    基本デザインとして統一している。
    ───────────────────────────────────────────────────── */
+// 設定トップの一覧。以前は「地震・津波・気象・警報・詳細設定」の5項目を並べていたが、
+// 前者4つ(=ボトムナビの各タブに対応する設定)を「タブ設定」1項目にまとめ、
+// その配下(TAB_SETTINGS_CATEGORIES)に移動した。
 const SETTINGS_MENU = [
+  { id: "tabSettings", label: "タブ設定" },
+  { id: "advanced",    label: "詳細設定" },
+];
+
+// 「タブ設定」配下の一覧。以前のSETTINGS_MENUそのもの。
+// pathとしては ["tabSettings", "quake", ...] のように先頭にtabSettingsが付く形になる。
+const TAB_SETTINGS_CATEGORIES = [
   { id: "quake",    label: "地震" },
   { id: "tsunami",  label: "津波" },
   { id: "weather",  label: "気象" },
   { id: "alert",    label: "警報" },
-  { id: "advanced", label: "詳細設定" },
 ];
 
 // カテゴリごとの項目一覧。地震カテゴリはSettingsBody内で専用に組み立てるため
@@ -7272,8 +7281,31 @@ function SettingsBody({
     );
   }
 
-  const [category, leaf, sub] = path;
-  const categoryLabel = SETTINGS_MENU.find(m => m.id === category)?.label || "";
+  // 「タブ設定」の中身(地震・津波・気象・警報への入口)。
+  if (path.length === 1 && path[0] === "tabSettings") {
+    return (
+      <>
+        <SettingsHeader title="タブ設定"/>
+        <SettingsCard>
+          {TAB_SETTINGS_CATEGORIES.map((item, i) => (
+            <div key={item.id}>
+              {i > 0 && <SettingsCardDivider/>}
+              <SettingsMenuRow label={item.label} onClick={() => onNavigate([...path, item.id])}/>
+            </div>
+          ))}
+        </SettingsCard>
+      </>
+    );
+  }
+
+  // 地震・津波・気象・警報は「タブ設定」配下に移動したため、実際のpathは
+  // ["tabSettings", "quake", ...] のように先頭にtabSettingsが付く。以降の
+  // ルーティングは以前と同じcategory/leaf/subの2〜3階層で判定したいので、
+  // その場合だけ先頭のtabSettingsを取り除いたものをlogicalPathとして扱う。
+  const logicalPath = path[0] === "tabSettings" ? path.slice(1) : path;
+  const [category, leaf, sub] = logicalPath;
+  const categoryLabel = (SETTINGS_MENU.find(m => m.id === category)
+    || TAB_SETTINGS_CATEGORIES.find(m => m.id === category))?.label || "";
 
   // 震度配色(地震カテゴリの項目)の中身
   if (category === "quake" && leaf === "colorScheme") {
