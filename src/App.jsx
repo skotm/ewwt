@@ -7643,32 +7643,32 @@ function SettingsBody({
     );
   }
 
-  // 利用規約本文。public/利用規約.md を実行時に取得して表示する。
+  // 利用規約本文。public/terms-of-use.md を実行時に取得して表示する。
   if (category === "advanced" && leaf === "terms" && sub === "tou") {
     return (
       <>
         <SettingsHeader title="利用規約"/>
-        <MarkdownFileCard fileName="利用規約.md"/>
+        <MarkdownFileCard fileName="terms-of-use.md"/>
       </>
     );
   }
 
-  // 注意事項本文。public/注意事項.md を実行時に取得して表示する。
+  // 注意事項本文。public/notices.md を実行時に取得して表示する。
   if (category === "advanced" && leaf === "terms" && sub === "notices") {
     return (
       <>
         <SettingsHeader title="注意事項"/>
-        <MarkdownFileCard fileName="注意事項.md"/>
+        <MarkdownFileCard fileName="notices.md"/>
       </>
     );
   }
 
-  // プライバシーポリシー本文。public/プライバシーポリシー.md を実行時に取得して表示する。
+  // プライバシーポリシー本文。public/privacy-policy.md を実行時に取得して表示する。
   if (category === "advanced" && leaf === "terms" && sub === "privacy") {
     return (
       <>
         <SettingsHeader title="プライバシーポリシー"/>
-        <MarkdownFileCard fileName="プライバシーポリシー.md"/>
+        <MarkdownFileCard fileName="privacy-policy.md"/>
       </>
     );
   }
@@ -7755,11 +7755,16 @@ function SettingsBody({
      - 過去に同意した記録がある → ブロックせずそのまま利用させる
      - 一度も同意したことがない(真の初回) → 同意対象を表示できないため、
        再読み込みを促す画面のみ出す(この場合だけブロックが続く)
+
+   ファイル名は意図的に日本語ではなくASCIIにしている。日本語ファイル名
+   (特に濁点・半濁点付きのカタカナ)はmacOS等でNFD(濁点が分解された形)で
+   保存されることがあり、ブラウザが要求するNFC表記のURLとバイト単位で
+   一致せず404になることがあるため。
    ───────────────────────────────────────────────────── */
 const TERMS_GATE_FILES = {
-  tou: "利用規約.md",
-  privacy: "プライバシーポリシー.md",
-  notices: "注意事項.md",
+  tou: "terms-of-use.md",
+  privacy: "privacy-policy.md",
+  notices: "notices.md",
 };
 const TERMS_GATE_TABS = [
   { id: "tou",     label: "利用規約" },
