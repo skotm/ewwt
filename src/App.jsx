@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.5a";
+const APP_VERSION = "1.1.4d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7268,6 +7268,16 @@ function renderInlineMarkdown(text, keyPrefix) {
         <a
           key={`${keyPrefix}-${i}`}
           href={url}
+          onClick={(e) => {
+            // iOSのホーム画面PWA(standalone表示)では、target="_blank"だけだと
+            // 別ウィンドウ(Safari)に離脱せず同じスタンドアロン画面内で遷移して
+            // しまうことがあり、その状態で「戻る」とアプリ全体がリロードされて
+            // しまう(=それまでのReactの状態が失われる)。window.openを明示的に
+            // 呼んで新しいブラウジングコンテキストを開くことで、この画面はその場に
+            // 留まったまま、リンク先だけを別枠(Safari等)で開くようにする。
+            e.preventDefault();
+            window.open(url, "_blank", "noopener,noreferrer");
+          }}
           target="_blank"
           rel="noopener noreferrer"
           style={{ color: "#0A84FF", textDecoration: "underline", wordBreak: "break-all" }}
