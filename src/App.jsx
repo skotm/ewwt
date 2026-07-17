@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6c";
+const APP_VERSION = "1.1.6d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2545,11 +2545,99 @@ async function fetchRecentTsunamis(limit) {
 
 /* ─────────────────────────────────────────────────────
    過去の津波情報(津波タブ「過去」モード)
-   直近一覧(fetchRecentTsunamis)とは別に、offsetをずらしながら
-   より古い津波情報を追加取得していくためのページング取得。
-   P2P地震情報の/history APIはlimit+offsetの組み合わせで過去に遡れる
-   (地震タブのeqdb検索に相当する、津波タブ側の「過去を見る」手段)。
+
+   【重要】P2P地震情報の/history APIは、公式仕様上「offsetパラメタは利用可能だが
+   1週間以上古い情報は取得できない場合がある」うえ、地震・EEW等すべてのコードを
+   同じ一領域(capped collection)で共有しているため、発表頻度の低い津波情報(552)は
+   実際には数日〜1週間程度ですぐに押し出されてしまう。そのため、このAPIのoffset
+   だけに頼ると(特に直近に津波警報が無い期間は)簡単に「0件」になってしまう
+   ("過去の津波が見つかりません"の原因)。
+
+   → 津波情報専用に気象庁自身が公開している一覧(list.json)を主な取得元にし、
+     P2P地震情報側のoffset取得は補助的に足りない分を補う形にする
+     (以前作ったindex.html版アプリのfetchJMATsunamiHistory()と同じ考え方)。
    ───────────────────────────────────────────────────── */
+const JMA_TSUNAMI_LIST_URL = "https://www.jma.go.jp/bosai/tsunami/data/list.json";
+const JMA_TSUNAMI_HISTORY_LIMIT = 40; // list.json自体は新しい順に並んでいるため、先頭から取得する件数
+
+// 気象庁のReportDateTime("2024-08-08T20:30:00+09:00"のようなISO風文字列、常にJST)を、
+// アプリ内で使っている"YYYY/MM/DD HH:mm:ss"形式(P2P地震情報側と揃える。ソート・
+// 表示(TsunamiListRowのslice(5,16)等)の両方でこの形式を前提にしているため)に変換する。
+function jmaIsoToSlash(iso) {
+  if (!iso) return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/.exec(iso);
+  if (!m) return iso;
+  const [, y, mo, d, h, mi, s] = m;
+  return `${y}/${mo}/${d} ${h}:${mi}:${s}`;
+}
+
+// 気象庁の個別報(Head/Body形式のJSON)を、アプリ内の津波カード形式(toTsunamiCardと同じ形)に変換する。
+function jmaTsunamiReportToCard(report, reportDatetime) {
+  const head = report?.Head;
+  const issueTime = head?.ReportDateTime || reportDatetime;
+  const isCancel = head?.InfoType === "取消";
+  const areas = [];
+  const forecast = report?.Body?.Tsunami?.Forecast;
+  if (forecast?.Item) {
+    const items = Array.isArray(forecast.Item) ? forecast.Item : [forecast.Item];
+    items.forEach(item => {
+      const areaName = item?.Area?.Name || "";
+      const kindName = item?.Category?.Kind?.Name || "";
+      if (!areaName || kindName.includes("解除")) return;
+      let grade = "Unknown";
+      if (kindName.includes("大津波")) grade = "MajorWarning";
+      else if (kindName.includes("警報")) grade = "Warning";
+      else if (kindName.includes("注意報")) grade = "Watch";
+      else if (kindName.includes("海面変動") || kindName.includes("予報")) grade = "NonEffective";
+      if (grade === "Unknown") return;
+      areas.push({
+        name: areaName,
+        grade,
+        immediate: !!item?.FirstHeight?.Condition && item.FirstHeight.Condition.includes("ただちに"),
+        firstHeightCondition: item?.FirstHeight?.Condition || null,
+        firstHeightTime: item?.FirstHeight?.ArrivalTime || null,
+        maxHeightDescription: item?.MaxHeight?.TsunamiHeight?.Description || null,
+      });
+    });
+  }
+  let maxGrade = null, maxWeight = -1;
+  areas.forEach(a => {
+    const w = tsunamiGradeInfo(a.grade).weight;
+    if (w > maxWeight) { maxWeight = w; maxGrade = a.grade; }
+  });
+  return {
+    id: `jma_${reportDatetime}`,
+    time: jmaIsoToSlash(issueTime),
+    cancelled: isCancel,
+    areas,
+    maxGrade: isCancel ? null : maxGrade,
+  };
+}
+
+// 気象庁 津波情報一覧(list.json)を取得し、先頭(新しい順)からJMA_TSUNAMI_HISTORY_LIMIT件、
+// 各個別報を取得して津波カードに変換する。1件でも取得に失敗した場合はその1件だけを
+// null化して除外し、全体は継続する。
+async function fetchJmaTsunamiHistory(limit = JMA_TSUNAMI_HISTORY_LIMIT) {
+  const listRes = await fetch(JMA_TSUNAMI_LIST_URL);
+  if (!listRes.ok) throw new Error(`気象庁 津波情報一覧の取得に失敗(HTTP ${listRes.status})`);
+  const list = await listRes.json();
+  if (!Array.isArray(list)) return [];
+  const targets = list.slice(0, limit);
+  const cards = await Promise.all(targets.map(async item => {
+    try {
+      const res = await fetch(`https://www.jma.go.jp/bosai/tsunami/data/${item.json}`);
+      if (!res.ok) return null;
+      return jmaTsunamiReportToCard(await res.json(), item.reportDatetime);
+    } catch {
+      return null;
+    }
+  }));
+  return dedupeTsunamiList(cards.filter(Boolean));
+}
+
+// 直近一覧(fetchRecentTsunamis)とは別に、offsetをずらしながらP2P地震情報側の
+// 過去分を追加取得するためのページング取得。上記の理由により単独では心もとないため、
+// あくまで気象庁一覧を補う目的で使う。
 const TSUNAMI_HISTORY_PAGE_SIZE = 50;
 
 async function fetchTsunamiHistoryPage(offset, limit = TSUNAMI_HISTORY_PAGE_SIZE) {
@@ -2559,6 +2647,20 @@ async function fetchTsunamiHistoryPage(offset, limit = TSUNAMI_HISTORY_PAGE_SIZE
   if (!Array.isArray(data)) return [];
   return dedupeTsunamiList(data.map(toTsunamiCard));
 }
+
+// 気象庁一覧(primary)とP2P地震情報一覧(supplementary)を統合する。同じ発表が
+// 双方に出てくることがあるため、発表時刻が1時間以内に近い場合は重複とみなして
+// supplementary側を捨てる(以前のindex.html版アプリと同じ判定基準)。
+function mergeTsunamiSources(primary, supplementary) {
+  const merged = [...primary];
+  supplementary.forEach(s => {
+    const sTime = new Date(s.time).getTime();
+    const isDup = merged.some(p => Math.abs(new Date(p.time).getTime() - sTime) < 60 * 60 * 1000);
+    if (!isDup) merged.push(s);
+  });
+  return dedupeTsunamiList(merged);
+}
+
 
 /* ─────────────────────────────────────────────────────
    気象庁 推計震度分布(estimated_intensity_map) 連携
@@ -8793,9 +8895,27 @@ export default function App() {
     if (tsunamiHistory.status === "loading" || !tsunamiHistory.hasMore) return;
     setTsunamiHistory(prev => ({ ...prev, status: "loading" }));
     try {
+      // 初回だけ、気象庁の公式一覧(list.json)も合わせて取得し、統合する。
+      // P2P地震情報側のoffset取得だけでは(容量共有のため)すぐに0件になりがちなので、
+      // 津波情報専用のこちらを主な取得元にする。
+      if (tsunamiHistory.offset === 0 && tsunamiHistory.items.length === 0) {
+        const [jmaItems, p2pItems] = await Promise.all([
+          fetchJmaTsunamiHistory().catch(err => { console.error("気象庁 津波情報一覧の取得に失敗:", err); return []; }),
+          fetchTsunamiHistoryPage(0, TSUNAMI_HISTORY_PAGE_SIZE).catch(err => { console.error("P2P地震情報 過去の津波情報の取得に失敗:", err); return []; }),
+        ]);
+        setTsunamiHistory({
+          items: mergeTsunamiSources(jmaItems, p2pItems),
+          offset: TSUNAMI_HISTORY_PAGE_SIZE,
+          status: "ready",
+          hasMore: p2pItems.length >= TSUNAMI_HISTORY_PAGE_SIZE,
+        });
+        return;
+      }
+
+      // 2回目以降の「もっと見る」は、P2P地震情報側のoffsetをさらに進めて補う。
       const page = await fetchTsunamiHistoryPage(tsunamiHistory.offset, TSUNAMI_HISTORY_PAGE_SIZE);
       setTsunamiHistory(prev => ({
-        items: dedupeTsunamiList([...prev.items, ...page]),
+        items: mergeTsunamiSources(prev.items, page),
         offset: prev.offset + TSUNAMI_HISTORY_PAGE_SIZE,
         status: "ready",
         hasMore: page.length >= TSUNAMI_HISTORY_PAGE_SIZE,
