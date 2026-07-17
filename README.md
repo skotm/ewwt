@@ -45,3 +45,6 @@ Webアプリケーションのため、[ウェブサイト](https://skotm.github
 
 を必ずご確認の上ご利用ください。
 
+### 参考にしたプログラム
+
+本プログラムのUIデザインは、[EQMonitor](https://github.com/YumNumm/EQMonitor)（[YumNumm](https://github.com/YumNumm)氏）のデザインを参考にさせていただきました。
