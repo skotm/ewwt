@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6a";
+const APP_VERSION = "1.1.6c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2544,6 +2544,23 @@ async function fetchRecentTsunamis(limit) {
 }
 
 /* ─────────────────────────────────────────────────────
+   過去の津波情報(津波タブ「過去」モード)
+   直近一覧(fetchRecentTsunamis)とは別に、offsetをずらしながら
+   より古い津波情報を追加取得していくためのページング取得。
+   P2P地震情報の/history APIはlimit+offsetの組み合わせで過去に遡れる
+   (地震タブのeqdb検索に相当する、津波タブ側の「過去を見る」手段)。
+   ───────────────────────────────────────────────────── */
+const TSUNAMI_HISTORY_PAGE_SIZE = 50;
+
+async function fetchTsunamiHistoryPage(offset, limit = TSUNAMI_HISTORY_PAGE_SIZE) {
+  const res = await fetch(`${P2PQUAKE_TSUNAMI_HISTORY_URL_BASE}&limit=${limit}&offset=${offset}`);
+  if (!res.ok) throw new Error(`過去の津波情報の取得に失敗(HTTP ${res.status})`);
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+  return dedupeTsunamiList(data.map(toTsunamiCard));
+}
+
+/* ─────────────────────────────────────────────────────
    気象庁 推計震度分布(estimated_intensity_map) 連携
    震度5弱以上の地震選択時、気象庁が発表する250mメッシュの推計震度分布画像を
    地図上に重ねて表示する。過去に別アプリ(index.html版)で実装済みのロジックを
@@ -4874,6 +4891,7 @@ function BottomDock({
   active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
+  tsunamiHistory, onLoadMoreTsunamiHistory,
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
@@ -4959,6 +4977,24 @@ function BottomDock({
   useEffect(() => {
     if (active !== "quake" && selectedQuakeId == null) setQuakeViewMode("recent");
   }, [active, selectedQuakeId]);
+
+  // 津波タブ版の表示モード。"recent" = 直近の津波情報一覧、
+  // "history" = 過去に発表された津波情報一覧(/history APIをoffsetで遡って取得)。
+  // 考え方はquakeViewModeと全く同じ(タブを離れたら「一覧」に戻す/選択中は維持)。
+  const [tsunamiViewMode, setTsunamiViewMode] = useState("recent"); // "recent" | "history"
+  useEffect(() => {
+    if (active !== "tsunami" && selectedTsunamiId == null) setTsunamiViewMode("recent");
+  }, [active, selectedTsunamiId]);
+
+  // 「過去」モードを初めて開いた時、まだ何も取得していなければ最初の1ページを取得する。
+  useEffect(() => {
+    if (
+      active === "tsunami" && tsunamiViewMode === "history" &&
+      tsunamiHistory && tsunamiHistory.items.length === 0 && tsunamiHistory.status === "idle"
+    ) {
+      onLoadMoreTsunamiHistory?.();
+    }
+  }, [active, tsunamiViewMode, tsunamiHistory, onLoadMoreTsunamiHistory]);
 
   // 「この震源の近傍で発生した地震」パネルを開いている場合の、震源地名。
   // nullなら通常の地震詳細カードを表示し、震源地名(文字列)が入っている間は
@@ -5148,12 +5184,12 @@ function BottomDock({
   // いない)場合は、先頭に戻すのではなく選択前のスクロール位置を復元する
   // (=一覧を下の方までスクロールして地震を選んだ後、戻ったら同じ場所に
   //  留まってほしい、という自然な挙動にするため)。
-  const prevScrollDepsRef = useRef({ active, quakeViewMode, selectedQuakeId });
+  const prevScrollDepsRef = useRef({ active, quakeViewMode, tsunamiViewMode, selectedQuakeId });
   useLayoutEffect(() => {
     if (!scrollRef.current) return;
     const prev = prevScrollDepsRef.current;
     const onlyDeselected =
-      prev.active === active && prev.quakeViewMode === quakeViewMode &&
+      prev.active === active && prev.quakeViewMode === quakeViewMode && prev.tsunamiViewMode === tsunamiViewMode &&
       prev.selectedQuakeId != null && selectedQuakeId == null;
 
     // scrollTopを直接設定するだけで、一覧⇄詳細切り替え時の位置調整は十分。
@@ -5167,13 +5203,13 @@ function BottomDock({
     } else {
       el.scrollTop = onlyDeselected ? listScrollTopRef.current : 0;
     }
-    prevScrollDepsRef.current = { active, quakeViewMode, selectedQuakeId };
+    prevScrollDepsRef.current = { active, quakeViewMode, tsunamiViewMode, selectedQuakeId };
     // settingsPath(設定の階層メニュー内の画面遷移。例: ライセンス一覧→個別ライセンス詳細)や
     // stationDetailOpenKey(「各地の震度」の詳細画面)は、同じscrollRefを共有したまま
     // 中身の高さだけ変わる。これらの変化時にscrollTopをリセットしないと、深くスクロール
     // した状態で戻った時、新しい(短い)中身に対して古い(大きい)scrollTopが残ったままになり、
     // 中身が全部スクロールアウトして「フローティング内が何も表示されない」ように見える不具合が起きる。
-  }, [active, selectedQuakeId, quakeViewMode, nearbyQuakeFor, settingsPath, stationDetailOpenKey, mechDetailOpen]);
+  }, [active, selectedQuakeId, quakeViewMode, tsunamiViewMode, nearbyQuakeFor, settingsPath, stationDetailOpenKey, mechDetailOpen]);
 
 
   // 画面の高さ — 「全画面」スナップの基準になる
@@ -5697,6 +5733,17 @@ function BottomDock({
           />
         )}
 
+        {/* 津波タブの「一覧⇄過去」切り替えバー — 地震タブと全く同じ考え方。
+            津波情報を選択してカード表示になっている間は不要なので隠す。 */}
+        {active === "tsunami" && selectedTsunamiId == null && (
+          <QuakeListToolbar
+            items={TSUNAMI_TOOLBAR_ITEMS}
+            mode={tsunamiViewMode}
+            onModeChange={(mode) => { killScrollMomentum(); setTsunamiViewMode(mode); }}
+            onHandoffToPanelDrag={handlePointerDown}
+          />
+        )}
+
         {/* スクロール可能な本体 — ヘッダー・レイヤー一覧だけがここでスクロールする。
             overflowAnchor: "none" は、タブ切り替えで中身の高さが変わった際に
             ブラウザのスクロールアンカリングがスクロール位置を勝手にずらし、
@@ -5708,7 +5755,7 @@ function BottomDock({
             ため。要素ごと作り直すことで、古い要素に紐づく慣性スクロールを
             物理的に断ち切る。 */}
         <div
-          key={`${active}:${quakeViewMode}:${selectedQuakeId != null}:${selectedTsunamiId != null}`}
+          key={`${active}:${quakeViewMode}:${tsunamiViewMode}:${selectedQuakeId != null}:${selectedTsunamiId != null}`}
           ref={scrollRef}
           style={{
             flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none",
@@ -5883,6 +5930,11 @@ function BottomDock({
                   status={tsunamiStatus}
                   selectedId={selectedTsunamiId}
                   onSelect={handleSelectTsunamiForScroll}
+                  viewMode={tsunamiViewMode}
+                  historyItems={tsunamiHistory?.items ?? EMPTY_EQDB_LIST}
+                  historyStatus={tsunamiHistory?.status ?? "idle"}
+                  historyHasMore={tsunamiHistory?.hasMore ?? true}
+                  onLoadMoreHistory={onLoadMoreTsunamiHistory}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -6204,6 +6256,20 @@ function SearchGlassIcon({ size = 18 }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   HISTORY ICON — 時計(履歴)アイコン。津波タブの「過去」モードで使う。
+   ───────────────────────────────────────────────────── */
+function HistoryClockIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12.5" r="8.5"/>
+      <path d="M12 8v4.5l3 2"/>
+      <path d="M9 2.5h6"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    QUAKE LIST ROW
    地震一覧の1行分。「直近の一覧」と「検索結果一覧」の両方から共通で使う。
    ───────────────────────────────────────────────────── */
@@ -6423,9 +6489,20 @@ function TsunamiAreaRow({ area }) {
    予報区一覧)を、無ければ一覧を表示する。地震タブのQuakeListRow⇄QuakeDetailCard
    と同じ「同じスクロール領域内でその場を差し替える」構成。
    ───────────────────────────────────────────────────── */
-function TsunamiTabBody({ tsunamis, status, selectedId, onSelect }) {
+function TsunamiTabBody({
+  tsunamis, status, selectedId, onSelect,
+  // 「過去」モード関連。viewModeが"history"の間は、直近一覧(tsunamis)の代わりに
+  // historyItems(/history APIをoffsetで遡って追加取得した一覧)を表示する。
+  // 選択中の詳細は、直近一覧・過去一覧のどちらから選んでも見られるよう両方から探す
+  // (地震タブのquakes⇄searchQuakeと同じ考え方)。
+  viewMode = "recent",
+  historyItems = EMPTY_EQDB_LIST, historyStatus = "idle", historyHasMore = true,
+  onLoadMoreHistory,
+}) {
   const { tokens } = useContext(ThemeContext);
-  const selected = tsunamis.find(t => t.id === selectedId) || null;
+  const selected = tsunamis.find(t => t.id === selectedId)
+    || historyItems.find(t => t.id === selectedId)
+    || null;
 
   if (selected) {
     const sortedAreas = [...selected.areas].sort((a, b) => tsunamiGradeInfo(b.grade).weight - tsunamiGradeInfo(a.grade).weight);
@@ -6451,6 +6528,70 @@ function TsunamiTabBody({ tsunamis, status, selectedId, onSelect }) {
             fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`,
           }}>
             対象区域の詳細データがありません。
+          </div>
+        )}
+      </>
+    );
+  }
+
+  // 「過去」モード: /history APIをoffsetで遡って取得した過去の津波情報一覧を表示する。
+  // 末尾に「もっと見る」ボタンを置き、押すたびにさらに古い分を追加取得する。
+  if (viewMode === "history") {
+    if (historyStatus === "loading" && historyItems.length === 0) {
+      return (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
+        }}>
+          <div style={{
+            width: 16, height: 16, borderRadius: "50%",
+            border: `2px solid rgba(${tokens.ink},0.15)`,
+            borderTopColor: `rgba(${tokens.ink},0.6)`,
+            animation: "spin 0.8s linear infinite",
+          }}/>
+          <span style={{ fontSize: 12 }}>過去の津波情報を取得中…</span>
+        </div>
+      );
+    }
+
+    if (historyStatus === "error" && historyItems.length === 0) {
+      return (
+        <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
+          過去の津波情報の取得に失敗しました。
+        </div>
+      );
+    }
+
+    if (historyItems.length === 0) {
+      return (
+        <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
+          過去の津波情報が見つかりませんでした
+        </div>
+      );
+    }
+
+    return (
+      <>
+        {historyItems.map((t, i) => (
+          <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)}/>
+        ))}
+        {historyHasMore && (
+          <div style={{ margin: "10px 14px 4px" }}>
+            <PressableButton
+              type="button"
+              onClick={onLoadMoreHistory}
+              disabled={historyStatus === "loading"}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 12,
+                border: "none", cursor: "pointer",
+                background: `rgba(${tokens.ink},0.08)`,
+                boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.14)`,
+                color: tokens.text, fontSize: 13, fontWeight: 600,
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}
+            >
+              {historyStatus === "loading" ? "読み込み中…" : "もっと見る"}
+            </PressableButton>
           </div>
         )}
       </>
@@ -7080,11 +7221,19 @@ function QuakeSearchPanel({ stations, colorScheme, onFoundQuake, onSelectQuake, 
    - 検索ボタン:   気象庁 震度データベースの検索UIに切り替える
    ───────────────────────────────────────────────────── */
 const QUAKE_TOOLBAR_ITEMS = [
-  { id: "recent", label: "地震一覧" },
-  { id: "search", label: "地震検索" },
+  { id: "recent", label: "地震一覧", icon: ListViewIcon },
+  { id: "search", label: "地震検索", icon: SearchGlassIcon },
 ];
 
-function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
+// 津波タブ版の切り替え項目。地震タブの「一覧⇄検索」と同じ考え方で、
+// 直近一覧⇄過去の津波情報を切り替える(過去分は/history APIをoffsetで
+// 遡って追加取得するTsunamiHistoryのモード)。
+const TSUNAMI_TOOLBAR_ITEMS = [
+  { id: "recent",  label: "津波情報", icon: ListViewIcon },
+  { id: "history", label: "過去の津波", icon: HistoryClockIcon },
+];
+
+function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag, items = QUAKE_TOOLBAR_ITEMS }) {
   // このコンポーネント自身のpropに"mode"(表示モード: list/search)があるため、
   // ThemeContextの方はthemeModeという別名で受け取る。
   const { tokens, mode: themeMode } = useContext(ThemeContext);
@@ -7097,10 +7246,10 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
   const moved        = useRef(false);
   const startX       = useRef(0);
   const startY       = useRef(0);
-  const N     = QUAKE_TOOLBAR_ITEMS.length;
+  const N     = items.length;
   const tabW  = 100 / N; // 1タブの幅[%]（内側領域基準）
 
-  const activeIndex = QUAKE_TOOLBAR_ITEMS.findIndex(item => item.id === mode);
+  const activeIndex = items.findIndex(item => item.id === mode);
   const [highlightLeft, setHighlightLeft] = useState(activeIndex * tabW);
   const [dragging,      setDragging]      = useState(false);
   const [pressed,       setPressed]       = useState(false);
@@ -7183,12 +7332,12 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
     setPressed(false);
     setPreviewIdx(null);
     setHighlightLeft(idx * tabW);
-    onModeChange(QUAKE_TOOLBAR_ITEMS[idx].id);
+    onModeChange(items[idx].id);
   }
 
   function handleClick(id) {
     if (moved.current) return; // ドラッグ完了後(縦方向への引き渡しを含む)の二重発火を防ぐ
-    const idx = QUAKE_TOOLBAR_ITEMS.findIndex(item => item.id === id);
+    const idx = items.findIndex(item => item.id === id);
     setHighlightLeft(idx * tabW);
     onModeChange(id);
   }
@@ -7243,7 +7392,7 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
             zIndex: 0,
           }}
         />
-        {QUAKE_TOOLBAR_ITEMS.map(({ id, label }, idx) => {
+        {items.map(({ id, label, icon: Icon }, idx) => {
           const isActive = idx === displayIdx;
           return (
             <button
@@ -7264,7 +7413,7 @@ function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag }) {
                 WebkitTapHighlightColor: "transparent",
               }}
             >
-              {id === "recent" ? <ListViewIcon size={16}/> : <SearchGlassIcon size={16}/>}
+              <Icon size={16}/>
             </button>
           );
         })}
@@ -8633,6 +8782,30 @@ export default function App() {
   const [tsunamiStatus,     setTsunamiStatus]     = useState("loading"); // loading | ready | error
   const [selectedTsunamiId, setSelectedTsunamiId] = useState(null);
 
+  // 津波タブ「過去」モード用。直近一覧(tsunamis)とは別に、/history APIを
+  // offsetで遡りながら追加取得した過去の津波情報を保持する(地震タブの
+  // searchQuakeと同じ理由でWebSocketの新着・件数上限の影響を受けないようにする)。
+  const [tsunamiHistory, setTsunamiHistory] = useState({
+    items: [], offset: 0, status: "idle", hasMore: true,
+  }); // status: idle | loading | ready | error
+
+  async function loadMoreTsunamiHistory() {
+    if (tsunamiHistory.status === "loading" || !tsunamiHistory.hasMore) return;
+    setTsunamiHistory(prev => ({ ...prev, status: "loading" }));
+    try {
+      const page = await fetchTsunamiHistoryPage(tsunamiHistory.offset, TSUNAMI_HISTORY_PAGE_SIZE);
+      setTsunamiHistory(prev => ({
+        items: dedupeTsunamiList([...prev.items, ...page]),
+        offset: prev.offset + TSUNAMI_HISTORY_PAGE_SIZE,
+        status: "ready",
+        hasMore: page.length >= TSUNAMI_HISTORY_PAGE_SIZE,
+      }));
+    } catch (err) {
+      console.error("過去の津波情報の取得に失敗:", err);
+      setTsunamiHistory(prev => ({ ...prev, status: "error" }));
+    }
+  }
+
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
 
@@ -8871,7 +9044,9 @@ export default function App() {
   // 開いている時だけ出す(一覧を見ているだけの時は、どの回の予報区を塗るべきか
   // 一意に決まらないため出さない)。
   const showTsunamiMapLayers = activeNav === "tsunami" || activeNav === "settings";
-  const selectedTsunami = tsunamis.find(t => t.id === selectedTsunamiId) || null;
+  const selectedTsunami = tsunamis.find(t => t.id === selectedTsunamiId)
+    || tsunamiHistory.items.find(t => t.id === selectedTsunamiId)
+    || null;
   const tsunamiAreasForMap = (showTsunamiMapLayers && selectedTsunami && !selectedTsunami.cancelled)
     ? selectedTsunami.areas
     : EMPTY_EQDB_LIST;
@@ -8976,6 +9151,8 @@ export default function App() {
                   tsunamiStatus={tsunamiStatus}
                   selectedTsunamiId={selectedTsunamiId}
                   onSelectTsunami={setSelectedTsunamiId}
+                  tsunamiHistory={tsunamiHistory}
+                  onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -9020,6 +9197,8 @@ export default function App() {
               tsunamiStatus={tsunamiStatus}
               selectedTsunamiId={selectedTsunamiId}
               onSelectTsunami={setSelectedTsunamiId}
+              tsunamiHistory={tsunamiHistory}
+              onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
