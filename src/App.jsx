@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6";
+const APP_VERSION = "1.1.6a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -631,6 +631,16 @@ function loadPlateBoundariesData() {
   return plateBoundariesDataPromise;
 }
 
+// 津波予報区(海岸線)データ。津波情報の詳細を開いた時だけ、対象の予報区を
+// 塗り分けるために遅延読み込みする(断層・プレート境界と同じ理由・同じ方式)。
+// ファイル: public/map/tsunami-areas.json
+let tsunamiAreasDataPromise = null;
+function loadTsunamiAreasData() {
+  if (tsunamiAreasDataPromise) return tsunamiAreasDataPromise;
+  tsunamiAreasDataPromise = cachedFetchJSON(`${import.meta.env.BASE_URL}map/tsunami-areas.json`);
+  return tsunamiAreasDataPromise;
+}
+
 /* ─────────────────────────────────────────────────────
    MAPLIBREスタイル生成
    ローカルのworld.json(GeometryCollection)・prefectures.json(FeatureCollection)を
@@ -699,6 +709,7 @@ function MapCanvas({
   faultsEnabled, plateBoundariesEnabled, boundaryLineColorId,
   epicenterPoints = [], onSelectEpicenterPoint,
   pointsLoading = false, epicenterLoading = false,
+  tsunamiAreas = [],
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -960,6 +971,24 @@ function MapCanvas({
             paint: { "line-color": initCore, "line-width": boundaryLineWidth },
           }, "station-points-symbol");
 
+          // 津波予報区(海岸線)。津波情報の詳細を開いた時だけ、対象の予報区を
+          // grade(危険度)の色で塗る。データ自体は遅延読み込みのため、
+          // ここでは空のソースだけ用意しておく(下方のuseEffect参照)。
+          map.addSource("tsunami-areas", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "tsunami-areas-layer",
+            type: "line",
+            source: "tsunami-areas",
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": "rgba(0,0,0,0)",
+              "line-width": 3.5,
+            },
+          }, "station-points-symbol");
+
           // 震央分布(P2P地震一覧・近傍地震検索・データベース検索の結果を、
           // 震度配色の丸として地図上に重ねて表示する)。
           // 独自のcanvasレイヤーではなくMapLibre標準のcircleレイヤーにすることで、
@@ -1175,6 +1204,31 @@ function MapCanvas({
         });
     }
   }, [plateBoundariesEnabled, status]);
+
+  // 津波予報区(海岸線)。断層・プレート境界と同じ遅延読み込みだが、こちらは
+  // 設定トグルではなく「表示すべき予報区(tsunamiAreas)が1件以上ある」ことが
+  // トリガーになる(=津波タブで津波情報の詳細を開いた時だけ実データを取得する)。
+  const tsunamiAreasLoadedRef = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("tsunami-areas-layer")) return;
+
+    map.setPaintProperty("tsunami-areas-layer", "line-color", buildTsunamiAreaColorExpr(tsunamiAreas));
+
+    if (tsunamiAreas.length > 0 && !tsunamiAreasLoadedRef.current) {
+      tsunamiAreasLoadedRef.current = true;
+      loadTsunamiAreasData()
+        .then((geojson) => {
+          const source = map.getSource("tsunami-areas");
+          if (source) source.setData(geojson);
+        })
+        .catch((err) => {
+          console.error("津波予報区データの読み込みに失敗しました:", err);
+          tsunamiAreasLoadedRef.current = false; // 失敗時は次回表示対象が出た時に再試行できるようにする
+        });
+    }
+  }, [tsunamiAreas, status]);
 
   // 選択中の地震(hypocenters)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源(複数の場合は全件)+周辺の観測点がちょうど収まる範囲へズームする。
@@ -2426,6 +2480,23 @@ const TSUNAMI_GRADE_FALLBACK = { label: "情報", weight: 0, color: "#8E8E93" };
 
 function tsunamiGradeInfo(grade) {
   return TSUNAMI_GRADE_INFO[grade] || TSUNAMI_GRADE_FALLBACK;
+}
+
+// tsunami-areas.json(津波予報区の海岸線)の各featureは properties.name に
+// 予報区名を持つ。表示中の津波情報のareas(name+grade)を突き合わせて、
+// 該当する予報区だけをgradeの色で塗り、それ以外は透明にするmatch式を作る。
+function buildTsunamiAreaColorExpr(areas) {
+  if (!areas || areas.length === 0) return "rgba(0,0,0,0)";
+  const expr = ["match", ["get", "name"]];
+  const seen = new Set();
+  for (const a of areas) {
+    if (!a.name || seen.has(a.name)) continue; // 同名予報区が重複していたら最初の1件を優先
+    seen.add(a.name);
+    expr.push(a.name, tsunamiGradeInfo(a.grade).color);
+  }
+  if (seen.size === 0) return "rgba(0,0,0,0)";
+  expr.push("rgba(0,0,0,0)"); // 対象外の予報区は透明(=非表示)
+  return expr;
 }
 
 // P2P地震情報APIの1レコード(JMATsunami)を、アプリ内で使う形に変換する
@@ -8796,6 +8867,15 @@ export default function App() {
   // (地震タブに戻れば、元の設定のまま再び表示される)。
   const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings";
 
+  // 津波予報区の色分けは、津波タブ・設定タブで、かつ具体的な津波情報の詳細を
+  // 開いている時だけ出す(一覧を見ているだけの時は、どの回の予報区を塗るべきか
+  // 一意に決まらないため出さない)。
+  const showTsunamiMapLayers = activeNav === "tsunami" || activeNav === "settings";
+  const selectedTsunami = tsunamis.find(t => t.id === selectedTsunamiId) || null;
+  const tsunamiAreasForMap = (showTsunamiMapLayers && selectedTsunami && !selectedTsunami.cancelled)
+    ? selectedTsunami.areas
+    : EMPTY_EQDB_LIST;
+
   return (
     <ThemeContext.Provider value={themeContextValue}>
     <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
@@ -8822,6 +8902,7 @@ export default function App() {
           onSelectEpicenterPoint={handleSelectEpicenterPoint}
           pointsLoading={showQuakeMapLayers && stationPointsProcessing}
           epicenterLoading={showQuakeMapLayers && epicenterLoading}
+          tsunamiAreas={tsunamiAreasForMap}
         />
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
