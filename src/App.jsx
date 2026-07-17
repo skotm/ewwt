@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.5c";
+const APP_VERSION = "1.1.6";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2404,6 +2404,75 @@ function dedupeQuakeList(list) {
 }
 
 /* ─────────────────────────────────────────────────────
+   津波情報(P2P地震情報 JMATsunami, code:552)
+   https://api.p2pquake.net/v2/history?codes=552
+   気象庁が発表する津波予報区ごとの津波予報・警報を取得する。
+   区分(grade)は MajorWarning(大津波警報) > Warning(津波警報) >
+   Watch(津波注意報) > NonEffective(津波予報・若干の海面変動) > Unknown(調査中)
+   の順に危険度が高い。1件のレコードに複数の予報区(areas)が含まれるため、
+   一覧には「その時点で最も危険度が高いgrade」を代表として表示する。
+   ───────────────────────────────────────────────────── */
+const P2PQUAKE_TSUNAMI_HISTORY_URL_BASE = "https://api.p2pquake.net/v2/history?codes=552";
+const TSUNAMI_FETCH_LIMIT = 50; // 地震に比べて発表頻度が低いため、地震ほど多くの件数は要らない
+
+const TSUNAMI_GRADE_INFO = {
+  MajorWarning: { label: "大津波警報", weight: 4, color: "#BF5AF2" },
+  Warning:      { label: "津波警報",   weight: 3, color: "#FF453A" },
+  Watch:        { label: "津波注意報", weight: 2, color: "#FFD60A" },
+  NonEffective: { label: "津波予報",   weight: 1, color: "#64D2FF" },
+  Unknown:      { label: "調査中",     weight: 0, color: "#8E8E93" },
+};
+const TSUNAMI_GRADE_FALLBACK = { label: "情報", weight: 0, color: "#8E8E93" };
+
+function tsunamiGradeInfo(grade) {
+  return TSUNAMI_GRADE_INFO[grade] || TSUNAMI_GRADE_FALLBACK;
+}
+
+// P2P地震情報APIの1レコード(JMATsunami)を、アプリ内で使う形に変換する
+function toTsunamiCard(item) {
+  const areas = Array.isArray(item.areas) ? item.areas.map(a => ({
+    name: a.name || "不明な予報区",
+    grade: a.grade || "Unknown",
+    immediate: !!a.immediate,
+    firstHeightCondition: a.firstHeight?.condition || null,
+    firstHeightTime: a.firstHeight?.arrivalTime || null,
+    maxHeightDescription: a.maxHeight?.description || null,
+  })) : [];
+
+  // 全予報区の中で最も危険度が高いgradeを、一覧表示・バッジ色の代表として使う。
+  let maxGrade = null;
+  let maxWeight = -1;
+  areas.forEach(a => {
+    const w = tsunamiGradeInfo(a.grade).weight;
+    if (w > maxWeight) { maxWeight = w; maxGrade = a.grade; }
+  });
+
+  return {
+    id: item.id,
+    time: formatQuakeTime(item.time),
+    cancelled: !!item.cancelled,
+    areas,
+    maxGrade: item.cancelled ? null : maxGrade,
+  };
+}
+
+// 同一idの重複を除いて、新しい順に並べ直す
+function dedupeTsunamiList(list) {
+  const byId = new Map();
+  for (const t of list) byId.set(t.id, t);
+  return Array.from(byId.values()).sort((a, b) => (a.time < b.time ? 1 : a.time > b.time ? -1 : 0));
+}
+
+// 直近の津波情報一覧を取得する。取得失敗時はエラーを投げる(呼び出し側でハンドリング)。
+async function fetchRecentTsunamis(limit) {
+  const res = await fetch(`${P2PQUAKE_TSUNAMI_HISTORY_URL_BASE}&limit=${limit}`);
+  if (!res.ok) throw new Error(`P2P地震情報 津波情報の取得に失敗(HTTP ${res.status})`);
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+  return dedupeTsunamiList(data.map(toTsunamiCard));
+}
+
+/* ─────────────────────────────────────────────────────
    気象庁 推計震度分布(estimated_intensity_map) 連携
    震度5弱以上の地震選択時、気象庁が発表する250mメッシュの推計震度分布画像を
    地図上に重ねて表示する。過去に別アプリ(index.html版)で実装済みのロジックを
@@ -2767,14 +2836,14 @@ async function fetchRecentQuakes(limit = QUAKE_FETCH_LIMIT_DEFAULT) {
 /* ─────────────────────────────────────────────────────
    P2P地震情報 WebSocket API (v2)
    wss://api.p2pquake.net/v2/ws
-   地震情報(code:551)を含む全情報がリアルタイムでpushされてくる。
+   地震情報(code:551)・津波情報(code:552)を含む全情報がリアルタイムでpushされてくる。
    最新一覧は起動時に /history で1回だけ取得し(履歴はWebSocketでは
    遡れないため)、以降はこのWebSocketで届いた新着分だけを一覧に追加していく。
    ───────────────────────────────────────────────────── */
 const P2PQUAKE_WS_URL = "wss://api.p2pquake.net/v2/ws";
 
 // WebSocketで受信した1件を、地震情報(code:551)であれば変換して返す。
-// 対象外(津波予報や緊急地震速報など、まだこのアプリで扱っていない種別)はnullを返す。
+// 対象外(津波予報や緊急地震速報など、このアプリでまだ扱っていない種別)はnullを返す。
 function wsMessageToQuakeCard(raw) {
   let data;
   try {
@@ -2787,12 +2856,26 @@ function wsMessageToQuakeCard(raw) {
   return toQuakeCard(data);
 }
 
+// WebSocketで受信した1件を、津波情報(code:552)であれば変換して返す。
+function wsMessageToTsunamiCard(raw) {
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (data.code !== 552) return null;
+  return toTsunamiCard(data);
+}
+
 /**
- * P2P地震情報のWebSocketに接続し、地震情報(code:551)を受信するたびにonQuakeを呼ぶ。
+ * P2P地震情報のWebSocketに接続し、地震情報(code:551)を受信するたびにonQuakeを、
+ * 津波情報(code:552)を受信するたびにonTsunamiを呼ぶ。1本の接続で両方を賄う
+ * (種別ごとに別々の接続を開くと無駄にコネクション数が増えてしまうため)。
  * 接続が切れた場合は一定間隔で自動的に再接続を試みる。
  * 戻り値のclose()を呼ぶと再接続をやめて確実に切断する。
  */
-function connectQuakeWebSocket(onQuake, onStatusChange) {
+function connectQuakeWebSocket(onQuake, onTsunami, onStatusChange) {
   let ws = null;
   let closedByCaller = false;
   let reconnectTimer = null;
@@ -2807,7 +2890,9 @@ function connectQuakeWebSocket(onQuake, onStatusChange) {
 
     ws.onmessage = (event) => {
       const quake = wsMessageToQuakeCard(event.data);
-      if (quake) onQuake(quake);
+      if (quake) { onQuake(quake); return; }
+      const tsunami = wsMessageToTsunamiCard(event.data);
+      if (tsunami) onTsunami?.(tsunami);
     };
 
     ws.onerror = (e) => {
@@ -4717,6 +4802,7 @@ function useSnapDrag({ heights, index, onSnap }) {
 function BottomDock({
   active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
+  tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
@@ -4965,6 +5051,15 @@ function BottomDock({
     setSnapIndex(1);
   }
 
+  // 津波タブ版のhandleSelectQuakeForScroll。地震タブと同じく、選択した瞬間に
+  // パネルの高さを「中」に揃える。
+  function handleSelectTsunamiForScroll(id) {
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    killScrollMomentum();
+    onSelectTsunami(id);
+    setSnapIndex(1);
+  }
+
   // 近傍地震一覧のスクロール位置。一覧→他の地震の詳細→一覧、と行き来する際、
   // NearbyQuakesPanel自体はDOMごと作り直される(=スクロール位置は自然には
   // 残らない)ため、一覧から離れる直前に保存しておき、一覧に戻ってきた時だけ
@@ -5117,6 +5212,15 @@ function BottomDock({
     }
     lastSelectedQuakeId.current = selectedQuakeId;
   }, [selectedQuakeId]);
+
+  // 津波タブ版。考え方は地震タブとまったく同じ。
+  const lastSelectedTsunamiId = useRef(selectedTsunamiId);
+  useEffect(() => {
+    if (lastSelectedTsunamiId.current != null && selectedTsunamiId == null) {
+      setSnapIndex(3);
+    }
+    lastSelectedTsunamiId.current = selectedTsunamiId;
+  }, [selectedTsunamiId]);
 
   // 設定タブを開いた瞬間は、常にパネルの高さを「中高」にする
   // (トップメニューがスクロールなしで丸ごと見える高さのため)。
@@ -5367,6 +5471,37 @@ function BottomDock({
         )
       )}
 
+      {/* 津波タブ版。地震タブの戻るボタンと全く同じ考え方。 */}
+      {active === "tsunami" && selectedTsunamiId != null && (
+        isWide && wideAnchorRect ? createPortal(
+          <div style={{
+            position: "fixed",
+            left: wideAnchorRect.right + 12,
+            top: wideAnchorRect.top + 16,
+            zIndex: 50,
+          }}>
+            <BackToListButton
+              onClick={() => onSelectTsunami(null)}
+              label="津波情報一覧に戻る"
+            />
+          </div>,
+          document.body
+        ) : (
+        <div style={{
+          position: "absolute",
+          right: 16,
+          bottom: backButtonBottom,
+          transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
+          zIndex: 10,
+        }}>
+          <BackToListButton
+            onClick={() => onSelectTsunami(null)}
+            label="津波情報一覧に戻る"
+          />
+        </div>
+        )
+      )}
+
       {/* 設定タブのサブ画面(カテゴリ/項目の中身)を見ている間だけ、同じ戻るボタンを浮かべる。 */}
       {active === "settings" && settingsPath.length > 0 && (
         isWide && wideAnchorRect ? createPortal(
@@ -5502,7 +5637,7 @@ function BottomDock({
             ため。要素ごと作り直すことで、古い要素に紐づく慣性スクロールを
             物理的に断ち切る。 */}
         <div
-          key={`${active}:${quakeViewMode}:${selectedQuakeId != null}`}
+          key={`${active}:${quakeViewMode}:${selectedQuakeId != null}:${selectedTsunamiId != null}`}
           ref={scrollRef}
           style={{
             flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", overflowAnchor: "none",
@@ -5668,6 +5803,18 @@ function BottomDock({
                 })()}
 
                 {/* フローティング部分(地震一覧)とボタン類(ナビ行)の境界線 */}
+                <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
+              </>
+            ) : active === "tsunami" ? (
+              <>
+                <TsunamiTabBody
+                  tsunamis={tsunamis}
+                  status={tsunamiStatus}
+                  selectedId={selectedTsunamiId}
+                  onSelect={handleSelectTsunamiForScroll}
+                />
+
+                {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
                 <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.22)`, margin: "2px 0 0" }}/>
               </>
             ) : active === "settings" ? (
@@ -6053,6 +6200,234 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = 
     </div>
   );
 }
+
+/* ─────────────────────────────────────────────────────
+   TSUNAMI LIST ROW — 津波情報一覧の1行(QuakeListRowと対の構成)
+   震度のような1〜2文字の共通表記が無いため、バッジは「大津波/警報/注意/予報/解除」
+   の短縮ラベルをグレード色の背景で表示する。
+   ───────────────────────────────────────────────────── */
+function tsunamiShortLabel(card) {
+  if (card.cancelled) return "解除";
+  const map = { MajorWarning: "大津波", Warning: "警報", Watch: "注意", NonEffective: "予報", Unknown: "情報" };
+  return map[card.maxGrade] || "情報";
+}
+function tsunamiFullLabel(card) {
+  if (card.cancelled) return "津波予報・警報の解除";
+  return tsunamiGradeInfo(card.maxGrade).label;
+}
+
+function TsunamiListRow({ tsunami: t, showDivider, onSelect }) {
+  const { tokens } = useContext(ThemeContext);
+
+  const color = t.cancelled ? TSUNAMI_GRADE_FALLBACK.color : tsunamiGradeInfo(t.maxGrade).color;
+  const areaCount = t.areas.length;
+
+  return (
+    <div>
+      {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 18 }}/>}
+      <PressableButton
+        onClick={onSelect}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 10,
+          padding: "9px 14px",
+          background: "transparent",
+          textAlign: "left",
+        }}
+      >
+        <span style={{
+          flexShrink: 0, width: 40, height: 22, borderRadius: 6,
+          background: color, color: "#000",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 10, fontWeight: 800,
+        }}>
+          {tsunamiShortLabel(t)}
+        </span>
+        <span style={{
+          flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {tsunamiFullLabel(t)}
+        </span>
+        {!t.cancelled && areaCount > 0 && (
+          <span className="mono" style={{
+            fontSize: 11, color: `rgba(${tokens.ink},0.5)`,
+            flexShrink: 0, whiteSpace: "nowrap",
+          }}>
+            {areaCount}区域
+          </span>
+        )}
+        <span className="mono" style={{ fontSize: 10, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
+          {t.time?.slice(5, 16)}
+        </span>
+      </PressableButton>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   TSUNAMI DETAIL CARD — QuakeDetailCardと対の構成。
+   最大グレードを大きく表示し、発表時刻を添える。
+   ───────────────────────────────────────────────────── */
+function TsunamiDetailCard({ tsunami: t }) {
+  const { tokens } = useContext(ThemeContext);
+  const color = t.cancelled ? TSUNAMI_GRADE_FALLBACK.color : tsunamiGradeInfo(t.maxGrade).color;
+
+  return (
+    <div
+      style={{
+        margin: "2px 14px 4px",
+        borderRadius: 16,
+        padding: "14px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+        background: `linear-gradient(135deg, ${color}2E, ${color}14)`,
+        boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
+        animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
+      }}
+    >
+      <div style={{
+        width: 56, height: 56, borderRadius: 14, flexShrink: 0,
+        background: color, color: "#000",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 28, height: 28 }}>
+          <path d="M2 18c1.5-2 3-3 5-3s3.5 2 5 2 3.5-2 5-2 3.5 1 5 3"/>
+          <path d="M2 12c1.5-2 3-3 5-3s3.5 2 5 2 3.5-2 5-2 3.5 1 5 3"/>
+        </svg>
+      </div>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontSize: 18, fontWeight: 800, color: tokens.text, lineHeight: 1.2 }}>
+          {tsunamiFullLabel(t)}
+        </span>
+        <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)` }}>
+          <span className="mono" style={{ fontWeight: 600, color: `rgba(${tokens.ink},0.85)` }}>
+            {formatQuakeTimeShort(t.time)}
+          </span>
+          発表
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// 津波予報区1件分の行。グレード色で背景・左枠線をつけ、到達予想時刻(または
+// 「ただちに」等の文言)・予想の高さを添える。
+function TsunamiAreaRow({ area }) {
+  const { tokens } = useContext(ThemeContext);
+  const info = tsunamiGradeInfo(area.grade);
+
+  let timeText = null;
+  if (area.immediate) timeText = "ただちに津波が到達";
+  else if (area.firstHeightCondition) timeText = area.firstHeightCondition;
+  else if (area.firstHeightTime) timeText = formatQuakeTimeShort(area.firstHeightTime);
+
+  return (
+    <div style={{
+      borderRadius: 10,
+      padding: "9px 12px",
+      background: `${info.color}22`,
+      borderLeft: `3px solid ${info.color}`,
+      display: "flex", flexDirection: "column", gap: 2,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: info.color, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {area.name}
+        </span>
+        {area.maxHeightDescription && (
+          <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: info.color, flexShrink: 0 }}>
+            {area.maxHeightDescription}
+          </span>
+        )}
+      </div>
+      {timeText && (
+        <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.6)` }}>{timeText}</span>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   TSUNAMI TAB BODY — 津波タブ本体。選択中の津波情報があれば詳細(グレード+
+   予報区一覧)を、無ければ一覧を表示する。地震タブのQuakeListRow⇄QuakeDetailCard
+   と同じ「同じスクロール領域内でその場を差し替える」構成。
+   ───────────────────────────────────────────────────── */
+function TsunamiTabBody({ tsunamis, status, selectedId, onSelect }) {
+  const { tokens } = useContext(ThemeContext);
+  const selected = tsunamis.find(t => t.id === selectedId) || null;
+
+  if (selected) {
+    const sortedAreas = [...selected.areas].sort((a, b) => tsunamiGradeInfo(b.grade).weight - tsunamiGradeInfo(a.grade).weight);
+    return (
+      <>
+        <TsunamiDetailCard tsunami={selected}/>
+        {selected.cancelled ? (
+          <div style={{
+            margin: "8px 14px", padding: 14, borderRadius: 12,
+            background: `rgba(${tokens.ink},0.04)`,
+            fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1.8,
+          }}>
+            発表されていた津波の予報・警報は解除されました。
+          </div>
+        ) : sortedAreas.length > 0 ? (
+          <div style={{ margin: "8px 14px 4px", display: "flex", flexDirection: "column", gap: 6 }}>
+            {sortedAreas.map((area, i) => <TsunamiAreaRow key={`${area.name}-${i}`} area={area}/>)}
+          </div>
+        ) : (
+          <div style={{
+            margin: "8px 14px", padding: 14, borderRadius: 12,
+            background: `rgba(${tokens.ink},0.04)`,
+            fontSize: 12.5, color: `rgba(${tokens.ink},0.6)`,
+          }}>
+            対象区域の詳細データがありません。
+          </div>
+        )}
+      </>
+    );
+  }
+
+  if (status === "loading" && tsunamis.length === 0) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
+      }}>
+        <div style={{
+          width: 16, height: 16, borderRadius: "50%",
+          border: `2px solid rgba(${tokens.ink},0.15)`,
+          borderTopColor: `rgba(${tokens.ink},0.6)`,
+          animation: "spin 0.8s linear infinite",
+        }}/>
+        <span style={{ fontSize: 12 }}>津波情報を取得中…</span>
+      </div>
+    );
+  }
+
+  if (status === "error" && tsunamis.length === 0) {
+    return (
+      <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
+        津波情報の取得に失敗しました。
+      </div>
+    );
+  }
+
+  if (tsunamis.length === 0) {
+    return (
+      <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
+        現在発表されている津波予報・警報はありません
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {tsunamis.map((t, i) => (
+        <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)}/>
+      ))}
+    </>
+  );
+}
+
 
 /* ─────────────────────────────────────────────────────
    EQDB FORM FIELD — 検索フォームの1項目(ラベル+入力欄)の共通ラッパー
@@ -8182,6 +8557,11 @@ export default function App() {
   const selectedQuakeIdRef = useRef(null);
   useEffect(() => { selectedQuakeIdRef.current = selectedQuakeId; }, [selectedQuakeId]);
 
+  // 津波情報(P2P地震情報API)。地震情報と同じWebSocket接続を共有する(下のuseEffect参照)。
+  const [tsunamis,          setTsunamis]          = useState([]);
+  const [tsunamiStatus,     setTsunamiStatus]     = useState("loading"); // loading | ready | error
+  const [selectedTsunamiId, setSelectedTsunamiId] = useState(null);
+
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
 
@@ -8341,6 +8721,25 @@ export default function App() {
         setQuakeStatus("error");
       });
 
+    fetchRecentTsunamis(TSUNAMI_FETCH_LIMIT)
+      .then(list => {
+        if (cancelled) return;
+        setTsunamis(prev => {
+          // 地震情報と同じ理由(WebSocketの新着が/historyより先に届くことがある)で、
+          // idで統合してどちらか一方にしか無い分も残す。
+          const byId = new Map();
+          for (const t of list) byId.set(t.id, t);
+          for (const t of prev) if (!byId.has(t.id)) byId.set(t.id, t);
+          return dedupeTsunamiList(Array.from(byId.values())).slice(0, TSUNAMI_FETCH_LIMIT);
+        });
+        setTsunamiStatus("ready");
+      })
+      .catch(err => {
+        console.error("津波情報の取得に失敗:", err);
+        if (cancelled) return;
+        setTsunamiStatus("error");
+      });
+
     const socket = connectQuakeWebSocket(
       (newQuake) => {
         if (cancelled) return;
@@ -8375,6 +8774,14 @@ export default function App() {
           return result;
         });
         setQuakeStatus("ready");
+      },
+      (newTsunami) => {
+        if (cancelled) return;
+        setTsunamis(prev => {
+          const deduped = prev.filter(t => t.id !== newTsunami.id);
+          return dedupeTsunamiList([newTsunami, ...deduped]).slice(0, TSUNAMI_FETCH_LIMIT);
+        });
+        setTsunamiStatus("ready");
       },
       (status) => { if (!cancelled) setWsStatus(status); }
     );
@@ -8484,6 +8891,10 @@ export default function App() {
                   quakeStatus={quakeStatus}
                   selectedQuakeId={selectedQuakeId}
                   onSelectQuake={setSelectedQuakeId}
+                  tsunamis={tsunamis}
+                  tsunamiStatus={tsunamiStatus}
+                  selectedTsunamiId={selectedTsunamiId}
+                  onSelectTsunami={setSelectedTsunamiId}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -8524,6 +8935,10 @@ export default function App() {
               quakeStatus={quakeStatus}
               selectedQuakeId={selectedQuakeId}
               onSelectQuake={setSelectedQuakeId}
+              tsunamis={tsunamis}
+              tsunamiStatus={tsunamiStatus}
+              selectedTsunamiId={selectedTsunamiId}
+              onSelectTsunami={setSelectedTsunamiId}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
