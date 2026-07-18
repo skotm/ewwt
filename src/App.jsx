@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.7a";
+const APP_VERSION = "1.1.8";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5371,7 +5371,16 @@ function BottomDock({
   // コンパクトに詰めることで、この高さのまま検索ボタンまで収まるようにしている。
   const MIDHIGH_FIXED = 290 + HANDLE_HEIGHT_DELTA;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
-  const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
+
+  // 津波タブのTsunamiDetailCard(グレード名バッジが104×104ある分、地震の
+  // QuakeDetailCardより一回り大きい)は、地震カード基準のMID_FIXEDのままだと
+  // 選択直後の「低」スナップで下が見切れてしまう。津波タブを見ている間だけ、
+  // カードがちょうど収まる高さまで底上げする。
+  const TSUNAMI_CARD_ONLY_HEIGHT = 158 + HANDLE_HEIGHT_DELTA; // TsunamiDetailCard 1枚の実測目安(margin込み)
+  const midHeight = Math.min(
+    active === "tsunami" ? Math.max(MID_FIXED, TSUNAMI_CARD_ONLY_HEIGHT) : MID_FIXED,
+    highHeight - GAP * 2
+  );
   const midHighHeight = Math.max(
     Math.min(MIDHIGH_FIXED, highHeight - GAP),
     midHeight + GAP
