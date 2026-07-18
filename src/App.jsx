@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.7";
+const APP_VERSION = "1.1.7a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2335,6 +2335,17 @@ function formatQuakeTimeShort(raw) {
   const [hh, mm] = timePart.split(":");
   if (hh == null || mm == null) return raw;
   return `${datePart} ${hh}:${mm}頃`;
+}
+
+// 津波情報の発表時刻は(地震の発生時刻と違って)推定ではなく確定した時刻なので、
+// formatQuakeTimeShortの「頃」は付けない。
+function formatTsunamiTimeShort(raw) {
+  if (!raw) return "";
+  const [datePart, timePart] = raw.split(" ");
+  if (!timePart) return raw;
+  const [hh, mm] = timePart.split(":");
+  if (hh == null || mm == null) return raw;
+  return `${datePart} ${hh}:${mm}`;
 }
 
 // P2P地震情報APIの1レコードを、QuakeDetailCardが使う形に変換する
@@ -6566,51 +6577,43 @@ function TsunamiDetailCard({ tsunami: t }) {
       style={{
         margin: "2px 14px 4px",
         borderRadius: 16,
-        padding: "7px 16px",
+        padding: "14px 16px",
         display: "flex",
         alignItems: "center",
-        gap: 14,
-        background: `linear-gradient(135deg, ${color}2E, ${color}14)`,
+        gap: 16,
+        background: `linear-gradient(135deg, ${color}22, ${color}0E)`,
         boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* 波アイコンのバッジ — QuakeDetailCardの最大震度バッジと対の構成(同じ64×64+上に区分ラベル) */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
-          {t.cancelled ? "解除" : "津波情報"}
+      {/* グレード名を大きく表示する、色付き枠線の角丸バッジ */}
+      <div
+        style={{
+          flexShrink: 0,
+          width: 104, height: 104,
+          borderRadius: 20,
+          border: `2.5px solid ${color}`,
+          background: `${color}14`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          padding: "6px 8px",
+        }}
+      >
+        <span style={{
+          fontSize: 21, fontWeight: 800, color,
+          textAlign: "center", lineHeight: 1.25,
+        }}>
+          {tsunamiFullLabel(t)}
         </span>
-        <div
-          style={{
-            width: 64, height: 64,
-            borderRadius: 14,
-            background: color, color: "#000",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}
-        >
-          <span style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.1, whiteSpace: "nowrap" }}>
-            {tsunamiShortLabel(t)}
-          </span>
-        </div>
       </div>
 
-      {/* グレード名 / 発表時刻 — QuakeDetailCardの震源地・発生時刻と対になる構成 */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
-          <AutoFitText
-            text={tsunamiFullLabel(t)}
-            maxFontSize={26}
-            minFontSize={13}
-            style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
-          />
-        </div>
-
-        <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1, marginTop: 8 }}>
-          <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発表時刻</span>
-          <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
-            {formatQuakeTimeShort(t.time)}
-          </span>
-        </div>
+      {/* 発表時刻 */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span className="mono" style={{ fontSize: 22, fontWeight: 800, color: tokens.text, lineHeight: 1.2, whiteSpace: "nowrap" }}>
+          {formatTsunamiTimeShort(t.time)}
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: `rgba(${tokens.ink},0.5)` }}>
+          {t.cancelled ? "解除" : "発表"}
+        </span>
       </div>
     </div>
   );
