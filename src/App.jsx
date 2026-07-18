@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6h";
+const APP_VERSION = "1.1.6i";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6279,32 +6279,45 @@ function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
 }
 
 /* ─────────────────────────────────────────────────────
-   TSUNAMI GRADE LEGEND — QuakeIntensityLegendと対の構成。
-   震度のような連続した尺度が無いため、「1〜最大」ではなく、現在地図に
-   塗っている予報区(areas)に実際に含まれるgradeだけを、危険度が高い順に
-   縦並びの色丸+ラベルで表示する。画面右上に浮かべて使う想定。
+   TSUNAMI GRADE LEGEND — QuakeIntensityLegendと全く同じ見た目
+   (横一列に並んだ隙間の詰まった色バー)にした版。震度のような連続した
+   尺度が無いため、「1〜最大」ではなく、現在地図に塗っている予報区
+   (areas)に実際に含まれるgradeだけを、危険度が低い順に並べる。
+   最も危険度が高いバーだけ枠線で強調する。画面右上に浮かべて使う想定。
    ───────────────────────────────────────────────────── */
 function TsunamiGradeLegend({ areas }) {
   const { tokens } = useContext(ThemeContext);
   const gradesPresent = [...new Set((areas || []).map(a => a.grade))]
-    .sort((a, b) => tsunamiGradeInfo(b).weight - tsunamiGradeInfo(a).weight);
+    .sort((a, b) => tsunamiGradeInfo(a).weight - tsunamiGradeInfo(b).weight);
   if (gradesPresent.length === 0) return null;
+  const maxWeight = Math.max(...gradesPresent.map(g => tsunamiGradeInfo(g).weight));
 
   return (
     <Glass
       radius={12}
       style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: "9px 11px" }}>
+      <div style={{
+        display: "flex",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 2,
+        padding: "8px 9px",
+      }}>
         {gradesPresent.map(grade => {
           const info = tsunamiGradeInfo(grade);
+          const isMax = info.weight === maxWeight;
           return (
-            <div key={grade} style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: info.color, flexShrink: 0 }}/>
-              <span style={{ fontSize: 11, fontWeight: 600, color: tokens.text, whiteSpace: "nowrap" }}>
-                {info.label}
-              </span>
-            </div>
+            // 震度凡例のミニバーと同じ、隙間の詰まった横一列のバー
+            <div
+              key={grade}
+              style={{
+                width: 7, height: 16, borderRadius: 2,
+                background: info.color,
+                boxShadow: isMax ? `0 0 0 2px rgba(${tokens.ink},0.9)` : "none",
+                flexShrink: 0,
+              }}
+            />
           );
         })}
       </div>
