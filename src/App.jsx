@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6i";
+const APP_VERSION = "1.1.6j";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6498,8 +6498,7 @@ function QuakeListRow({ quake: q, showDivider, colorScheme, onSelect, loading = 
    ───────────────────────────────────────────────────── */
 function tsunamiShortLabel(card) {
   if (card.cancelled) return "解除";
-  const map = { MajorWarning: "大津波", Warning: "警報", Watch: "注意", NonEffective: "予報", Unknown: "情報" };
-  return map[card.maxGrade] || "情報";
+  return tsunamiGradeShortLabel(card.maxGrade);
 }
 function tsunamiFullLabel(card) {
   if (card.cancelled) return "津波予報・警報の解除";
@@ -6620,7 +6619,13 @@ function TsunamiDetailCard({ tsunami: t }) {
 
 // 津波予報区1件分の行。グレード色で背景・左枠線をつけ、到達予想時刻(または
 // 「ただちに」等の文言)・予想の高さを添える。
-function TsunamiAreaRow({ area }) {
+// 津波予報区1件分の行(震度観測点リストのStationPointsList「一覧」表示と対の構成)。
+// グレード色の短縮バッジ+予報区名+到達予想時刻や高さの補足、という並びにしている。
+function tsunamiGradeShortLabel(grade) {
+  const map = { MajorWarning: "大津波", Warning: "警報", Watch: "注意", NonEffective: "予報", Unknown: "情報" };
+  return map[grade] || "情報";
+}
+function TsunamiAreaRow({ area, showDivider }) {
   const { tokens } = useContext(ThemeContext);
   const info = tsunamiGradeInfo(area.grade);
 
@@ -6628,28 +6633,35 @@ function TsunamiAreaRow({ area }) {
   if (area.immediate) timeText = "ただちに津波が到達";
   else if (area.firstHeightCondition) timeText = area.firstHeightCondition;
   else if (area.firstHeightTime) timeText = formatQuakeTimeShort(area.firstHeightTime);
+  const metaText = [area.maxHeightDescription, timeText].filter(Boolean).join("・");
 
   return (
-    <div style={{
-      borderRadius: 10,
-      padding: "9px 12px",
-      background: `${info.color}22`,
-      borderLeft: `3px solid ${info.color}`,
-      display: "flex", flexDirection: "column", gap: 2,
-    }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: info.color, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+    <div>
+      {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 12 }}/>}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
+        <span style={{
+          flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+          background: info.color, color: "#000",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 11, fontWeight: 800,
+        }}>
+          {tsunamiGradeShortLabel(area.grade)}
+        </span>
+        <span style={{
+          flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
           {area.name}
         </span>
-        {area.maxHeightDescription && (
-          <span className="mono" style={{ fontSize: 12, fontWeight: 700, color: info.color, flexShrink: 0 }}>
-            {area.maxHeightDescription}
+        {metaText && (
+          <span style={{
+            fontSize: 11, color: `rgba(${tokens.ink},0.4)`,
+            flexShrink: 0, whiteSpace: "nowrap",
+          }}>
+            {metaText}
           </span>
         )}
       </div>
-      {timeText && (
-        <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.6)` }}>{timeText}</span>
-      )}
     </div>
   );
 }
@@ -6688,8 +6700,23 @@ function TsunamiTabBody({
             発表されていた津波の予報・警報は解除されました。
           </div>
         ) : sortedAreas.length > 0 ? (
-          <div style={{ margin: "8px 14px 4px", display: "flex", flexDirection: "column", gap: 6 }}>
-            {sortedAreas.map((area, i) => <TsunamiAreaRow key={`${area.name}-${i}`} area={area}/>)}
+          <div style={{ margin: "2px 14px 8px" }}>
+            <div style={{
+              padding: "6px 2px",
+              fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
+            }}>
+              対象の予報区
+            </div>
+            <div style={{
+              borderRadius: 12,
+              overflow: "hidden",
+              background: `rgba(${tokens.ink},0.04)`,
+              boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
+            }}>
+              {sortedAreas.map((area, i) => (
+                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0}/>
+              ))}
+            </div>
           </div>
         ) : (
           <div style={{
