@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8d";
+const APP_VERSION = "1.1.8e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6569,8 +6569,9 @@ function TsunamiListRow({ tsunami: t, showDivider, onSelect, isHistory = false }
    最大グレードを大きく表示し、発表時刻を添える。
    ───────────────────────────────────────────────────── */
 function TsunamiDetailCard({ tsunami: t }) {
-  const { tokens } = useContext(ThemeContext);
+  const { tokens, mode } = useContext(ThemeContext);
   const color = t.cancelled ? TSUNAMI_GRADE_FALLBACK.color : tsunamiGradeInfo(t.maxGrade).color;
+  const textColor = mode === "dark" ? "#ffffff" : "#000000";
 
   return (
     <div
@@ -6586,7 +6587,8 @@ function TsunamiDetailCard({ tsunami: t }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* グレード名を表示する、色付き枠線の角丸バッジ(横幅2倍・QuakeDetailCardと同じ高さ) */}
+      {/* グレード名を表示する、色付き枠線の角丸バッジ(横幅2倍・QuakeDetailCardと同じ高さ)。
+          枠線のさらに外側を白い線(box-shadowのリング)で囲っている。 */}
       <div style={{ flexShrink: 0 }}>
         <div
           style={{
@@ -6594,11 +6596,12 @@ function TsunamiDetailCard({ tsunami: t }) {
             borderRadius: 14,
             border: `2px solid ${color}`,
             background: `${color}14`,
+            boxShadow: "0 0 0 2px #ffffff",
             display: "flex", alignItems: "center", justifyContent: "center",
             padding: "4px 6px",
           }}
         >
-          <span style={{ fontSize: 20, fontWeight: 800, color, textAlign: "center", lineHeight: 1.15 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: textColor, textAlign: "center", lineHeight: 1.15 }}>
             {tsunamiFullLabel(t)}
           </span>
         </div>
