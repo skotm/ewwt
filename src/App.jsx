@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8g";
+const APP_VERSION = "1.1.8h";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5130,17 +5130,22 @@ function BottomDock({
   const [causingQuakeState, setCausingQuakeState] = useState({});
   // 現在「引き起こした地震」のカードを表示中の津波ID(nullなら通常の津波カード表示)
   const [showingCausingQuakeFor, setShowingCausingQuakeFor] = useState(null);
+  // 引き起こした地震の観測点一覧が「階層表示」設定の時に使う、開いている震度キー
+  // (StationPointsListの通常の観測点一覧(stationDetailOpenKey)とは別に持つ)。
+  const [causingQuakeStationOpenKey, setCausingQuakeStationOpenKey] = useState(null);
   // 選択中の津波情報が変わったら(別の情報を選び直した/選択解除した)、
   // 「引き起こした地震」の表示は必ず一旦引っ込める(別の津波情報のまま古い結果が
   // 表示され続けるのを防ぐ)。
   useEffect(() => {
     setShowingCausingQuakeFor(null);
+    setCausingQuakeStationOpenKey(null);
   }, [selectedTsunamiId]);
 
   // 「戻る」を押した時に呼ぶ。表示を引っ込めるだけでなく、キャッシュ済みの
   // 結果も消して表示をクリアする(再度ボタンを押すとまた最初から検索し直す)。
   function handleBackFromCausingQuake() {
     setShowingCausingQuakeFor(null);
+    setCausingQuakeStationOpenKey(null);
     if (selectedTsunamiId != null) {
       setCausingQuakeState(prev => {
         const next = { ...prev };
@@ -5149,6 +5154,18 @@ function BottomDock({
       });
     }
   }
+
+  // 津波タブ版の「戻る」ボタン。地震タブのhandleBackFromQuakeと同じ考え方で、
+  // 「引き起こした地震」を表示中ならまずそれを閉じて予報区一覧に戻し、
+  // 何も開いていなければ津波情報の選択自体を解除して一覧に戻る。
+  function handleBackFromTsunami() {
+    if (showingCausingQuakeFor != null) {
+      handleBackFromCausingQuake();
+      return;
+    }
+    onSelectTsunami(null);
+  }
+  const backFromTsunamiLabel = showingCausingQuakeFor != null ? "予報区一覧に戻る" : "津波情報一覧に戻る";
 
   async function handleFindCausingQuake(tsunamiCard) {
     const id = tsunamiCard.id;
@@ -5789,8 +5806,8 @@ function BottomDock({
             zIndex: 50,
           }}>
             <BackToListButton
-              onClick={() => onSelectTsunami(null)}
-              label="津波情報一覧に戻る"
+              onClick={handleBackFromTsunami}
+              label={backFromTsunamiLabel}
             />
           </div>,
           document.body
@@ -5803,8 +5820,8 @@ function BottomDock({
           zIndex: 10,
         }}>
           <BackToListButton
-            onClick={() => onSelectTsunami(null)}
-            label="津波情報一覧に戻る"
+            onClick={handleBackFromTsunami}
+            label={backFromTsunamiLabel}
           />
         </div>
         )
@@ -6141,6 +6158,9 @@ function BottomDock({
                   causingQuakeState={causingQuakeState}
                   showingCausingQuakeFor={showingCausingQuakeFor}
                   onBackFromCausingQuake={handleBackFromCausingQuake}
+                  stationListDisplayMode={stationListDisplayMode}
+                  causingQuakeStationOpenKey={causingQuakeStationOpenKey}
+                  onChangeCausingQuakeStationOpenKey={setCausingQuakeStationOpenKey}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -6795,6 +6815,7 @@ function TsunamiTabBody({
   onLoadMoreHistory,
   // 「↪︎ 津波を引き起こした地震」関連。
   onFindCausingQuake, causingQuakeState = {}, showingCausingQuakeFor, onBackFromCausingQuake,
+  stationListDisplayMode = "list", causingQuakeStationOpenKey, onChangeCausingQuakeStationOpenKey,
 }) {
   const { tokens } = useContext(ThemeContext);
   const selected = tsunamis.find(t => t.id === selectedId)
@@ -6810,23 +6831,23 @@ function TsunamiTabBody({
       <>
         <TsunamiDetailCard tsunami={selected} onFindCausingQuake={() => onFindCausingQuake?.(selected)}/>
         {showingCausingQuake ? (
-          <div style={{ margin: "2px 14px 8px" }}>
+          <div style={{ margin: "2px 0 8px" }}>
             <PressableButton
               type="button"
               onClick={onBackFromCausingQuake}
               style={{
                 display: "flex", alignItems: "center", gap: 4,
-                padding: "6px 2px", marginBottom: 4,
+                margin: "0 14px 4px", padding: "6px 2px",
                 background: "transparent", border: "none", cursor: "pointer",
                 fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`,
               }}
             >
-              ← 津波情報に戻る
+              ← 予報区一覧に戻る
             </PressableButton>
             {(!causingState || causingState.status === "loading") ? (
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
-                gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
+                gap: 8, margin: "0 14px", padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
               }}>
                 <div style={{
                   width: 16, height: 16, borderRadius: "50%",
@@ -6834,24 +6855,29 @@ function TsunamiTabBody({
                   borderTopColor: `rgba(${tokens.ink},0.6)`,
                   animation: "spin 0.8s linear infinite",
                 }}/>
-                <span style={{ fontSize: 12 }}>震源を検索中…</span>
+                <span style={{ fontSize: 12 }}>地震を読み込み中…</span>
               </div>
             ) : causingState.status === "notfound" ? (
-              <div style={{ padding: "18px 16px", textAlign: "center" }}>
+              <div style={{ margin: "0 14px", padding: "18px 16px", textAlign: "center" }}>
                 <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.8 }}>
                   津波発表の30分前以内に、該当する地震が気象庁 震度データベースに見つかりませんでした。
                 </span>
               </div>
             ) : causingState.status === "error" ? (
-              <div style={{ padding: "18px 16px", textAlign: "center" }}>
+              <div style={{ margin: "0 14px", padding: "18px 16px", textAlign: "center" }}>
                 <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>地震の検索に失敗しました</span>
               </div>
             ) : (
               <>
                 <QuakeDetailCard quake={causingState.quake}/>
                 {Array.isArray(causingState.quake.resolvedPoints) && causingState.quake.resolvedPoints.length > 0 && (
-                  <div style={{ marginTop: 4 }}>
-                    <StationPointsList points={causingState.quake.resolvedPoints} displayMode="list" openKey={null} onOpenKeyChange={() => {}}/>
+                  <div style={{ margin: "4px 14px 0" }}>
+                    <StationPointsList
+                      points={causingState.quake.resolvedPoints}
+                      displayMode={stationListDisplayMode}
+                      openKey={causingQuakeStationOpenKey}
+                      onOpenKeyChange={onChangeCausingQuakeStationOpenKey}
+                    />
                   </div>
                 )}
               </>
