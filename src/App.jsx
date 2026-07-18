@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6e";
+const APP_VERSION = "1.1.6f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -2546,15 +2546,14 @@ async function fetchRecentTsunamis(limit) {
 /* ─────────────────────────────────────────────────────
    過去の津波情報(津波タブ「過去」モード)
 
-   【重要】P2P地震情報の/history APIは、公式仕様上「offsetパラメタは利用可能だが
-   1週間以上古い情報は取得できない場合がある」うえ、地震・EEW等すべてのコードを
-   同じ一領域(capped collection)で共有しているため、発表頻度の低い津波情報(552)は
-   実際には数日〜1週間程度ですぐに押し出されてしまう。そのため、このAPIのoffset
-   だけに頼ると(特に直近に津波警報が無い期間は)簡単に「0件」になってしまう
-   ("過去の津波が見つかりません"の原因)。
-
-   → 津波情報専用に気象庁自身が公開している一覧(list.json)を主な取得元にし、
-     P2P地震情報側のoffset取得は補助的に足りない分を補う形にする
+   【重要】直近一覧(fetchRecentTsunamis)や当初の実装では、地震・EEW等すべての
+   コードを1つの領域(capped collection)で共有する/history?codes=552 を使っていたが、
+   これは発表頻度の低い津波情報がすぐ押し出されてしまい、offsetで遡っても
+   「過去の津波が見つかりません」になりやすい。
+   → 津波予報だけを独立して保持している専用API /v2/jma/tsunami に切り替える
+     (地震情報の/v2/jma/quakeに相当する、津波版のエンドポイント)。
+   さらに気象庁自身が公開している一覧(list.json)も合わせて取得し、両方を
+   統合することで、より確実に過去分を取得できるようにする。
      (以前作ったindex.html版アプリのfetchJMATsunamiHistory()と同じ考え方)。
    ───────────────────────────────────────────────────── */
 const JMA_TSUNAMI_LIST_URL = "https://www.jma.go.jp/bosai/tsunami/data/list.json";
@@ -2635,13 +2634,17 @@ async function fetchJmaTsunamiHistory(limit = JMA_TSUNAMI_HISTORY_LIMIT) {
   return dedupeTsunamiList(cards.filter(Boolean));
 }
 
-// 直近一覧(fetchRecentTsunamis)とは別に、offsetをずらしながらP2P地震情報側の
-// 過去分を追加取得するためのページング取得。上記の理由により単独では心もとないため、
-// あくまで気象庁一覧を補う目的で使う。
-const TSUNAMI_HISTORY_PAGE_SIZE = 50;
+// 直近一覧(fetchRecentTsunamis, /v2/history?codes=552)とは別の、津波予報専用のJSON API。
+// /historyは地震情報等すべてのコードと容量を共有するcapped collectionのため、
+// 発表頻度の低い津波情報はすぐ押し出されて過去に遡りにくいが、こちらは津波予報だけを
+// 独立して保持しているため、より確実に過去分を取得できる
+// (レート制限は/historyの60リクエスト/分より厳しい10リクエスト/分なので、
+// 呼びすぎないよう「もっと見る」を押した時だけ叩く)。
+const P2PQUAKE_JMA_TSUNAMI_URL = "https://api.p2pquake.net/v2/jma/tsunami";
+const TSUNAMI_HISTORY_PAGE_SIZE = 100; // このAPIの1リクエストあたりの最大件数
 
 async function fetchTsunamiHistoryPage(offset, limit = TSUNAMI_HISTORY_PAGE_SIZE) {
-  const res = await fetch(`${P2PQUAKE_TSUNAMI_HISTORY_URL_BASE}&limit=${limit}&offset=${offset}`);
+  const res = await fetch(`${P2PQUAKE_JMA_TSUNAMI_URL}?limit=${limit}&offset=${offset}`);
   if (!res.ok) throw new Error(`過去の津波情報の取得に失敗(HTTP ${res.status})`);
   const data = await res.json();
   if (!Array.isArray(data)) return [];
@@ -6036,6 +6039,7 @@ function BottomDock({
                   historyItems={tsunamiHistory?.items ?? EMPTY_EQDB_LIST}
                   historyStatus={tsunamiHistory?.status ?? "idle"}
                   historyHasMore={tsunamiHistory?.hasMore ?? true}
+                  historyDebug={tsunamiHistory?.debug ?? ""}
                   onLoadMoreHistory={onLoadMoreTsunamiHistory}
                 />
 
@@ -6598,7 +6602,7 @@ function TsunamiTabBody({
   // 選択中の詳細は、直近一覧・過去一覧のどちらから選んでも見られるよう両方から探す
   // (地震タブのquakes⇄searchQuakeと同じ考え方)。
   viewMode = "recent",
-  historyItems = EMPTY_EQDB_LIST, historyStatus = "idle", historyHasMore = true,
+  historyItems = EMPTY_EQDB_LIST, historyStatus = "idle", historyHasMore = true, historyDebug = "",
   onLoadMoreHistory,
 }) {
   const { tokens } = useContext(ThemeContext);
@@ -6660,6 +6664,9 @@ function TsunamiTabBody({
       return (
         <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
           過去の津波情報の取得に失敗しました。
+          {historyDebug && (
+            <div style={{ marginTop: 8, fontSize: 11, opacity: 0.8, wordBreak: "break-all" }}>{historyDebug}</div>
+          )}
         </div>
       );
     }
@@ -6668,6 +6675,9 @@ function TsunamiTabBody({
       return (
         <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
           過去の津波情報が見つかりませんでした
+          {historyDebug && (
+            <div style={{ marginTop: 8, fontSize: 11, opacity: 0.8, wordBreak: "break-all" }}>{historyDebug}</div>
+          )}
         </div>
       );
     }
@@ -8888,26 +8898,35 @@ export default function App() {
   // offsetで遡りながら追加取得した過去の津波情報を保持する(地震タブの
   // searchQuakeと同じ理由でWebSocketの新着・件数上限の影響を受けないようにする)。
   const [tsunamiHistory, setTsunamiHistory] = useState({
-    items: [], offset: 0, status: "idle", hasMore: true,
+    items: [], offset: 0, status: "idle", hasMore: true, debug: "",
   }); // status: idle | loading | ready | error
 
   async function loadMoreTsunamiHistory() {
     if (tsunamiHistory.status === "loading" || !tsunamiHistory.hasMore) return;
     setTsunamiHistory(prev => ({ ...prev, status: "loading" }));
+    const debugParts = [];
     try {
-      // 初回だけ、気象庁の公式一覧(list.json)も合わせて取得し、統合する。
-      // P2P地震情報側のoffset取得だけでは(容量共有のため)すぐに0件になりがちなので、
-      // 津波情報専用のこちらを主な取得元にする。
+      // 初回は、気象庁の公式一覧(list.json)と、P2P地震情報の津波予報専用API
+      // (/v2/jma/tsunami)の先頭2ページ(offset 0, 100)をまとめて取得して統合する。
       if (tsunamiHistory.offset === 0 && tsunamiHistory.items.length === 0) {
-        const [jmaItems, p2pItems] = await Promise.all([
-          fetchJmaTsunamiHistory().catch(err => { console.error("気象庁 津波情報一覧の取得に失敗:", err); return []; }),
-          fetchTsunamiHistoryPage(0, TSUNAMI_HISTORY_PAGE_SIZE).catch(err => { console.error("P2P地震情報 過去の津波情報の取得に失敗:", err); return []; }),
+        const [jmaItems, p2pPage1, p2pPage2] = await Promise.all([
+          fetchJmaTsunamiHistory()
+            .then(r => { debugParts.push(`気象庁:${r.length}件`); return r; })
+            .catch(err => { console.error("気象庁 津波情報一覧の取得に失敗:", err); debugParts.push(`気象庁:失敗(${err.message})`); return []; }),
+          fetchTsunamiHistoryPage(0, TSUNAMI_HISTORY_PAGE_SIZE)
+            .then(r => { debugParts.push(`P2P#1:${r.length}件`); return r; })
+            .catch(err => { console.error("P2P地震情報 過去の津波情報の取得に失敗:", err); debugParts.push(`P2P#1:失敗(${err.message})`); return []; }),
+          fetchTsunamiHistoryPage(TSUNAMI_HISTORY_PAGE_SIZE, TSUNAMI_HISTORY_PAGE_SIZE)
+            .then(r => { debugParts.push(`P2P#2:${r.length}件`); return r; })
+            .catch(err => { console.error("P2P地震情報 過去の津波情報の取得に失敗:", err); debugParts.push(`P2P#2:失敗(${err.message})`); return []; }),
         ]);
+        const p2pItems = [...p2pPage1, ...p2pPage2];
         setTsunamiHistory({
           items: mergeTsunamiSources(jmaItems, p2pItems),
-          offset: TSUNAMI_HISTORY_PAGE_SIZE,
+          offset: TSUNAMI_HISTORY_PAGE_SIZE * 2,
           status: "ready",
-          hasMore: p2pItems.length >= TSUNAMI_HISTORY_PAGE_SIZE,
+          hasMore: p2pPage2.length >= TSUNAMI_HISTORY_PAGE_SIZE,
+          debug: debugParts.join(" / "),
         });
         return;
       }
@@ -8919,10 +8938,11 @@ export default function App() {
         offset: prev.offset + TSUNAMI_HISTORY_PAGE_SIZE,
         status: "ready",
         hasMore: page.length >= TSUNAMI_HISTORY_PAGE_SIZE,
+        debug: `P2P追加:${page.length}件`,
       }));
     } catch (err) {
       console.error("過去の津波情報の取得に失敗:", err);
-      setTsunamiHistory(prev => ({ ...prev, status: "error" }));
+      setTsunamiHistory(prev => ({ ...prev, status: "error", debug: err.message || String(err) }));
     }
   }
 
