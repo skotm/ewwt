@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6f";
+const APP_VERSION = "1.1.6g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6459,7 +6459,7 @@ function tsunamiFullLabel(card) {
   return tsunamiGradeInfo(card.maxGrade).label;
 }
 
-function TsunamiListRow({ tsunami: t, showDivider, onSelect }) {
+function TsunamiListRow({ tsunami: t, showDivider, onSelect, isHistory = false }) {
   const { tokens } = useContext(ThemeContext);
 
   const color = t.cancelled ? TSUNAMI_GRADE_FALLBACK.color : tsunamiGradeInfo(t.maxGrade).color;
@@ -6481,7 +6481,7 @@ function TsunamiListRow({ tsunami: t, showDivider, onSelect }) {
           flexShrink: 0, width: 40, height: 22, borderRadius: 6,
           background: color, color: "#000",
           display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 10, fontWeight: 800,
+          fontSize: 11, fontWeight: 800, whiteSpace: "nowrap",
         }}>
           {tsunamiShortLabel(t)}
         </span>
@@ -6500,7 +6500,7 @@ function TsunamiListRow({ tsunami: t, showDivider, onSelect }) {
           </span>
         )}
         <span className="mono" style={{ fontSize: 10, color: `rgba(${tokens.ink},0.4)`, flexShrink: 0 }}>
-          {t.time?.slice(5, 16)}
+          {isHistory ? t.time?.slice(0, 10) : t.time?.slice(5, 16)}
         </span>
       </PressableButton>
     </div>
@@ -6520,7 +6520,7 @@ function TsunamiDetailCard({ tsunami: t }) {
       style={{
         margin: "2px 14px 4px",
         borderRadius: 16,
-        padding: "14px 16px",
+        padding: "7px 16px",
         display: "flex",
         alignItems: "center",
         gap: 14,
@@ -6529,26 +6529,43 @@ function TsunamiDetailCard({ tsunami: t }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      <div style={{
-        width: 56, height: 56, borderRadius: 14, flexShrink: 0,
-        background: color, color: "#000",
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 28, height: 28 }}>
-          <path d="M2 18c1.5-2 3-3 5-3s3.5 2 5 2 3.5-2 5-2 3.5 1 5 3"/>
-          <path d="M2 12c1.5-2 3-3 5-3s3.5 2 5 2 3.5-2 5-2 3.5 1 5 3"/>
-        </svg>
-      </div>
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-        <span style={{ fontSize: 18, fontWeight: 800, color: tokens.text, lineHeight: 1.2 }}>
-          {tsunamiFullLabel(t)}
+      {/* 波アイコンのバッジ — QuakeDetailCardの最大震度バッジと対の構成(同じ64×64+上に区分ラベル) */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
+          {t.cancelled ? "解除" : "津波情報"}
         </span>
-        <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.55)` }}>
-          <span className="mono" style={{ fontWeight: 600, color: `rgba(${tokens.ink},0.85)` }}>
+        <div
+          style={{
+            width: 64, height: 64,
+            borderRadius: 14,
+            background: color, color: "#000",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 32, height: 32 }}>
+            <path d="M2 18c1.5-2 3-3 5-3s3.5 2 5 2 3.5-2 5-2 3.5 1 5 3"/>
+            <path d="M2 12c1.5-2 3-3 5-3s3.5 2 5 2 3.5-2 5-2 3.5 1 5 3"/>
+          </svg>
+        </div>
+      </div>
+
+      {/* グレード名 / 発表時刻 — QuakeDetailCardの震源地・発生時刻と対になる構成 */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0, lineHeight: 1.1 }}>
+          <AutoFitText
+            text={tsunamiFullLabel(t)}
+            maxFontSize={26}
+            minFontSize={13}
+            style={{ fontWeight: 800, color: tokens.text, lineHeight: 1.1 }}
+          />
+        </div>
+
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, lineHeight: 1.1, marginTop: 8 }}>
+          <span style={{ fontSize: 11, color: `rgba(${tokens.ink},0.55)`, flexShrink: 0, lineHeight: 1.1 }}>発表時刻</span>
+          <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: `rgba(${tokens.ink},0.85)`, lineHeight: 1.1 }}>
             {formatQuakeTimeShort(t.time)}
           </span>
-          発表
-        </span>
+        </div>
       </div>
     </div>
   );
@@ -6662,10 +6679,10 @@ function TsunamiTabBody({
 
     if (historyStatus === "error" && historyItems.length === 0) {
       return (
-        <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
-          過去の津波情報の取得に失敗しました。
+        <div style={{ padding: "18px 16px", textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>過去の津波情報の取得に失敗しました</span>
           {historyDebug && (
-            <div style={{ marginTop: 8, fontSize: 11, opacity: 0.8, wordBreak: "break-all" }}>{historyDebug}</div>
+            <div style={{ marginTop: 6, fontSize: 11, color: `rgba(${tokens.ink},0.35)`, wordBreak: "break-all" }}>{historyDebug}</div>
           )}
         </div>
       );
@@ -6673,10 +6690,10 @@ function TsunamiTabBody({
 
     if (historyItems.length === 0) {
       return (
-        <div style={{ padding: "28px 18px", textAlign: "center", fontSize: 12.5, color: `rgba(${tokens.ink},0.45)` }}>
-          過去の津波情報が見つかりませんでした
+        <div style={{ padding: "18px 16px", textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>過去の津波情報が見つかりませんでした</span>
           {historyDebug && (
-            <div style={{ marginTop: 8, fontSize: 11, opacity: 0.8, wordBreak: "break-all" }}>{historyDebug}</div>
+            <div style={{ marginTop: 6, fontSize: 11, color: `rgba(${tokens.ink},0.35)`, wordBreak: "break-all" }}>{historyDebug}</div>
           )}
         </div>
       );
@@ -6684,11 +6701,14 @@ function TsunamiTabBody({
 
     return (
       <>
+        <div style={{ padding: "2px 14px 6px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, textAlign: "center" }}>
+          {historyItems.length}件を表示中
+        </div>
         {historyItems.map((t, i) => (
-          <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)}/>
+          <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)} isHistory/>
         ))}
         {historyHasMore && (
-          <div style={{ margin: "10px 14px 4px" }}>
+          <div style={{ margin: "12px 14px 6px" }}>
             <PressableButton
               type="button"
               onClick={onLoadMoreHistory}
@@ -6696,13 +6716,29 @@ function TsunamiTabBody({
               style={{
                 width: "100%", padding: "10px 12px", borderRadius: 12,
                 border: "none", cursor: "pointer",
-                background: `rgba(${tokens.ink},0.08)`,
-                boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.14)`,
-                color: tokens.text, fontSize: 13, fontWeight: 600,
+                background: `rgba(${tokens.ink},0.06)`,
+                boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
+                color: `rgba(${tokens.ink},0.75)`, fontSize: 13, fontWeight: 600,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                opacity: historyStatus === "loading" ? 0.55 : 1,
               }}
             >
-              {historyStatus === "loading" ? "読み込み中…" : "もっと見る"}
+              {historyStatus === "loading" ? (
+                <>
+                  <div style={{
+                    width: 13, height: 13, borderRadius: "50%",
+                    border: `2px solid rgba(${tokens.ink},0.2)`,
+                    borderTopColor: `rgba(${tokens.ink},0.7)`,
+                    animation: "spin 0.8s linear infinite",
+                  }}/>
+                  <span>読み込み中…</span>
+                </>
+              ) : (
+                <>
+                  <HistoryClockIcon size={14}/>
+                  <span>もっと見る</span>
+                </>
+              )}
             </PressableButton>
           </div>
         )}
