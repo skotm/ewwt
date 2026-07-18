@@ -710,6 +710,7 @@ function MapCanvas({
   epicenterPoints = [], onSelectEpicenterPoint,
   pointsLoading = false, epicenterLoading = false,
   tsunamiAreas = [],
+  stationMarkersVisible = true,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1104,18 +1105,20 @@ function MapCanvas({
     const source = map.getSource("station-points");
     if (!source) return;
 
-    const features = (stationPoints || [])
-      .filter(p => p.latitude != null && p.longitude != null)
-      .map(p => ({
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
-        properties: {
-          intensityKey: STATION_ICON_KEYS.includes(p.intensityKey) ? p.intensityKey : "0",
-          sortOrder: STATION_ICON_KEYS.indexOf(p.intensityKey),
-        },
-      }));
+    const features = stationMarkersVisible
+      ? (stationPoints || [])
+          .filter(p => p.latitude != null && p.longitude != null)
+          .map(p => ({
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [p.longitude, p.latitude] },
+            properties: {
+              intensityKey: STATION_ICON_KEYS.includes(p.intensityKey) ? p.intensityKey : "0",
+              sortOrder: STATION_ICON_KEYS.indexOf(p.intensityKey),
+            },
+          }))
+      : [];
     source.setData({ type: "FeatureCollection", features });
-  }, [stationPoints, status]);
+  }, [stationPoints, status, stationMarkersVisible]);
 
   // 配色スキームが切り替わったら、観測点アイコン(丸+白フチ+数字)を焼き直す。
   // symbolレイヤー側は同じicon-image名を参照し続けるので、updateImageするだけで
@@ -6514,7 +6517,7 @@ function StationMarkerToggleButton({ visible, onClick }) {
       >
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
              stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="8" strokeDasharray={visible ? "3 3" : undefined}/>
+          <circle cx="12" cy="12" r="9.5" strokeDasharray={visible ? "3 3" : undefined}/>
         </svg>
       </button>
     </Glass>
@@ -9449,6 +9452,15 @@ export default function App() {
   // 地図上の観測点マーカーの表示/非表示。地震タブ・津波タブ(引き起こした地震表示中)の
   // 両方で共有する(パネルの外に浮かぶ丸ボタンから切り替える)。
   const [stationMarkersVisible, setStationMarkersVisible] = useState(true);
+  // 地震タブで地震を開くたびに、必ず「表示」状態からスタートする。
+  useEffect(() => {
+    if (selectedQuakeId != null) setStationMarkersVisible(true);
+  }, [selectedQuakeId]);
+  // 津波タブで「引き起こした地震」が見つかった時は、逆に「非表示」状態からスタートする
+  // (津波タブでは観測点よりも津波の予報区の塗り分けを見たいことが多いため)。
+  useEffect(() => {
+    if (causingQuakeCard != null) setStationMarkersVisible(false);
+  }, [causingQuakeCard]);
 
   // 起動時に /history で最新一覧を1回だけ取得し、以降はWebSocketで新着分を随時追加する。
   // quakeFetchLimit(設定タブで変更可能)が変わった場合も、この効果全体をやり直して
@@ -9594,7 +9606,8 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
           onReady={setMap}
-          stationPoints={(showQuakeMapLayers && stationMarkersVisible) ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
+          stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
+          stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
