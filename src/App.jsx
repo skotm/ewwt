@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8a";
+const APP_VERSION = "1.1.8c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6586,15 +6586,11 @@ function TsunamiDetailCard({ tsunami: t }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* グレード名を表示する、色付き枠線の角丸バッジ — QuakeDetailCardの
-          最大震度バッジ(区分ラベル+64×64)と全く同じ構成にして高さを揃えている */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
-        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
-          {t.cancelled ? "解除" : "津波情報"}
-        </span>
+      {/* グレード名を表示する、色付き枠線の角丸バッジ(横幅を2倍に拡大) */}
+      <div style={{ flexShrink: 0 }}>
         <div
           style={{
-            width: 64, height: 64,
+            width: 128, height: 64,
             borderRadius: 14,
             border: `2px solid ${color}`,
             background: `${color}14`,
@@ -6608,9 +6604,9 @@ function TsunamiDetailCard({ tsunami: t }) {
         </div>
       </div>
 
-      {/* 発表時刻 */}
+      {/* 発表時刻(小さめ) */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-        <span className="mono" style={{ fontSize: 18, fontWeight: 800, color: tokens.text, lineHeight: 1.2, whiteSpace: "nowrap" }}>
+        <span className="mono" style={{ fontSize: 14, fontWeight: 800, color: tokens.text, lineHeight: 1.2, whiteSpace: "nowrap" }}>
           {formatTsunamiTimeShort(t.time)}
         </span>
         <span style={{ fontSize: 12, fontWeight: 500, color: `rgba(${tokens.ink},0.5)` }}>
