@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.6j";
+const APP_VERSION = "1.1.7";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6625,6 +6625,28 @@ function tsunamiGradeShortLabel(grade) {
   const map = { MajorWarning: "大津波", Warning: "警報", Watch: "注意", NonEffective: "予報", Unknown: "情報" };
   return map[grade] || "情報";
 }
+
+// グレードごとの波の本数・線種で危険度を表すアイコン。
+// 津波予報=点線の波1本、注意報=実線の波1本、警報=実線の波2本、大津波警報=実線の波3本。
+// (解除・不明はグレードが立たないため、点線の波1本を仮のフォールバックとして使う)
+function TsunamiGradeIcon({ grade, size = 18, color = "#000" }) {
+  const count = grade === "MajorWarning" ? 3 : grade === "Warning" ? 2 : 1;
+  const dashed = !(grade === "Watch" || grade === "Warning" || grade === "MajorWarning");
+  const ys = count === 1 ? [12] : count === 2 ? [8.5, 15.5] : [5, 12, 19];
+  const wavePath = (y) => `M1 ${y} q2.5 -3 5 0 t5 0 t5 0 t5 0`;
+  return (
+    <svg viewBox="0 0 22 24" width={size} height={size * 24 / 22} fill="none">
+      {ys.map((y, i) => (
+        <path
+          key={i} d={wavePath(y)}
+          stroke={color} strokeWidth="2.4" strokeLinecap="round"
+          strokeDasharray={dashed ? "3 3" : undefined}
+        />
+      ))}
+    </svg>
+  );
+}
+
 function TsunamiAreaRow({ area, showDivider }) {
   const { tokens } = useContext(ThemeContext);
   const info = tsunamiGradeInfo(area.grade);
@@ -6640,12 +6662,11 @@ function TsunamiAreaRow({ area, showDivider }) {
       {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 12 }}/>}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px" }}>
         <span style={{
-          flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+          flexShrink: 0, width: 34, height: 22, padding: "2px 0", borderRadius: 6,
           background: info.color, color: "#000",
           display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 11, fontWeight: 800,
         }}>
-          {tsunamiGradeShortLabel(area.grade)}
+          <TsunamiGradeIcon grade={area.grade} size={18}/>
         </span>
         <span style={{
           flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
