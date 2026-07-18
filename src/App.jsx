@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8";
+const APP_VERSION = "1.1.8a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5371,16 +5371,7 @@ function BottomDock({
   // コンパクトに詰めることで、この高さのまま検索ボタンまで収まるようにしている。
   const MIDHIGH_FIXED = 290 + HANDLE_HEIGHT_DELTA;
   const GAP           = 20;  // 各スナップ間に必ず確保する最低差(px)
-
-  // 津波タブのTsunamiDetailCard(グレード名バッジが104×104ある分、地震の
-  // QuakeDetailCardより一回り大きい)は、地震カード基準のMID_FIXEDのままだと
-  // 選択直後の「低」スナップで下が見切れてしまう。津波タブを見ている間だけ、
-  // カードがちょうど収まる高さまで底上げする。
-  const TSUNAMI_CARD_ONLY_HEIGHT = 158 + HANDLE_HEIGHT_DELTA; // TsunamiDetailCard 1枚の実測目安(margin込み)
-  const midHeight = Math.min(
-    active === "tsunami" ? Math.max(MID_FIXED, TSUNAMI_CARD_ONLY_HEIGHT) : MID_FIXED,
-    highHeight - GAP * 2
-  );
+  const midHeight     = Math.min(MID_FIXED, highHeight - GAP * 2);
   const midHighHeight = Math.max(
     Math.min(MIDHIGH_FIXED, highHeight - GAP),
     midHeight + GAP
@@ -6586,41 +6577,43 @@ function TsunamiDetailCard({ tsunami: t }) {
       style={{
         margin: "2px 14px 4px",
         borderRadius: 16,
-        padding: "14px 16px",
+        padding: "7px 16px",
         display: "flex",
         alignItems: "center",
-        gap: 16,
+        gap: 14,
         background: `linear-gradient(135deg, ${color}22, ${color}0E)`,
         boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.12)`,
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* グレード名を大きく表示する、色付き枠線の角丸バッジ */}
-      <div
-        style={{
-          flexShrink: 0,
-          width: 104, height: 104,
-          borderRadius: 20,
-          border: `2.5px solid ${color}`,
-          background: `${color}14`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "6px 8px",
-        }}
-      >
-        <span style={{
-          fontSize: 21, fontWeight: 800, color,
-          textAlign: "center", lineHeight: 1.25,
-        }}>
-          {tsunamiFullLabel(t)}
+      {/* グレード名を表示する、色付き枠線の角丸バッジ — QuakeDetailCardの
+          最大震度バッジ(区分ラベル+64×64)と全く同じ構成にして高さを揃えている */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, flexShrink: 0 }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`, whiteSpace: "nowrap", lineHeight: 1.1 }}>
+          {t.cancelled ? "解除" : "津波情報"}
         </span>
+        <div
+          style={{
+            width: 64, height: 64,
+            borderRadius: 14,
+            border: `2px solid ${color}`,
+            background: `${color}14`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: "2px 4px",
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 800, color, textAlign: "center", lineHeight: 1.15 }}>
+            {tsunamiFullLabel(t)}
+          </span>
+        </div>
       </div>
 
       {/* 発表時刻 */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-        <span className="mono" style={{ fontSize: 22, fontWeight: 800, color: tokens.text, lineHeight: 1.2, whiteSpace: "nowrap" }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+        <span className="mono" style={{ fontSize: 18, fontWeight: 800, color: tokens.text, lineHeight: 1.2, whiteSpace: "nowrap" }}>
           {formatTsunamiTimeShort(t.time)}
         </span>
-        <span style={{ fontSize: 13, fontWeight: 500, color: `rgba(${tokens.ink},0.5)` }}>
+        <span style={{ fontSize: 12, fontWeight: 500, color: `rgba(${tokens.ink},0.5)` }}>
           {t.cancelled ? "解除" : "発表"}
         </span>
       </div>
