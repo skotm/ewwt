@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8c";
+const APP_VERSION = "1.1.8d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -6586,19 +6586,19 @@ function TsunamiDetailCard({ tsunami: t }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
-      {/* グレード名を表示する、色付き枠線の角丸バッジ(横幅を2倍に拡大) */}
+      {/* グレード名を表示する、色付き枠線の角丸バッジ(横幅2倍・QuakeDetailCardと同じ高さ) */}
       <div style={{ flexShrink: 0 }}>
         <div
           style={{
-            width: 128, height: 64,
+            width: 128, height: 80,
             borderRadius: 14,
             border: `2px solid ${color}`,
             background: `${color}14`,
             display: "flex", alignItems: "center", justifyContent: "center",
-            padding: "2px 4px",
+            padding: "4px 6px",
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 800, color, textAlign: "center", lineHeight: 1.15 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color, textAlign: "center", lineHeight: 1.15 }}>
             {tsunamiFullLabel(t)}
           </span>
         </div>
