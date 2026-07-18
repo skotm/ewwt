@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.9";
+const APP_VERSION = "1.1.9a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5008,6 +5008,7 @@ function BottomDock({
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
+  stationMarkersVisible = true, onToggleStationMarkersVisible,
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
@@ -5789,6 +5790,9 @@ function BottomDock({
               onClick={handleBackFromQuake}
               label={backFromQuakeLabel}
             />
+            <div style={{ marginTop: 12 }}>
+              <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+            </div>
           </div>,
           document.body
         ) : (
@@ -5799,6 +5803,9 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
+          <div style={{ marginBottom: 12 }}>
+            <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+          </div>
           <BackToListButton
             onClick={handleBackFromQuake}
             label={backFromQuakeLabel}
@@ -5807,7 +5814,8 @@ function BottomDock({
         )
       )}
 
-      {/* 津波タブ版。地震タブの戻るボタンと全く同じ考え方。 */}
+      {/* 津波タブ版。地震タブの戻るボタンと全く同じ考え方。観測点表示切替ボタンは
+          「引き起こした地震」を表示している間だけ出す(通常の津波一覧には観測点が無いため)。 */}
       {active === "tsunami" && selectedTsunamiId != null && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
@@ -5820,6 +5828,11 @@ function BottomDock({
               onClick={handleBackFromTsunami}
               label={backFromTsunamiLabel}
             />
+            {showingCausingQuakeFor != null && (
+              <div style={{ marginTop: 12 }}>
+                <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+              </div>
+            )}
           </div>,
           document.body
         ) : (
@@ -5830,6 +5843,11 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
+          {showingCausingQuakeFor != null && (
+            <div style={{ marginBottom: 12 }}>
+              <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+            </div>
+          )}
           <BackToListButton
             onClick={handleBackFromTsunami}
             label={backFromTsunamiLabel}
@@ -6461,6 +6479,48 @@ function TsunamiGradeLegend({ areas }) {
    地震を選択中に地図上へ浮かぶ丸い「戻る」ボタン。
    押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
    ───────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────
+   STATION MARKER TOGGLE BUTTON — 地図上の観測点マーカーの表示/非表示を切り替える。
+   表示中は点線の円、非表示中は実線の円のアイコンにする(BackToListButtonと
+   同じ44×44の丸いGlassボタン)。
+   ───────────────────────────────────────────────────── */
+function StationMarkerToggleButton({ visible, onClick }) {
+  const { tokens } = useContext(ThemeContext);
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Glass
+      radius={999}
+      style={{
+        width: 44, height: 44,
+        transform: pressed ? "scale(1.16)" : "scale(1)",
+        transformOrigin: "center",
+        transition: "transform 0.18s cubic-bezier(.22,1,.36,1)",
+      }}
+    >
+      <button
+        onClick={onClick}
+        onPointerDown={() => setPressed(true)}
+        onPointerUp={() => setPressed(false)}
+        onPointerCancel={() => setPressed(false)}
+        onPointerLeave={() => setPressed(false)}
+        aria-label={visible ? "観測点の表示を消す" : "観測点を表示する"}
+        style={{
+          position: "relative", zIndex: 1,
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          color: tokens.text,
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="8" strokeDasharray={visible ? "3 3" : undefined}/>
+        </svg>
+      </button>
+    </Glass>
+  );
+}
+
 function BackToListButton({ onClick, label = "地震一覧に戻る" }) {
   const { tokens } = useContext(ThemeContext);
   // ナビ行のガラスハイライトと同じ、"押し込むとガラスが少し膨らむ"演出。
@@ -9386,6 +9446,10 @@ export default function App() {
     return [{ latitude: causingQuakeCard.latitude, longitude: causingQuakeCard.longitude }];
   }, [causingQuakeCard]);
 
+  // 地図上の観測点マーカーの表示/非表示。地震タブ・津波タブ(引き起こした地震表示中)の
+  // 両方で共有する(パネルの外に浮かぶ丸ボタンから切り替える)。
+  const [stationMarkersVisible, setStationMarkersVisible] = useState(true);
+
   // 起動時に /history で最新一覧を1回だけ取得し、以降はWebSocketで新着分を随時追加する。
   // quakeFetchLimit(設定タブで変更可能)が変わった場合も、この効果全体をやり直して
   // 新しい件数で一覧を取得し直す。
@@ -9530,7 +9594,7 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
           onReady={setMap}
-          stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
+          stationPoints={(showQuakeMapLayers && stationMarkersVisible) ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
@@ -9633,6 +9697,8 @@ export default function App() {
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onCausingQuakeChange={setCausingQuakeCard}
+                  stationMarkersVisible={stationMarkersVisible}
+                  onToggleStationMarkersVisible={() => setStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -9680,6 +9746,8 @@ export default function App() {
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onCausingQuakeChange={setCausingQuakeCard}
+              stationMarkersVisible={stationMarkersVisible}
+              onToggleStationMarkersVisible={() => setStationMarkersVisible(v => !v)}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
