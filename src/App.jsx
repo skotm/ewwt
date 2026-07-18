@@ -6279,6 +6279,40 @@ function QuakeIntensityLegend({ maxIntensity, legacyIntensityScale }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   TSUNAMI GRADE LEGEND — QuakeIntensityLegendと対の構成。
+   震度のような連続した尺度が無いため、「1〜最大」ではなく、現在地図に
+   塗っている予報区(areas)に実際に含まれるgradeだけを、危険度が高い順に
+   縦並びの色丸+ラベルで表示する。画面右上に浮かべて使う想定。
+   ───────────────────────────────────────────────────── */
+function TsunamiGradeLegend({ areas }) {
+  const { tokens } = useContext(ThemeContext);
+  const gradesPresent = [...new Set((areas || []).map(a => a.grade))]
+    .sort((a, b) => tsunamiGradeInfo(b).weight - tsunamiGradeInfo(a).weight);
+  if (gradesPresent.length === 0) return null;
+
+  return (
+    <Glass
+      radius={12}
+      style={{ animation: "appear 0.35s cubic-bezier(.25,1,.5,1)" }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: "9px 11px" }}>
+        {gradesPresent.map(grade => {
+          const info = tsunamiGradeInfo(grade);
+          return (
+            <div key={grade} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{ width: 10, height: 10, borderRadius: "50%", background: info.color, flexShrink: 0 }}/>
+              <span style={{ fontSize: 11, fontWeight: 600, color: tokens.text, whiteSpace: "nowrap" }}>
+                {info.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Glass>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    BACK TO LIST BUTTON
    地震を選択中に地図上へ浮かぶ丸い「戻る」ボタン。
    押すと選択を解除し、パネルを「中高」にして一覧表示へ戻る。
@@ -9265,6 +9299,18 @@ export default function App() {
             zIndex: 30,
           }}>
             <QuakeIntensityLegend maxIntensity={selectedQuake.maxIntensity} legacyIntensityScale={selectedQuake.legacyIntensityScale}/>
+          </div>
+        )}
+
+        {/* 津波予報凡例 — 津波の予報区を地図に塗っている間だけ、画面右上に浮かぶ(震度凡例と対の構成) */}
+        {activeNav === "tsunami" && tsunamiAreasForMap.length > 0 && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            right: 16,
+            zIndex: 30,
+          }}>
+            <TsunamiGradeLegend areas={tsunamiAreasForMap}/>
           </div>
         )}
 
