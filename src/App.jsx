@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8f";
+const APP_VERSION = "1.1.8g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5121,7 +5121,7 @@ function BottomDock({
         時刻順に並べ、選択中の情報から過去へ辿って、隣り合う発表の間隔が
         24時間以内で続く限りひとつながりの現象とみなす(24時間以上の空きが
         あればそこで別の現象として区切る)、という簡易ヒューリスティックを使う。
-     2. その現象の「最初の発表時刻」の5分前〜その時刻までを検索窓とし、
+     2. その現象の「最初の発表時刻」の30分前〜その時刻までを検索窓とし、
         気象庁 震度データベース(eqdb)でこの窓に発生した地震を検索する。
      3. 該当した地震のうち、規模(M)が最大のものを「津波を引き起こした地震」
         と特定する。
@@ -5136,6 +5136,19 @@ function BottomDock({
   useEffect(() => {
     setShowingCausingQuakeFor(null);
   }, [selectedTsunamiId]);
+
+  // 「戻る」を押した時に呼ぶ。表示を引っ込めるだけでなく、キャッシュ済みの
+  // 結果も消して表示をクリアする(再度ボタンを押すとまた最初から検索し直す)。
+  function handleBackFromCausingQuake() {
+    setShowingCausingQuakeFor(null);
+    if (selectedTsunamiId != null) {
+      setCausingQuakeState(prev => {
+        const next = { ...prev };
+        delete next[selectedTsunamiId];
+        return next;
+      });
+    }
+  }
 
   async function handleFindCausingQuake(tsunamiCard) {
     const id = tsunamiCard.id;
@@ -5156,7 +5169,7 @@ function BottomDock({
       }
 
       const winEnd = episodeStart;
-      const winStart = new Date(episodeStart.getTime() - 5 * 60 * 1000);
+      const winStart = new Date(episodeStart.getTime() - 30 * 60 * 1000);
       const pad2 = n => String(n).padStart(2, "0");
       const dateStr = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
       const timeStr = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -6127,7 +6140,7 @@ function BottomDock({
                   onFindCausingQuake={handleFindCausingQuake}
                   causingQuakeState={causingQuakeState}
                   showingCausingQuakeFor={showingCausingQuakeFor}
-                  onBackFromCausingQuake={() => setShowingCausingQuakeFor(null)}
+                  onBackFromCausingQuake={handleBackFromCausingQuake}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -6826,7 +6839,7 @@ function TsunamiTabBody({
             ) : causingState.status === "notfound" ? (
               <div style={{ padding: "18px 16px", textAlign: "center" }}>
                 <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.8 }}>
-                  津波発表の前後5分以内に、該当する地震が気象庁 震度データベースに見つかりませんでした。
+                  津波発表の30分前以内に、該当する地震が気象庁 震度データベースに見つかりませんでした。
                 </span>
               </div>
             ) : causingState.status === "error" ? (
@@ -6834,7 +6847,14 @@ function TsunamiTabBody({
                 <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>地震の検索に失敗しました</span>
               </div>
             ) : (
-              <QuakeDetailCard quake={causingState.quake}/>
+              <>
+                <QuakeDetailCard quake={causingState.quake}/>
+                {Array.isArray(causingState.quake.resolvedPoints) && causingState.quake.resolvedPoints.length > 0 && (
+                  <div style={{ marginTop: 4 }}>
+                    <StationPointsList points={causingState.quake.resolvedPoints} displayMode="list" openKey={null} onOpenKeyChange={() => {}}/>
+                  </div>
+                )}
+              </>
             )}
           </div>
         ) : selected.cancelled ? (
