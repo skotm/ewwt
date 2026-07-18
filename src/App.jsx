@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8h";
+const APP_VERSION = "1.1.9";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5007,7 +5007,7 @@ function BottomDock({
   active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
-  tsunamiHistory, onLoadMoreTsunamiHistory,
+  tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
@@ -5140,6 +5140,17 @@ function BottomDock({
     setShowingCausingQuakeFor(null);
     setCausingQuakeStationOpenKey(null);
   }, [selectedTsunamiId]);
+
+  // 表示中の「引き起こした地震」が変わるたび、App側(地図表示用)に通知する。
+  // 見つかっていない・読み込み中・選択解除されている間はnullを通知して地図から消す。
+  useEffect(() => {
+    if (showingCausingQuakeFor == null) {
+      onCausingQuakeChange?.(null);
+      return;
+    }
+    const st = causingQuakeState[showingCausingQuakeFor];
+    onCausingQuakeChange?.(st && st.status === "done" ? st.quake : null);
+  }, [showingCausingQuakeFor, causingQuakeState, onCausingQuakeChange]);
 
   // 「戻る」を押した時に呼ぶ。表示を引っ込めるだけでなく、キャッシュ済みの
   // 結果も消して表示をクリアする(再度ボタンを押すとまた最初から検索し直す)。
@@ -6860,7 +6871,7 @@ function TsunamiTabBody({
             ) : causingState.status === "notfound" ? (
               <div style={{ margin: "0 14px", padding: "18px 16px", textAlign: "center" }}>
                 <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.8 }}>
-                  津波発表の30分前以内に、該当する地震が気象庁 震度データベースに見つかりませんでした。
+                  該当する地震が気象庁 震度データベースに見つかりませんでした。遠地地震の可能性があります。
                 </span>
               </div>
             ) : causingState.status === "error" ? (
@@ -6871,14 +6882,12 @@ function TsunamiTabBody({
               <>
                 <QuakeDetailCard quake={causingState.quake}/>
                 {Array.isArray(causingState.quake.resolvedPoints) && causingState.quake.resolvedPoints.length > 0 && (
-                  <div style={{ margin: "4px 14px 0" }}>
-                    <StationPointsList
-                      points={causingState.quake.resolvedPoints}
-                      displayMode={stationListDisplayMode}
-                      openKey={causingQuakeStationOpenKey}
-                      onOpenKeyChange={onChangeCausingQuakeStationOpenKey}
-                    />
-                  </div>
+                  <StationPointsList
+                    points={causingState.quake.resolvedPoints}
+                    displayMode={stationListDisplayMode}
+                    openKey={causingQuakeStationOpenKey}
+                    onOpenKeyChange={onChangeCausingQuakeStationOpenKey}
+                  />
                 )}
               </>
             )}
@@ -9363,6 +9372,20 @@ export default function App() {
     return [{ latitude: selectedQuake.latitude, longitude: selectedQuake.longitude }];
   }, [selectedQuake]);
 
+  // 津波タブの「↪︎津波を引き起こした地震」で見つかった地震(BottomDock内の
+  // ローカルなcausingQuakeStateから、表示中の1件だけをここに通知してもらう)。
+  // 地震タブのselectedQuakeとは別に持ち、津波タブを見ている間だけ地図に
+  // 震源のバツ印・観測点の震度を表示するために使う。
+  const [causingQuakeCard, setCausingQuakeCard] = useState(null);
+  const causingQuakeHypocenters = useMemo(() => {
+    if (!causingQuakeCard) return [];
+    if (Array.isArray(causingQuakeCard.hypocenters) && causingQuakeCard.hypocenters.length > 0) {
+      return causingQuakeCard.hypocenters;
+    }
+    if (causingQuakeCard.latitude == null || causingQuakeCard.longitude == null) return [];
+    return [{ latitude: causingQuakeCard.latitude, longitude: causingQuakeCard.longitude }];
+  }, [causingQuakeCard]);
+
   // 起動時に /history で最新一覧を1回だけ取得し、以降はWebSocketで新着分を随時追加する。
   // quakeFetchLimit(設定タブで変更可能)が変わった場合も、この効果全体をやり直して
   // 新しい件数で一覧を取得し直す。
@@ -9480,7 +9503,9 @@ export default function App() {
   // タブを開いている間は表示をクリアする。ここで切り替えているのはMapCanvasに
   // 渡す「実効値」だけで、faultsEnabled等の設定値そのものは変えない
   // (地震タブに戻れば、元の設定のまま再び表示される)。
-  const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings";
+  // ただし津波タブで「↪︎津波を引き起こした地震」を表示している間だけは例外的に、
+  // その地震の震源・観測点を地図に出す(causingQuakeCard参照)。
+  const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null);
 
   // 津波予報区の色分けは、津波タブ・設定タブで、かつ具体的な津波情報の詳細を
   // 開いている時だけ出す(一覧を見ているだけの時は、どの回の予報区を塗るべきか
@@ -9505,11 +9530,11 @@ export default function App() {
         {/* ── Layer 1: 地図（Liquid Glassが透かす背景） ── */}
         <MapCanvas
           onReady={setMap}
-          stationPoints={showQuakeMapLayers ? selectedQuakePoints : EMPTY_EQDB_LIST}
-          hypocenters={showQuakeMapLayers ? selectedHypocenters : EMPTY_EQDB_LIST}
+          stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
+          hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
-          quakeTimeStr={selectedQuake?.time}
-          maxIntensityKey={selectedQuake?.maxIntensity}
+          quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
+          maxIntensityKey={causingQuakeCard ? causingQuakeCard.maxIntensity : selectedQuake?.maxIntensity}
           estIntensityEnabled={showQuakeMapLayers && estIntensityEnabled}
           areaFillEnabled={showQuakeMapLayers && areaFillEnabled}
           faultsEnabled={showQuakeMapLayers && faultsEnabled}
@@ -9607,6 +9632,7 @@ export default function App() {
                   onSelectTsunami={setSelectedTsunamiId}
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
+                  onCausingQuakeChange={setCausingQuakeCard}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -9653,6 +9679,7 @@ export default function App() {
               onSelectTsunami={setSelectedTsunamiId}
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
+              onCausingQuakeChange={setCausingQuakeCard}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
