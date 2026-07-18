@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.8e";
+const APP_VERSION = "1.1.8f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3295,13 +3295,13 @@ function eqdbIdToTimeDisplay(id) {
 // epi: 震央地名(例:"神奈川県西部")をそのまま渡すと、サーバー側でその震央地名に
 // 完全一致する地震だけに絞り込んで返してくれる(実際のeqdb検索フォームの挙動と同じ)。
 // 指定が無い場合は"99"(絞り込みなし)を使う。
-async function fetchEqdbSearch({ startDate, endDate, minMag, maxInt, sort, epi }) {
+async function fetchEqdbSearch({ startDate, endDate, startTime = "00:00", endTime = "23:59", minMag, maxInt, sort, epi }) {
   const epiValue = epi || "99";
   const isFiltered = minMag > 0 || maxInt !== "1" || epiValue !== "99";
   const fd = new FormData();
   fd.append("mode", "search");
-  fd.append("dateTimeF[]", startDate); fd.append("dateTimeF[]", "00:00");
-  fd.append("dateTimeT[]", endDate);   fd.append("dateTimeT[]", "23:59");
+  fd.append("dateTimeF[]", startDate); fd.append("dateTimeF[]", startTime);
+  fd.append("dateTimeT[]", endDate);   fd.append("dateTimeT[]", endTime);
   fd.append("mag[]", minMag.toFixed(1)); fd.append("mag[]", "9.9");
   fd.append("dep[]", "000"); fd.append("dep[]", "999");
   fd.append("epi[]", epiValue); fd.append("pref[]", "99"); fd.append("city[]", "99"); fd.append("station[]", "99");
@@ -5112,6 +5112,78 @@ function BottomDock({
     }
   }, [active, tsunamiViewMode, tsunamiHistory, onLoadMoreTsunamiHistory]);
 
+  /* ─────────────────────────────────────────────────────
+     「↪︎ 津波を引き起こした地震」— 津波カードの右下ボタン。
+
+     判定方法(ユーザー指定の方式):
+     1. 選択中の津波情報が属する「一連の津波現象」(最初の警報・注意報・予報〜
+        解除まで)を特定する。厳密な系列IDは無いので、直近一覧+過去一覧を
+        時刻順に並べ、選択中の情報から過去へ辿って、隣り合う発表の間隔が
+        24時間以内で続く限りひとつながりの現象とみなす(24時間以上の空きが
+        あればそこで別の現象として区切る)、という簡易ヒューリスティックを使う。
+     2. その現象の「最初の発表時刻」の5分前〜その時刻までを検索窓とし、
+        気象庁 震度データベース(eqdb)でこの窓に発生した地震を検索する。
+     3. 該当した地震のうち、規模(M)が最大のものを「津波を引き起こした地震」
+        と特定する。
+     ───────────────────────────────────────────────────── */
+  // 形: { [tsunamiId]: { status: "loading"|"done"|"notfound"|"error", quake: card|null } }
+  const [causingQuakeState, setCausingQuakeState] = useState({});
+  // 現在「引き起こした地震」のカードを表示中の津波ID(nullなら通常の津波カード表示)
+  const [showingCausingQuakeFor, setShowingCausingQuakeFor] = useState(null);
+  // 選択中の津波情報が変わったら(別の情報を選び直した/選択解除した)、
+  // 「引き起こした地震」の表示は必ず一旦引っ込める(別の津波情報のまま古い結果が
+  // 表示され続けるのを防ぐ)。
+  useEffect(() => {
+    setShowingCausingQuakeFor(null);
+  }, [selectedTsunamiId]);
+
+  async function handleFindCausingQuake(tsunamiCard) {
+    const id = tsunamiCard.id;
+    setShowingCausingQuakeFor(id);
+    if (causingQuakeState[id]?.status === "loading" || causingQuakeState[id]?.status === "done") return;
+    setCausingQuakeState(prev => ({ ...prev, [id]: { status: "loading", quake: null } }));
+    try {
+      const allCards = dedupeTsunamiList([...(tsunamis || []), ...(tsunamiHistory?.items || [])]);
+      const sorted = [...allCards].sort((a, b) => new Date(a.time) - new Date(b.time));
+      const idx = sorted.findIndex(c => c.id === id);
+      let episodeStart = idx >= 0 ? new Date(sorted[idx].time) : new Date(tsunamiCard.time);
+      const GAP_LIMIT_MS = 24 * 60 * 60 * 1000; // 24時間以上の空きで別の現象とみなす
+      for (let i = idx; i > 0; i--) {
+        const cur = new Date(sorted[i].time);
+        const prevTime = new Date(sorted[i - 1].time);
+        if (cur.getTime() - prevTime.getTime() > GAP_LIMIT_MS) break;
+        episodeStart = prevTime;
+      }
+
+      const winEnd = episodeStart;
+      const winStart = new Date(episodeStart.getTime() - 5 * 60 * 1000);
+      const pad2 = n => String(n).padStart(2, "0");
+      const dateStr = d => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+      const timeStr = d => `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
+      const { list, errMsg } = await fetchEqdbSearch({
+        startDate: dateStr(winStart), startTime: timeStr(winStart),
+        endDate: dateStr(winEnd), endTime: timeStr(winEnd),
+        minMag: 0, maxInt: "1", sort: "S3", epi: "99", // S3: 地震の規模(M)の大きい順
+      });
+      if (errMsg || !list || list.length === 0) {
+        setCausingQuakeState(prev => ({ ...prev, [id]: { status: "notfound", quake: null } }));
+        return;
+      }
+      const top = list[0]; // 規模が最大の1件
+      const [detail, geo] = await Promise.all([fetchEqdbEventCached(top.id), loadGeoData()]);
+      if (!detail) {
+        setCausingQuakeState(prev => ({ ...prev, [id]: { status: "notfound", quake: null } }));
+        return;
+      }
+      const card = buildEqdbQuakeCard(detail, top, stations, geo?.areas);
+      setCausingQuakeState(prev => ({ ...prev, [id]: { status: "done", quake: card } }));
+    } catch (err) {
+      console.error("津波を引き起こした地震の検索に失敗:", err);
+      setCausingQuakeState(prev => ({ ...prev, [id]: { status: "error", quake: null } }));
+    }
+  }
+
   // 「この震源の近傍で発生した地震」パネルを開いている場合の、震源地名。
   // nullなら通常の地震詳細カードを表示し、震源地名(文字列)が入っている間は
   // 代わりにNearbyQuakesPanelを表示する。選択解除(戻るボタンで一覧に戻る等)
@@ -6052,6 +6124,10 @@ function BottomDock({
                   historyHasMore={tsunamiHistory?.hasMore ?? true}
                   historyDebug={tsunamiHistory?.debug ?? ""}
                   onLoadMoreHistory={onLoadMoreTsunamiHistory}
+                  onFindCausingQuake={handleFindCausingQuake}
+                  causingQuakeState={causingQuakeState}
+                  showingCausingQuakeFor={showingCausingQuakeFor}
+                  onBackFromCausingQuake={() => setShowingCausingQuakeFor(null)}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -6568,7 +6644,7 @@ function TsunamiListRow({ tsunami: t, showDivider, onSelect, isHistory = false }
    TSUNAMI DETAIL CARD — QuakeDetailCardと対の構成。
    最大グレードを大きく表示し、発表時刻を添える。
    ───────────────────────────────────────────────────── */
-function TsunamiDetailCard({ tsunami: t }) {
+function TsunamiDetailCard({ tsunami: t, onFindCausingQuake }) {
   const { tokens, mode } = useContext(ThemeContext);
   const color = t.cancelled ? TSUNAMI_GRADE_FALLBACK.color : tsunamiGradeInfo(t.maxGrade).color;
   const textColor = mode === "dark" ? "#ffffff" : "#000000";
@@ -6576,6 +6652,7 @@ function TsunamiDetailCard({ tsunami: t }) {
   return (
     <div
       style={{
+        position: "relative",
         margin: "2px 14px 4px",
         borderRadius: 16,
         padding: "7px 16px",
@@ -6607,8 +6684,8 @@ function TsunamiDetailCard({ tsunami: t }) {
         </div>
       </div>
 
-      {/* 発表時刻(小さめ) */}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+      {/* 発表時刻(小さめ)。右下のボタンと重ならないよう、少し上寄りに配置する。 */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, paddingBottom: 16 }}>
         <span className="mono" style={{ fontSize: 14, fontWeight: 800, color: tokens.text, lineHeight: 1.2, whiteSpace: "nowrap" }}>
           {formatTsunamiTimeShort(t.time)}
         </span>
@@ -6616,6 +6693,25 @@ function TsunamiDetailCard({ tsunami: t }) {
           {t.cancelled ? "解除" : "発表"}
         </span>
       </div>
+
+      {/* 「↪︎津波を引き起こした地震」— 右下に絶対配置し、カードの高さには影響させない */}
+      {onFindCausingQuake && (
+        <PressableButton
+          type="button"
+          onClick={onFindCausingQuake}
+          style={{
+            position: "absolute", right: 8, bottom: 6,
+            display: "flex", alignItems: "center", gap: 3,
+            padding: "3px 8px", borderRadius: 999,
+            border: "none", cursor: "pointer",
+            background: `rgba(${tokens.ink},0.08)`,
+            color: `rgba(${tokens.ink},0.7)`,
+            fontSize: 10, fontWeight: 600, whiteSpace: "nowrap",
+          }}
+        >
+          ↪︎津波を引き起こした地震
+        </PressableButton>
+      )}
     </div>
   );
 }
@@ -6684,6 +6780,8 @@ function TsunamiTabBody({
   viewMode = "recent",
   historyItems = EMPTY_EQDB_LIST, historyStatus = "idle", historyHasMore = true, historyDebug = "",
   onLoadMoreHistory,
+  // 「↪︎ 津波を引き起こした地震」関連。
+  onFindCausingQuake, causingQuakeState = {}, showingCausingQuakeFor, onBackFromCausingQuake,
 }) {
   const { tokens } = useContext(ThemeContext);
   const selected = tsunamis.find(t => t.id === selectedId)
@@ -6692,10 +6790,54 @@ function TsunamiTabBody({
 
   if (selected) {
     const sortedAreas = [...selected.areas].sort((a, b) => tsunamiGradeInfo(b.grade).weight - tsunamiGradeInfo(a.grade).weight);
+    const showingCausingQuake = showingCausingQuakeFor === selected.id;
+    const causingState = causingQuakeState[selected.id];
+
     return (
       <>
-        <TsunamiDetailCard tsunami={selected}/>
-        {selected.cancelled ? (
+        <TsunamiDetailCard tsunami={selected} onFindCausingQuake={() => onFindCausingQuake?.(selected)}/>
+        {showingCausingQuake ? (
+          <div style={{ margin: "2px 14px 8px" }}>
+            <PressableButton
+              type="button"
+              onClick={onBackFromCausingQuake}
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                padding: "6px 2px", marginBottom: 4,
+                background: "transparent", border: "none", cursor: "pointer",
+                fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`,
+              }}
+            >
+              ← 津波情報に戻る
+            </PressableButton>
+            {(!causingState || causingState.status === "loading") ? (
+              <div style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
+              }}>
+                <div style={{
+                  width: 16, height: 16, borderRadius: "50%",
+                  border: `2px solid rgba(${tokens.ink},0.15)`,
+                  borderTopColor: `rgba(${tokens.ink},0.6)`,
+                  animation: "spin 0.8s linear infinite",
+                }}/>
+                <span style={{ fontSize: 12 }}>震源を検索中…</span>
+              </div>
+            ) : causingState.status === "notfound" ? (
+              <div style={{ padding: "18px 16px", textAlign: "center" }}>
+                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.8 }}>
+                  津波発表の前後5分以内に、該当する地震が気象庁 震度データベースに見つかりませんでした。
+                </span>
+              </div>
+            ) : causingState.status === "error" ? (
+              <div style={{ padding: "18px 16px", textAlign: "center" }}>
+                <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>地震の検索に失敗しました</span>
+              </div>
+            ) : (
+              <QuakeDetailCard quake={causingState.quake}/>
+            )}
+          </div>
+        ) : selected.cancelled ? (
           <div style={{
             margin: "8px 14px", padding: 14, borderRadius: 12,
             background: `rgba(${tokens.ink},0.04)`,
