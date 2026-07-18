@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.9a";
+const APP_VERSION = "1.1.9c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5154,7 +5154,7 @@ function BottomDock({
     }
     const st = causingQuakeState[showingCausingQuakeFor];
     onCausingQuakeChange?.(st && st.status === "done" ? st.quake : null);
-  }, [showingCausingQuakeFor, causingQuakeState, onCausingQuakeChange]);
+  }, [showingCausingQuakeFor, causingQuakeState, onCausingQuakeChange, active]);
 
   // 「戻る」を押した時に呼ぶ。表示を引っ込めるだけでなく、キャッシュ済みの
   // 結果も消して表示をクリアする(再度ボタンを押すとまた最初から検索し直す)。
@@ -9440,6 +9440,12 @@ export default function App() {
   // 地震タブのselectedQuakeとは別に持ち、津波タブを見ている間だけ地図に
   // 震源のバツ印・観測点の震度を表示するために使う。
   const [causingQuakeCard, setCausingQuakeCard] = useState(null);
+  // 津波タブを離れたら、地図に出している「引き起こした地震」の表示は必ずクリアする。
+  // これをやらないと、地震タブに移った時にそちらで選択中の地震ではなく、
+  // 津波タブで最後に見ていた地震の震源・観測点が残って表示されてしまう。
+  useEffect(() => {
+    if (activeNav !== "tsunami") setCausingQuakeCard(null);
+  }, [activeNav]);
   const causingQuakeHypocenters = useMemo(() => {
     if (!causingQuakeCard) return [];
     if (Array.isArray(causingQuakeCard.hypocenters) && causingQuakeCard.hypocenters.length > 0) {
