@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.9g";
+const APP_VERSION = "1.2.0";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -711,6 +711,7 @@ function MapCanvas({
   pointsLoading = false, epicenterLoading = false,
   tsunamiAreas = [],
   stationMarkersVisible = true,
+  tideStationPoints = [], onSelectTideStation,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -735,6 +736,8 @@ function MapCanvas({
   // 関数を参照できるようにしておく。
   const onSelectEpicenterPointRef = useRef(onSelectEpicenterPoint);
   onSelectEpicenterPointRef.current = onSelectEpicenterPoint;
+  const onSelectTideStationRef = useRef(onSelectTideStation);
+  onSelectTideStationRef.current = onSelectTideStation;
   // 地図の基本配色(海・陸・都道府県境界線)。ライト/ダークモードで切り替える。
   const { tokens: themeTokens, mode } = useContext(ThemeContext);
   const tokens = themeTokens; // 下方で自動変換されたtokens.*参照のためのエイリアス
@@ -1035,6 +1038,34 @@ function MapCanvas({
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
             },
+          });
+
+          // 潮位観測点のピン。津波タブの「潮位計」モードでだけデータが入る
+          // (tideStationPointsが空の間は何も描かれない)。
+          map.addSource("tide-station-points", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "tide-station-points-layer",
+            type: "circle",
+            source: "tide-station-points",
+            paint: {
+              "circle-radius": 5.5,
+              "circle-color": "#30D5C8",
+              "circle-stroke-width": 1.5,
+              "circle-stroke-color": "#ffffff",
+            },
+          });
+          map.on("mouseenter", "tide-station-points-layer", () => {
+            map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", "tide-station-points-layer", () => {
+            map.getCanvas().style.cursor = "";
+          });
+          map.on("click", "tide-station-points-layer", (e) => {
+            if (!e.features || !e.features.length) return;
+            onSelectTideStationRef.current?.(e.features[0].properties.code);
           });
 
           // 震央分布の丸のタップ選択・ホバー/タッチ時のツールチップ表示。
@@ -1471,6 +1502,23 @@ function MapCanvas({
       }));
     source.setData({ type: "FeatureCollection", features });
   }, [epicenterPoints, status]);
+
+  // 潮位観測点ピンの更新。tideStationPointsが空の間(潮位計モードでない間)は
+  // 何も表示されない。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const source = map.getSource("tide-station-points");
+    if (!source) return;
+    const features = (tideStationPoints || [])
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+      .map(p => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+        properties: { code: p.code, name: p.name },
+      }));
+    source.setData({ type: "FeatureCollection", features });
+  }, [tideStationPoints, status]);
 
   // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
   // 縁取り色はライト/ダークでも変わりうるため(気象庁配色の震度1のみ)、modeも依存に含める。
@@ -3389,6 +3437,63 @@ function eqdbDetailToEpicenterPoint(detail, listItem) {
 // (依存配列の参照比較で)無駄にeffectが再実行されてしまうため、固定の空配列を使う。
 const EMPTY_EQDB_LIST = [];
 
+/* ─────────────────────────────────────────────────────
+   潮位計(津波タブ「潮位計」モード)
+   気象庁 統合地図ページ(map.html#contents=tidelevel)が使っている非公式JSON API。
+   ・観測点一覧(静的、めったに変わらない): tide_area.json
+   ・観測値(1地点1日1ファイル、15秒間隔): tide_obs_{YYYYMMDD}_{地点コード}.json
+   ───────────────────────────────────────────────────── */
+const TIDE_AREA_URL = "https://www.jma.go.jp/bosai/tidelevel/const/tide_area.json";
+
+function tideObsUrl(dateStr, stationCode) {
+  return `https://www.jma.go.jp/bosai/tidelevel/data/tide/tide_obs_${dateStr}_${stationCode}.json`;
+}
+
+// Dateオブジェクトを、tide_obsのURLで使うYYYYMMDD形式(JST基準)に変換する。
+function toTideDateStr(d) {
+  const pad2 = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+}
+
+// tide_area.json(地域コード→潮位区→地点、の階層構造)を、地図にピンを立てやすい
+// フラットな地点一覧に展開する。
+async function fetchTideStations() {
+  const res = await fetch(TIDE_AREA_URL);
+  if (!res.ok) throw new Error(`潮位観測点一覧の取得に失敗(HTTP ${res.status})`);
+  const data = await res.json();
+  const stations = [];
+  Object.values(data || {}).forEach(class20 => {
+    (class20.class30s || []).forEach(class30 => {
+      (class30.stations || []).forEach(st => {
+        if (st.lat == null || st.lon == null) return;
+        stations.push({
+          code: st.code,
+          name: st.name,
+          typeName: st.typeName,
+          addr: st.addr,
+          reference: st.reference,
+          max: st.max || null,
+          level4: class30.standard?.level4 ?? null,
+          level5: class30.standard?.level5 ?? null,
+          areaName: class20.name,
+          lat: st.lat,
+          lon: st.lon,
+        });
+      });
+    });
+  });
+  return stations;
+}
+
+// 指定地点・指定日の観測値(15秒間隔のtide/departure配列)を取得する。
+// dateStrはYYYYMMDD形式(toTideDateStr参照)。
+async function fetchTideObs(dateStr, stationCode) {
+  const res = await fetch(tideObsUrl(dateStr, stationCode));
+  if (!res.ok) throw new Error(`潮位観測値の取得に失敗(HTTP ${res.status})`);
+  return res.json();
+}
+
+
 function useEqdbEpicenterPoints(rawList) {
   const [points, setPoints] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -5011,6 +5116,9 @@ function BottomDock({
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
+  onTsunamiViewModeChange,
+  tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
+  selectedTideStationCode, onSelectTideStation, tideObsByStation = {}, onLoadTideObs,
   stationMarkersVisible = true, onToggleStationMarkersVisible,
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
@@ -5105,6 +5213,11 @@ function BottomDock({
   useEffect(() => {
     if (active !== "tsunami" && selectedTsunamiId == null) setTsunamiViewMode("recent");
   }, [active, selectedTsunamiId]);
+
+  // App側(地図の潮位計ピン表示用)に、現在のtsunamiViewModeを都度伝える。
+  useEffect(() => {
+    onTsunamiViewModeChange?.(tsunamiViewMode);
+  }, [tsunamiViewMode, onTsunamiViewModeChange]);
 
   // 「過去」モードを初めて開いた時、まだ何も取得していなければ最初の1ページを取得する。
   useEffect(() => {
@@ -6200,6 +6313,12 @@ function BottomDock({
                   stationListDisplayMode={stationListDisplayMode}
                   causingQuakeStationOpenKey={causingQuakeStationOpenKey}
                   onChangeCausingQuakeStationOpenKey={setCausingQuakeStationOpenKey}
+                  tideStations={tideStations}
+                  tideStationsStatus={tideStationsStatus}
+                  selectedTideStationCode={selectedTideStationCode}
+                  onSelectTideStation={onSelectTideStation}
+                  tideObsByStation={tideObsByStation}
+                  onLoadTideObs={onLoadTideObs}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -6913,8 +7032,20 @@ function TsunamiTabBody({
   // 「↪︎ 津波を引き起こした地震」関連。
   onFindCausingQuake, causingQuakeState = {}, showingCausingQuakeFor, onBackFromCausingQuake,
   stationListDisplayMode = "list", causingQuakeStationOpenKey, onChangeCausingQuakeStationOpenKey,
+  // 「潮位計」モード関連。
+  tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
+  selectedTideStationCode, onSelectTideStation, tideObsByStation = {}, onLoadTideObs,
 }) {
   const { tokens } = useContext(ThemeContext);
+
+  // 潮位計モードで地点が選ばれたら観測値を読み込む。早期returnより前でしか
+  // hooksを呼べないため、ここで無条件に呼んでおき、中で条件分岐する。
+  useEffect(() => {
+    if (viewMode === "tidegauge" && selectedTideStationCode != null) {
+      onLoadTideObs?.(selectedTideStationCode);
+    }
+  }, [viewMode, selectedTideStationCode, onLoadTideObs]);
+
   const selected = tsunamis.find(t => t.id === selectedId)
     || historyItems.find(t => t.id === selectedId)
     || null;
@@ -7018,15 +7149,33 @@ function TsunamiTabBody({
     );
   }
 
-  // 「潮位計」モード: 全国の潮位計データを見る機能(まだ形だけ・準備中)。
+  // 「潮位計」モード: 地図の観測点ピンをタップして選んだ地点の、当日分の
+  // 潮位・潮位偏差グラフを表示する。
   if (viewMode === "tidegauge") {
-    return (
-      <div style={{ padding: "28px 18px", textAlign: "center" }}>
-        <TideGaugeIcon size={28}/>
-        <div style={{ marginTop: 10, fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
-          潮位計機能は準備中です
+    if (selectedTideStationCode == null) {
+      return (
+        <div style={{ padding: "28px 18px", textAlign: "center" }}>
+          <TideGaugeIcon size={28}/>
+          <div style={{ marginTop: 10, fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
+            {tideStationsStatus === "loading"
+              ? "潮位観測点を読み込み中…"
+              : tideStationsStatus === "error"
+              ? "潮位観測点の取得に失敗しました"
+              : "地図の観測点(緑の点)をタップして選んでください"}
+          </div>
         </div>
-      </div>
+      );
+    }
+
+    const station = tideStations.find(s => s.code === selectedTideStationCode);
+    const obs = tideObsByStation[selectedTideStationCode];
+
+    return (
+      <TideStationDetail
+        station={station}
+        obs={obs}
+        onBack={() => onSelectTideStation?.(null)}
+      />
     );
   }
 
@@ -7158,6 +7307,204 @@ function TsunamiTabBody({
         <TsunamiListRow key={t.id} tsunami={t} showDivider={i > 0} onSelect={() => onSelect(t.id)}/>
       ))}
     </>
+  );
+}
+
+
+/* ─────────────────────────────────────────────────────
+   TIDE STATION DETAIL — 潮位計モードで地点を選んだ時の表示。
+   気象庁の潮位観測ページ(map.html#contents=tidelevel)のグラフ画面を
+   参考に、タイトルバー+潮位グラフ+潮位偏差グラフの構成にしている。
+   ───────────────────────────────────────────────────── */
+// tide_area.jsonのmax.datetimeは"200409080732"のような12桁(秒無し)形式。
+function tideMaxDatetimeDisplay(id) {
+  if (!id || id.length < 12) return "";
+  return `${id.slice(0, 4)}/${id.slice(4, 6)}/${id.slice(6, 8)} ${id.slice(8, 10)}:${id.slice(10, 12)}`;
+}
+
+function TideStationDetail({ station, obs, onBack }) {
+  const { tokens } = useContext(ThemeContext);
+
+  if (!station) {
+    return (
+      <div style={{ padding: "18px 16px", textAlign: "center" }}>
+        <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>観測点の情報が見つかりませんでした</span>
+      </div>
+    );
+  }
+
+  // tide(実測潮位)とdeparture(潮位偏差 = 実測−天文潮位)から、天文潮位を逆算する。
+  const tideValues = obs?.data?.tide;
+  const departureValues = obs?.data?.departure;
+  const astroValues = (Array.isArray(tideValues) && Array.isArray(departureValues))
+    ? tideValues.map((v, i) => (v == null || departureValues[i] == null) ? null : v - departureValues[i])
+    : null;
+
+  return (
+    <div style={{ padding: "2px 14px 12px" }}>
+      <PressableButton
+        type="button"
+        onClick={onBack}
+        style={{
+          display: "flex", alignItems: "center", gap: 4,
+          padding: "6px 2px", marginBottom: 6,
+          background: "transparent", border: "none", cursor: "pointer",
+          fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`,
+        }}
+      >
+        ← 観測点一覧に戻る
+      </PressableButton>
+
+      {/* タイトルバー — 気象庁の潮位ページと同じ「市町村名 観測所:地点名[種別]」表記 */}
+      <div style={{
+        borderRadius: 10, padding: "10px 12px", marginBottom: 10,
+        background: "#0A84FF", color: "#ffffff",
+      }}>
+        <span style={{ fontSize: 13.5, fontWeight: 700 }}>
+          {station.areaName}　観測所：{station.name}[{station.typeName}]
+        </span>
+      </div>
+
+      {!obs || obs.status === "loading" ? (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          gap: 8, padding: "18px 0", color: `rgba(${tokens.ink},0.45)`,
+        }}>
+          <div style={{
+            width: 16, height: 16, borderRadius: "50%",
+            border: `2px solid rgba(${tokens.ink},0.15)`,
+            borderTopColor: `rgba(${tokens.ink},0.6)`,
+            animation: "spin 0.8s linear infinite",
+          }}/>
+          <span style={{ fontSize: 12 }}>潮位データを読み込み中…</span>
+        </div>
+      ) : obs.status === "error" ? (
+        <div style={{ padding: "18px 16px", textAlign: "center" }}>
+          <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>
+            本日分の潮位データがまだ無いか、取得に失敗しました。
+          </span>
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "2px 2px 4px" }}>
+            潮位(cm)
+          </div>
+          <TideLineChart
+            series={[
+              { name: "実際の潮位", color: "#5E5CE6", values: tideValues || [] },
+              ...(astroValues ? [{ name: "天文潮位", color: "#FF9F0A", values: astroValues }] : []),
+            ]}
+            thresholds={[
+              ...(station.level5 != null ? [{ label: `レベル5特別警報基準(${station.level5}cm)`, value: station.level5, color: "#1C1C1E" }] : []),
+              ...(station.level4 != null ? [{ label: `レベル4危険警報基準(${station.level4}cm)`, value: station.level4, color: "#BF5AF2" }] : []),
+              ...(station.max?.level != null ? [{ label: `過去最高潮位(${station.max.level}cm)`, value: station.max.level, color: "#30D158", dashed: true }] : []),
+            ]}
+          />
+
+          <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "10px 2px 4px" }}>
+            潮位偏差(cm)
+          </div>
+          <TideLineChart
+            series={[{ name: "潮位偏差", color: "#5E5CE6", values: departureValues || [] }]}
+            zeroLine
+          />
+
+          {station.max && (
+            <div style={{ marginTop: 8, fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
+              過去最高潮位: {station.max.level}cm({tideMaxDatetimeDisplay(station.max.datetime)}・{station.max.description})
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
+   TIDE LINE CHART — 簡易SVG折れ線グラフ。潮位・潮位偏差の両方で使う共通部品。
+   ───────────────────────────────────────────────────── */
+function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false }) {
+  const { tokens } = useContext(ThemeContext);
+  const width = 320;
+  const padding = { top: 10, right: 10, bottom: 8, left: 32 };
+  const innerW = width - padding.left - padding.right;
+  const innerH = height - padding.top - padding.bottom;
+
+  const allValues = series.flatMap(s => (s.values || []).filter(v => v != null))
+    .concat(thresholds.map(t => t.value));
+  if (allValues.length === 0) {
+    return (
+      <div style={{ padding: "18px 0", textAlign: "center", fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>
+        表示できるデータがありません
+      </div>
+    );
+  }
+  let dataMin = Math.min(...allValues, zeroLine ? 0 : allValues[0]);
+  let dataMax = Math.max(...allValues, zeroLine ? 0 : allValues[0]);
+  if (dataMin === dataMax) { dataMin -= 1; dataMax += 1; }
+  const marginPad = (dataMax - dataMin) * 0.08;
+  dataMin -= marginPad; dataMax += marginPad;
+  const span = dataMax - dataMin || 1;
+  const yScale = v => padding.top + innerH - ((v - dataMin) / span) * innerH;
+
+  const n = Math.max(...series.map(s => (s.values || []).length), 1);
+  const xScale = i => padding.left + (i / (n - 1 || 1)) * innerW;
+
+  const pathFor = (values) => {
+    let d = "";
+    let started = false;
+    values.forEach((v, i) => {
+      if (v == null) { started = false; return; }
+      d += `${started ? "L" : "M"} ${xScale(i).toFixed(1)} ${yScale(v).toFixed(1)} `;
+      started = true;
+    });
+    return d.trim();
+  };
+
+  const tickCount = 5;
+  const ticks = Array.from({ length: tickCount }, (_, i) => dataMin + (span * i) / (tickCount - 1));
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ display: "block" }}>
+        {ticks.map((t, i) => (
+          <g key={i}>
+            <line x1={padding.left} x2={width - padding.right} y1={yScale(t)} y2={yScale(t)}
+              stroke={`rgba(${tokens.ink},0.08)`} strokeWidth="1"/>
+            <text x={padding.left - 5} y={yScale(t) + 3} fontSize="9" textAnchor="end" fill={`rgba(${tokens.ink},0.45)`}>
+              {Math.round(t)}
+            </text>
+          </g>
+        ))}
+        {zeroLine && dataMin < 0 && dataMax > 0 && (
+          <line x1={padding.left} x2={width - padding.right} y1={yScale(0)} y2={yScale(0)}
+            stroke={`rgba(${tokens.ink},0.35)`} strokeWidth="1"/>
+        )}
+        {thresholds.map((t, i) => (
+          t.value >= dataMin && t.value <= dataMax && (
+            <line key={i} x1={padding.left} x2={width - padding.right} y1={yScale(t.value)} y2={yScale(t.value)}
+              stroke={t.color} strokeWidth="1.5" strokeDasharray={t.dashed ? "4 3" : undefined}/>
+          )
+        ))}
+        {series.map((s, i) => (
+          <path key={i} d={pathFor(s.values || [])} fill="none" stroke={s.color} strokeWidth="1.5" strokeLinejoin="round"/>
+        ))}
+      </svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", padding: "4px 2px 0" }}>
+        {series.map((s, i) => (
+          <div key={`s${i}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 10, height: 2, background: s.color, borderRadius: 1 }}/>
+            <span style={{ fontSize: 10, color: `rgba(${tokens.ink},0.5)` }}>{s.name}</span>
+          </div>
+        ))}
+        {thresholds.map((t, i) => (
+          <div key={`t${i}`} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div style={{ width: 10, height: 2, background: t.color, borderRadius: 1 }}/>
+            <span style={{ fontSize: 10, color: `rgba(${tokens.ink},0.5)` }}>{t.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -9356,6 +9703,51 @@ export default function App() {
     }
   }
 
+  /* ─────────────────────────────────────────────────────
+     潮位計(津波タブ「潮位計」モード)
+     ・tsunamiViewModeはBottomDock内のローカルstateなので、地図にピンを出すか
+       どうかの判断のためだけに、ここへも同じ値を通知してもらう
+       (causingQuakeCardと同じ「report up」パターン)。
+     ・観測点一覧(tideStations)は初めて潮位計モードを開いた時に1回だけ取得し、
+       以降はキャッシュを使い回す。
+     ・観測値(tideObsByStation)は地点コードごとにキャッシュし、選び直しても
+       同じ日ならAPIを叩き直さない。
+     ───────────────────────────────────────────────────── */
+  const [tsunamiViewModeTop, setTsunamiViewModeTop] = useState("recent");
+  const showTideGaugeLayer = activeNav === "tsunami" && tsunamiViewModeTop === "tidegauge";
+
+  const [tideStations, setTideStations] = useState(EMPTY_EQDB_LIST);
+  const [tideStationsStatus, setTideStationsStatus] = useState("idle"); // idle | loading | ready | error
+  useEffect(() => {
+    if (!showTideGaugeLayer || tideStationsStatus !== "idle") return;
+    setTideStationsStatus("loading");
+    fetchTideStations()
+      .then(list => { setTideStations(list); setTideStationsStatus("ready"); })
+      .catch(err => { console.error("潮位観測点一覧の取得に失敗:", err); setTideStationsStatus("error"); });
+  }, [showTideGaugeLayer, tideStationsStatus]);
+
+  const [selectedTideStationCode, setSelectedTideStationCode] = useState(null);
+  // 潮位タブを離れたら選択を解除する(戻ってきた時に地図のピンと表示がズレないように)。
+  useEffect(() => {
+    if (!showTideGaugeLayer) setSelectedTideStationCode(null);
+  }, [showTideGaugeLayer]);
+
+  // 形: { [stationCode]: { date: "YYYYMMDD", status: "loading"|"ready"|"error", data } }
+  const [tideObsByStation, setTideObsByStation] = useState({});
+  async function loadTideObs(stationCode) {
+    const dateStr = toTideDateStr(new Date());
+    const cur = tideObsByStation[stationCode];
+    if (cur && cur.date === dateStr && (cur.status === "loading" || cur.status === "ready")) return;
+    setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "loading", data: null } }));
+    try {
+      const data = await fetchTideObs(dateStr, stationCode);
+      setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "ready", data } }));
+    } catch (err) {
+      console.error("潮位観測値の取得に失敗:", err);
+      setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "error", data: null } }));
+    }
+  }
+
   // 観測点マスタ(緯度経度付き)。points[]との突き合わせに使う。
   const [stations, setStations] = useState(null);
 
@@ -9650,6 +10042,8 @@ export default function App() {
           onReady={setMap}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
+          tideStationPoints={showTideGaugeLayer ? tideStations : EMPTY_EQDB_LIST}
+          onSelectTideStation={setSelectedTideStationCode}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
@@ -9751,6 +10145,13 @@ export default function App() {
                   onSelectTsunami={setSelectedTsunamiId}
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
+                  onTsunamiViewModeChange={setTsunamiViewModeTop}
+                  tideStations={tideStations}
+                  tideStationsStatus={tideStationsStatus}
+                  selectedTideStationCode={selectedTideStationCode}
+                  onSelectTideStation={setSelectedTideStationCode}
+                  tideObsByStation={tideObsByStation}
+                  onLoadTideObs={loadTideObs}
                   onCausingQuakeChange={setCausingQuakeCard}
                   stationMarkersVisible={stationMarkersVisible}
                   onToggleStationMarkersVisible={() => setStationMarkersVisible(v => !v)}
@@ -9800,6 +10201,13 @@ export default function App() {
               onSelectTsunami={setSelectedTsunamiId}
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
+              onTsunamiViewModeChange={setTsunamiViewModeTop}
+              tideStations={tideStations}
+              tideStationsStatus={tideStationsStatus}
+              selectedTideStationCode={selectedTideStationCode}
+              onSelectTideStation={setSelectedTideStationCode}
+              tideObsByStation={tideObsByStation}
+              onLoadTideObs={loadTideObs}
               onCausingQuakeChange={setCausingQuakeCard}
               stationMarkersVisible={stationMarkersVisible}
               onToggleStationMarkersVisible={() => setStationMarkersVisible(v => !v)}
