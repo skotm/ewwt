@@ -10,6 +10,7 @@
   <div>P2P地震情報APIから取得した地震情報を表示します。その他、気象庁の震度データベースから取得した地震情報を表示することができます。
 
 - **津波情報**
+  <img width="1278" height="590" alt="image" src="https://github.com/user-attachments/assets/7f513dd4-27a0-4ac0-aa1f-82e592685f3e" />
 
   (現在開発中)
 
