@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0d";
+const APP_VERSION = "1.2.0e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3503,6 +3503,41 @@ function toTideDateStr(d) {
 
 // tide_area.json(地域コード→潮位区→地点、の階層構造)を、地図にピンを立てやすい
 // フラットな地点一覧に展開する。
+
+// 2点間の距離の2乗(km²相当)を求める、比較専用の簡易距離関数。
+// 経度方向は緯度に応じてcos補正する(日本付近ではこれで十分な精度)。
+function fastDist2(lat1, lon1, lat2, lon2) {
+  const latScale = 111; // 緯度1度あたりのおおよそのkm数
+  const lonScale = 111 * Math.cos((lat1 * Math.PI) / 180); // この緯度での経度1度あたりのkm数
+  const dLat = (lat1 - lat2) * latScale;
+  const dLon = (lon1 - lon2) * lonScale;
+  return dLat * dLat + dLon * dLon;
+}
+
+// 潮位観測点(1点)から一番近い津波予報区を、tsunami-areas.json(海岸線の座標データ、
+// 都道府県名などのあいまいな情報に頼らず地図描画に実際使っている正式なデータ)との
+// 距離計算で求める。各予報区のMultiLineStringの頂点との最短距離で近似している
+// (頂点間隔は密なため、線分内挿までは行わずとも十分な精度が出る)。
+function findNearestTsunamiArea(lat, lon, tsunamiAreasGeoJSON) {
+  if (lat == null || lon == null || !tsunamiAreasGeoJSON || !Array.isArray(tsunamiAreasGeoJSON.features)) return null;
+  let best = null;
+  let bestDist2 = Infinity;
+  for (const feature of tsunamiAreasGeoJSON.features) {
+    const multiLine = feature.geometry?.coordinates;
+    if (!Array.isArray(multiLine)) continue;
+    for (const line of multiLine) {
+      for (const pt of line) {
+        const d2 = fastDist2(lat, lon, pt[1], pt[0]);
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          best = feature.properties;
+        }
+      }
+    }
+  }
+  return best; // { code, name } | null
+}
+
 async function fetchTideStations() {
   const res = await fetch(TIDE_AREA_URL);
   if (!res.ok) throw new Error(`潮位観測点一覧の取得に失敗(HTTP ${res.status})`);
@@ -10467,21 +10502,38 @@ export default function App() {
     ? (selectedFromHistory.cancelled ? EMPTY_EQDB_LIST : selectedFromHistory.areas)
     : (activeTsunami ? activeTsunami.areas : EMPTY_EQDB_LIST);
 
-  // 潮位観測点に、現在有効な津波情報の警報グレードを大まかに対応付ける。
-  // 潮位観測点データ(tide_area.json)には正式な津波予報区名が含まれていないため、
-  // 都道府県名の前方一致という簡易的な判定にとどめている
-  // (同じ県内に複数の津波予報区がある場合、実際の海岸線とズレる可能性がある)。
+  // 潮位観測点ごとに「一番近い津波予報区」を、都道府県名などのあいまいな情報ではなく、
+  // 地図の海岸線描画に実際使っているtsunami-areas.json(座標データ)との距離計算で
+  // 幾何学的に求める。観測点は動かないため、1回計算できればあとは使い回せる。
+  const [tsunamiAreasGeoData, setTsunamiAreasGeoData] = useState(null);
+  useEffect(() => {
+    if (tideStations.length === 0 || tsunamiAreasGeoData) return;
+    loadTsunamiAreasData()
+      .then(setTsunamiAreasGeoData)
+      .catch(err => console.error("津波予報区データ(座標)の取得に失敗:", err));
+  }, [tideStations.length, tsunamiAreasGeoData]);
+
+  const tideStationsWithArea = useMemo(() => {
+    if (!tsunamiAreasGeoData || tideStations.length === 0) return tideStations;
+    return tideStations.map(st => {
+      const nearest = findNearestTsunamiArea(st.lat, st.lon, tsunamiAreasGeoData);
+      return nearest ? { ...st, tsunamiAreaName: nearest.name, tsunamiAreaCode: nearest.code } : st;
+    });
+  }, [tideStations, tsunamiAreasGeoData]);
+
+  // 潮位観測点に、現在有効な津波情報の警報グレードを対応付ける。上で求めた
+  // 「一番近い予報区の正式名称」と、津波情報側のareas[].nameを完全一致で照合するため、
+  // 都道府県名だけで大まかに合わせていた以前の方式より正確なはず。
   const tideStationsWithGrade = useMemo(() => {
     if (!activeTsunami || activeTsunami.cancelled || !Array.isArray(activeTsunami.areas) || activeTsunami.areas.length === 0) {
-      return tideStations;
+      return tideStationsWithArea;
     }
-    return tideStations.map(st => {
-      const prefName = (st.addr || "").split(/[ 　]/)[0] || "";
-      if (!prefName) return st;
-      const match = activeTsunami.areas.find(a => a.name && a.name.startsWith(prefName));
+    return tideStationsWithArea.map(st => {
+      if (!st.tsunamiAreaName) return st;
+      const match = activeTsunami.areas.find(a => a.name === st.tsunamiAreaName);
       return match ? { ...st, activeGrade: match.grade } : st;
     });
-  }, [tideStations, activeTsunami]);
+  }, [tideStationsWithArea, activeTsunami]);
 
   return (
     <ThemeContext.Provider value={themeContextValue}>
