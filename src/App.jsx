@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0b";
+const APP_VERSION = "1.1.2d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1051,7 +1051,13 @@ function MapCanvas({
             type: "circle",
             source: "tide-station-points",
             paint: {
-              "circle-radius": ["case", ["get", "selected"], 9, 5.5],
+              "circle-radius": [
+                "interpolate", ["linear"], ["zoom"],
+                4,  ["case", ["get", "selected"], 7, 4.5],
+                8,  ["case", ["get", "selected"], 8, 5.5],
+                12, ["case", ["get", "selected"], 11, 7],
+                16, ["case", ["get", "selected"], 15, 9.5],
+              ],
               "circle-color": ["case", ["get", "selected"], "#FF9F0A", "#30D5C8"],
               "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
               "circle-stroke-color": "#ffffff",
@@ -1505,13 +1511,19 @@ function MapCanvas({
 
   // 潮位観測点ピンの更新。tideStationPointsが空の間(潮位計モードでない間)は
   // 何も表示されない。選択中の地点は"selected"プロパティを立てて、レイヤー側の
-  // data-drivenなpaint式で強調表示させる。
+  // data-drivenなpaint式で強調表示させるのに加え、配列の最後に置くことで
+  // (MapLibreは描画順=配列順のため)他のピンより必ず前面に来るようにする。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     const source = map.getSource("tide-station-points");
     if (!source) return;
-    const features = (tideStationPoints || [])
+    const points = [...(tideStationPoints || [])].sort((a, b) => {
+      const aSel = a.code === selectedTideStationCode ? 1 : 0;
+      const bSel = b.code === selectedTideStationCode ? 1 : 0;
+      return aSel - bSel; // 選択中のものが最後(=最前面)に来るよう昇順ソート
+    });
+    const features = points
       .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
       .map(p => ({
         type: "Feature",
@@ -7156,17 +7168,35 @@ function TsunamiTabBody({
   // 潮位・潮位偏差グラフを表示する。
   if (viewMode === "tidegauge") {
     if (selectedTideStationCode == null) {
-      return (
-        <div style={{ padding: "28px 18px", textAlign: "center" }}>
-          <TideGaugeIcon size={28}/>
-          <div style={{ marginTop: 10, fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
-            {tideStationsStatus === "loading"
-              ? "潮位観測点を読み込み中…"
-              : tideStationsStatus === "error"
-              ? "潮位観測点の取得に失敗しました"
-              : "地図の観測点(緑の点)をタップして選んでください"}
+      if (tideStationsStatus === "loading" || tideStationsStatus === "error" || tideStations.length === 0) {
+        return (
+          <div style={{ padding: "28px 18px", textAlign: "center" }}>
+            <TideGaugeIcon size={28}/>
+            <div style={{ marginTop: 10, fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
+              {tideStationsStatus === "loading"
+                ? "潮位観測点を読み込み中…"
+                : tideStationsStatus === "error"
+                ? "潮位観測点の取得に失敗しました"
+                : "潮位観測点が見つかりませんでした"}
+            </div>
           </div>
-        </div>
+        );
+      }
+
+      const sortedStations = [...tideStations].sort((a, b) => {
+        const areaCmp = (a.areaName || "").localeCompare(b.areaName || "", "ja");
+        return areaCmp !== 0 ? areaCmp : (a.name || "").localeCompare(b.name || "", "ja");
+      });
+
+      return (
+        <>
+          <div style={{ padding: "2px 14px 6px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, textAlign: "center" }}>
+            地図のピンをタップするか、一覧から観測点を選んでください({sortedStations.length}地点)
+          </div>
+          {sortedStations.map((st, i) => (
+            <TideStationListRow key={st.code} station={st} showDivider={i > 0} onSelect={() => onSelectTideStation?.(st.code)}/>
+          ))}
+        </>
       );
     }
 
@@ -7332,6 +7362,42 @@ const TIDE_RANGE_OPTIONS = [
   { id: "24h", label: "1日",   hours: 24 },
 ];
 
+/* ─────────────────────────────────────────────────────
+   TIDE STATION LIST ROW — 潮位観測点一覧の1行分。
+   地震・津波の一覧行と同じ「区切り線+タップ可能な行」構成。
+   ───────────────────────────────────────────────────── */
+function TideStationListRow({ station, showDivider, onSelect }) {
+  const { tokens } = useContext(ThemeContext);
+  return (
+    <div>
+      {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 14 }}/>}
+      <PressableButton
+        onClick={onSelect}
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 10,
+          padding: "9px 14px",
+          background: "transparent",
+          textAlign: "left",
+        }}
+      >
+        <span style={{
+          flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {station.name}
+        </span>
+        <span style={{
+          fontSize: 11, color: `rgba(${tokens.ink},0.45)`,
+          flexShrink: 0, whiteSpace: "nowrap", maxWidth: "40%",
+          overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {station.areaName}
+        </span>
+      </PressableButton>
+    </div>
+  );
+}
+
 function TideStationDetail({ station, obs, onBack }) {
   const { tokens, mode } = useContext(ThemeContext);
   const [rangeId, setRangeId] = useState("24h");
@@ -7440,7 +7506,7 @@ function TideStationDetail({ station, obs, onBack }) {
             ))}
           </div>
 
-          <Glass radius={16} style={{ padding: "10px 12px 12px" }}>
+          <Glass radius={16} style={{ padding: "10px 8px 12px" }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "2px 2px 4px" }}>
               潮位(cm)
             </div>
@@ -7500,7 +7566,21 @@ function TideStationDetail({ station, obs, onBack }) {
    ───────────────────────────────────────────────────── */
 function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false, startTime, intervalSec }) {
   const { tokens } = useContext(ThemeContext);
-  const width = 320;
+  const containerRef = useRef(null);
+  const [measuredWidth, setMeasuredWidth] = useState(320);
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => {
+      const w = el.clientWidth;
+      if (w > 0) setMeasuredWidth(w);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const width = Math.max(160, measuredWidth);
   const padding = { top: 10, right: 10, bottom: 18, left: 32 };
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
@@ -7552,7 +7632,7 @@ function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false
   let lastDateLabel = null;
 
   return (
-    <div>
+    <div ref={containerRef}>
       <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ display: "block" }}>
         {ticks.map((t, i) => (
           <g key={i}>
