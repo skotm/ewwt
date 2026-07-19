@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.2.0a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7322,8 +7322,16 @@ function tideMaxDatetimeDisplay(id) {
   return `${id.slice(0, 4)}/${id.slice(4, 6)}/${id.slice(6, 8)} ${id.slice(8, 10)}:${id.slice(10, 12)}`;
 }
 
+const TIDE_RANGE_OPTIONS = [
+  { id: "1h",  label: "1時間",  hours: 1 },
+  { id: "6h",  label: "6時間",  hours: 6 },
+  { id: "12h", label: "12時間", hours: 12 },
+  { id: "24h", label: "1日",   hours: 24 },
+];
+
 function TideStationDetail({ station, obs, onBack }) {
   const { tokens } = useContext(ThemeContext);
+  const [rangeId, setRangeId] = useState("24h");
 
   if (!station) {
     return (
@@ -7339,6 +7347,20 @@ function TideStationDetail({ station, obs, onBack }) {
   const astroValues = (Array.isArray(tideValues) && Array.isArray(departureValues))
     ? tideValues.map((v, i) => (v == null || departureValues[i] == null) ? null : v - departureValues[i])
     : null;
+
+  // 選択中の表示期間(1時間〜1日)ぶんだけ、末尾から切り出す。
+  const intervalSec = obs?.data?.interval || 15;
+  const samplesPerHour = 3600 / intervalSec;
+  const rangeHours = TIDE_RANGE_OPTIONS.find(r => r.id === rangeId)?.hours ?? 24;
+  const windowSamples = Math.max(1, Math.round(rangeHours * samplesPerHour));
+  const fullLen = Array.isArray(tideValues) ? tideValues.length : 0;
+  const windowStartIndex = Math.max(0, fullLen - windowSamples);
+  const windowSlice = arr => (Array.isArray(arr) ? arr.slice(windowStartIndex) : []);
+  const tideWindowed = windowSlice(tideValues);
+  const astroWindowed = astroValues ? windowSlice(astroValues) : null;
+  const departureWindowed = windowSlice(departureValues);
+  const dayStart = obs?.data?.time ? new Date(obs.data.time) : null;
+  const windowStartTime = dayStart ? new Date(dayStart.getTime() + windowStartIndex * intervalSec * 1000) : null;
 
   return (
     <div style={{ padding: "2px 14px 12px" }}>
@@ -7386,27 +7408,51 @@ function TideStationDetail({ station, obs, onBack }) {
         </div>
       ) : (
         <>
+          {/* 表示期間(横軸の範囲)の切り替え */}
+          <div style={{ display: "flex", gap: 6, padding: "2px 2px 8px" }}>
+            {TIDE_RANGE_OPTIONS.map(opt => (
+              <PressableButton
+                key={opt.id}
+                type="button"
+                onClick={() => setRangeId(opt.id)}
+                style={{
+                  padding: "5px 10px", borderRadius: 999, border: "none", cursor: "pointer",
+                  fontSize: 11.5, fontWeight: 600,
+                  background: rangeId === opt.id ? "#0A84FF" : `rgba(${tokens.ink},0.08)`,
+                  color: rangeId === opt.id ? "#ffffff" : `rgba(${tokens.ink},0.7)`,
+                }}
+              >
+                {opt.label}
+              </PressableButton>
+            ))}
+          </div>
+
           <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "2px 2px 4px" }}>
             潮位(cm)
           </div>
           <TideLineChart
             series={[
-              { name: "実際の潮位", color: "#5E5CE6", values: tideValues || [] },
-              ...(astroValues ? [{ name: "天文潮位", color: "#FF9F0A", values: astroValues }] : []),
+              // 実際の潮位を最後(=一番手前)に描くことで、天文潮位・基準線より前面に出す。
+              ...(astroWindowed ? [{ name: "天文潮位", color: "#FF9F0A", values: astroWindowed }] : []),
+              { name: "実際の潮位", color: "#5E5CE6", values: tideWindowed || [] },
             ]}
             thresholds={[
               ...(station.level5 != null ? [{ label: `レベル5特別警報基準(${station.level5}cm)`, value: station.level5, color: "#1C1C1E" }] : []),
               ...(station.level4 != null ? [{ label: `レベル4危険警報基準(${station.level4}cm)`, value: station.level4, color: "#BF5AF2" }] : []),
               ...(station.max?.level != null ? [{ label: `過去最高潮位(${station.max.level}cm)`, value: station.max.level, color: "#30D158", dashed: true }] : []),
             ]}
+            startTime={windowStartTime}
+            intervalSec={intervalSec}
           />
 
           <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "10px 2px 4px" }}>
             潮位偏差(cm)
           </div>
           <TideLineChart
-            series={[{ name: "潮位偏差", color: "#5E5CE6", values: departureValues || [] }]}
+            series={[{ name: "潮位偏差", color: "#5E5CE6", values: departureWindowed || [] }]}
             zeroLine
+            startTime={windowStartTime}
+            intervalSec={intervalSec}
           />
 
           {station.max && (
@@ -7423,10 +7469,10 @@ function TideStationDetail({ station, obs, onBack }) {
 /* ─────────────────────────────────────────────────────
    TIDE LINE CHART — 簡易SVG折れ線グラフ。潮位・潮位偏差の両方で使う共通部品。
    ───────────────────────────────────────────────────── */
-function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false }) {
+function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false, startTime, intervalSec }) {
   const { tokens } = useContext(ThemeContext);
   const width = 320;
-  const padding = { top: 10, right: 10, bottom: 8, left: 32 };
+  const padding = { top: 10, right: 10, bottom: 18, left: 32 };
   const innerW = width - padding.left - padding.right;
   const innerH = height - padding.top - padding.bottom;
 
@@ -7464,6 +7510,18 @@ function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false
   const tickCount = 5;
   const ticks = Array.from({ length: tickCount }, (_, i) => dataMin + (span * i) / (tickCount - 1));
 
+  // 横軸(時刻)の目盛り。startTime(この配列の先頭のオリジナル時刻)+intervalSec(1件あたりの秒数)から
+  // 各目盛り位置の実際の時刻を逆算する。日をまたぐ場合は日付も添える。
+  const xTickCount = 6;
+  const xTicks = (startTime && intervalSec)
+    ? Array.from({ length: xTickCount }, (_, j) => {
+        const idx = Math.round((j / (xTickCount - 1)) * (n - 1));
+        const t = new Date(startTime.getTime() + idx * intervalSec * 1000);
+        return { x: xScale(idx), t };
+      })
+    : [];
+  let lastDateLabel = null;
+
   return (
     <div>
       <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ display: "block" }}>
@@ -7489,6 +7547,23 @@ function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false
         {series.map((s, i) => (
           <path key={i} d={pathFor(s.values || [])} fill="none" stroke={s.color} strokeWidth="1.5" strokeLinejoin="round"/>
         ))}
+        {/* 横軸(時刻) */}
+        {xTicks.length > 0 && (
+          <line x1={padding.left} x2={width - padding.right} y1={padding.top + innerH} y2={padding.top + innerH}
+            stroke={`rgba(${tokens.ink},0.18)`} strokeWidth="1"/>
+        )}
+        {xTicks.map((tick, j) => {
+          const hh = String(tick.t.getHours()).padStart(2, "0");
+          const mm = String(tick.t.getMinutes()).padStart(2, "0");
+          const dateLabel = `${tick.t.getMonth() + 1}/${tick.t.getDate()}`;
+          const showDate = dateLabel !== lastDateLabel;
+          lastDateLabel = dateLabel;
+          return (
+            <text key={j} x={tick.x} y={height - 4} fontSize="9" textAnchor="middle" fill={`rgba(${tokens.ink},0.45)`}>
+              {showDate ? `${dateLabel} ${hh}:${mm}` : `${hh}:${mm}`}
+            </text>
+          );
+        })}
       </svg>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", padding: "4px 2px 0" }}>
         {series.map((s, i) => (
