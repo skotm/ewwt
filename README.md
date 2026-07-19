@@ -5,6 +5,8 @@
 アプリ内のタブごとに、以下の情報を確認することができます。
 
 - **地震情報**
+  <img width="1278" height="590" alt="image" src="https://github.com/user-attachments/assets/c5297fdd-1c50-4b18-bb80-b0be32356a59" />
+
   <div>P2P地震情報APIから取得した地震情報を表示します。その他、気象庁の震度データベースから取得した地震情報を表示することができます。
 
 - **津波情報**
