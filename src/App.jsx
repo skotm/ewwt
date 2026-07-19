@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.2d";
+const APP_VERSION = "1.2.0d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5306,9 +5306,17 @@ function BottomDock({
       handleBackFromCausingQuake();
       return;
     }
+    if (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null) {
+      onSelectTideStation?.(null);
+      return;
+    }
     onSelectTsunami(null);
   }
-  const backFromTsunamiLabel = showingCausingQuakeFor != null ? "予報区一覧に戻る" : "津波情報一覧に戻る";
+  const backFromTsunamiLabel = showingCausingQuakeFor != null
+    ? "予報区一覧に戻る"
+    : (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)
+    ? "観測点一覧に戻る"
+    : "津波情報一覧に戻る";
   // 観測点表示切替ボタンは、「引き起こした地震」が実際に見つかった時だけ出す
   // (読み込み中・見つからなかった時・エラー時は観測点自体が無いので出さない)。
   const causingQuakeFound = showingCausingQuakeFor != null && causingQuakeState[showingCausingQuakeFor]?.status === "done";
@@ -5954,7 +5962,7 @@ function BottomDock({
 
       {/* 津波タブ版。地震タブの戻るボタンと全く同じ考え方。観測点表示切替ボタンは
           「引き起こした地震」を表示している間だけ出す(通常の津波一覧には観測点が無いため)。 */}
-      {active === "tsunami" && selectedTsunamiId != null && (
+      {active === "tsunami" && (selectedTsunamiId != null || (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)) && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -7207,7 +7215,6 @@ function TsunamiTabBody({
       <TideStationDetail
         station={station}
         obs={obs}
-        onBack={() => onSelectTideStation?.(null)}
       />
     );
   }
@@ -7368,6 +7375,9 @@ const TIDE_RANGE_OPTIONS = [
    ───────────────────────────────────────────────────── */
 function TideStationListRow({ station, showDivider, onSelect }) {
   const { tokens } = useContext(ThemeContext);
+  // addrは"北海道 小樽市 築港"のように"都道府県 市区町村 地区"の空白区切りなので、
+  // 先頭(都道府県名)だけ取り出して、市区町村名(areaName)の前にスペース区切りで添える。
+  const prefName = (station.addr || "").split(/[ 　]/)[0] || "";
   return (
     <div>
       {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 14 }}/>}
@@ -7388,17 +7398,17 @@ function TideStationListRow({ station, showDivider, onSelect }) {
         </span>
         <span style={{
           fontSize: 11, color: `rgba(${tokens.ink},0.45)`,
-          flexShrink: 0, whiteSpace: "nowrap", maxWidth: "40%",
+          flexShrink: 0, whiteSpace: "nowrap", maxWidth: "50%",
           overflow: "hidden", textOverflow: "ellipsis",
         }}>
-          {station.areaName}
+          {prefName} {station.areaName}
         </span>
       </PressableButton>
     </div>
   );
 }
 
-function TideStationDetail({ station, obs, onBack }) {
+function TideStationDetail({ station, obs }) {
   const { tokens, mode } = useContext(ThemeContext);
   const [rangeId, setRangeId] = useState("24h");
   const isStandalonePwa = useIsStandalonePwa();
@@ -7443,19 +7453,6 @@ function TideStationDetail({ station, obs, onBack }) {
 
   return (
     <div style={{ padding: "2px 14px 12px" }}>
-      <PressableButton
-        type="button"
-        onClick={onBack}
-        style={{
-          display: "flex", alignItems: "center", gap: 4,
-          padding: "6px 2px", marginBottom: 6,
-          background: "transparent", border: "none", cursor: "pointer",
-          fontSize: 12.5, fontWeight: 600, color: `rgba(${tokens.ink},0.6)`,
-        }}
-      >
-        ← 観測点一覧に戻る
-      </PressableButton>
-
       {/* タイトルバー — 気象庁の潮位ページと同じ「市町村名 観測所:地点名[種別]」表記 */}
       <div style={{
         borderRadius: 10, padding: "10px 12px", marginBottom: 10,
