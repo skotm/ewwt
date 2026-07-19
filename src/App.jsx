@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0e";
+const APP_VERSION = "1.2.0f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7285,6 +7285,9 @@ function TsunamiTabBody({
       }
 
       const sortedStations = [...tideStations].sort((a, b) => {
+        const aw = a.activeGrade ? tsunamiGradeInfo(a.activeGrade).weight : -1;
+        const bw = b.activeGrade ? tsunamiGradeInfo(b.activeGrade).weight : -1;
+        if (aw !== bw) return bw - aw; // 警報グレードが高い(大津波→警報→注意報→予報)ものを先に
         const areaCmp = (a.areaName || "").localeCompare(b.areaName || "", "ja");
         return areaCmp !== 0 ? areaCmp : (a.name || "").localeCompare(b.name || "", "ja");
       });
