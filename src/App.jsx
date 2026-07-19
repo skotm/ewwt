@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.9e";
+const APP_VERSION = "1.1.9f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5794,7 +5794,9 @@ function BottomDock({
               label={backFromQuakeLabel}
             />
             <div style={{ marginTop: 12 }}>
-              <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+              {areaFillEnabled && (
+                <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+              )}
             </div>
           </div>,
           document.body
@@ -5807,7 +5809,9 @@ function BottomDock({
           zIndex: 10,
         }}>
           <div style={{ marginBottom: 12 }}>
-            <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+            {areaFillEnabled && (
+              <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+            )}
           </div>
           <BackToListButton
             onClick={handleBackFromQuake}
