@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.9d";
+const APP_VERSION = "1.1.9e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -986,7 +986,7 @@ function MapCanvas({
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               "line-color": "rgba(0,0,0,0)",
-              "line-width": 5.5,
+              "line-width": 4.5,
             },
           }, "station-points-symbol");
 
