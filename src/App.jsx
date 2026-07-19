@@ -1058,7 +1058,17 @@ function MapCanvas({
                 12, ["case", ["get", "selected"], 11, 7],
                 16, ["case", ["get", "selected"], 15, 9.5],
               ],
-              "circle-color": ["case", ["get", "selected"], "#FF9F0A", "#30D5C8"],
+              "circle-color": [
+                "case",
+                ["get", "selected"], "#FF9F0A",
+                ["match", ["get", "grade"],
+                  "MajorWarning", "#BF5AF2",
+                  "Warning", "#FF453A",
+                  "Watch", "#FFD60A",
+                  "NonEffective", "#64D2FF",
+                  "#30D5C8",
+                ],
+              ],
               "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
               "circle-stroke-color": "#ffffff",
             },
@@ -1528,7 +1538,7 @@ function MapCanvas({
       .map(p => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-        properties: { code: p.code, name: p.name, selected: p.code === selectedTideStationCode },
+        properties: { code: p.code, name: p.name, selected: p.code === selectedTideStationCode, grade: p.activeGrade || "" },
       }));
     source.setData({ type: "FeatureCollection", features });
   }, [tideStationPoints, selectedTideStationCode, status]);
@@ -2122,6 +2132,29 @@ function saveAreaFillEnabled(enabled) {
     localStorage.setItem(AREA_FILL_ENABLED_STORAGE_KEY, String(enabled));
   } catch (err) {
     console.warn("細分区域塗りつぶしの表示設定を保存できませんでした:", err);
+  }
+}
+
+/* ─────────────────────────────────────────────────────
+   実験的・テスト機能のON/OFF設定。デフォルトはOFF
+   (明示的にONにした場合のみ、設定画面にテスト配信UI等が現れる)。
+   ───────────────────────────────────────────────────── */
+const EXPERIMENTAL_FEATURES_STORAGE_KEY = "experimentalFeaturesEnabled";
+
+function loadStoredExperimentalFeaturesEnabled() {
+  try {
+    return localStorage.getItem(EXPERIMENTAL_FEATURES_STORAGE_KEY) === "true";
+  } catch (err) {
+    console.warn("実験的機能の設定を読み込めませんでした:", err);
+  }
+  return false;
+}
+
+function saveExperimentalFeaturesEnabled(enabled) {
+  try {
+    localStorage.setItem(EXPERIMENTAL_FEATURES_STORAGE_KEY, String(enabled));
+  } catch (err) {
+    console.warn("実験的機能の設定を保存できませんでした:", err);
   }
 }
 
@@ -5144,6 +5177,8 @@ function BottomDock({
   boundaryLineColorId, onChangeBoundaryLineColorId,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
+  experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
+  testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
   onEpicenterLoadingChange,
@@ -6370,6 +6405,12 @@ function BottomDock({
                   onChangeQuakeFetchLimit={onChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
                   onChangeStationListDisplayMode={onChangeStationListDisplayMode}
+                  experimentalFeaturesEnabled={experimentalFeaturesEnabled}
+                  onChangeExperimentalFeaturesEnabled={onChangeExperimentalFeaturesEnabled}
+                  testTsunami={testTsunami}
+                  onBroadcastTestTsunami={onBroadcastTestTsunami}
+                  onCancelTestTsunami={onCancelTestTsunami}
+                  onClearTestTsunami={onClearTestTsunami}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -6896,6 +6937,14 @@ function TsunamiListRow({ tsunami: t, showDivider, onSelect, isHistory = false }
         }}>
           {tsunamiFullLabel(t)}
         </span>
+        {t.isTest && (
+          <span style={{
+            flexShrink: 0, fontSize: 9.5, fontWeight: 800, color: "#fff",
+            background: "#FF453A", borderRadius: 4, padding: "2px 5px",
+          }}>
+            テスト
+          </span>
+        )}
         {!t.cancelled && areaCount > 0 && (
           <span className="mono" style={{
             fontSize: 11, color: `rgba(${tokens.ink},0.5)`,
@@ -6936,6 +6985,15 @@ function TsunamiDetailCard({ tsunami: t, onFindCausingQuake }) {
         animation: "appear 0.35s cubic-bezier(.25,1,.5,1)",
       }}
     >
+      {t.isTest && (
+        <span style={{
+          position: "absolute", top: 6, left: 10,
+          fontSize: 9.5, fontWeight: 800, color: "#fff",
+          background: "#FF453A", borderRadius: 4, padding: "2px 6px",
+        }}>
+          テスト配信
+        </span>
+      )}
       {/* グレード名を表示する、色付き枠線の角丸バッジ(横幅2倍・QuakeDetailCardと同じ高さ)。
           枠線のさらに外側を白い線(box-shadowのリング)で囲っている。 */}
       <div style={{ flexShrink: 0 }}>
@@ -7378,6 +7436,7 @@ function TideStationListRow({ station, showDivider, onSelect }) {
   // addrは"北海道 小樽市 築港"のように"都道府県 市区町村 地区"の空白区切りなので、
   // 先頭(都道府県名)だけ取り出して、市区町村名(areaName)の前にスペース区切りで添える。
   const prefName = (station.addr || "").split(/[ 　]/)[0] || "";
+  const gradeInfo = station.activeGrade ? tsunamiGradeInfo(station.activeGrade) : null;
   return (
     <div>
       {showDivider && <div style={{ height: 0.5, background: `rgba(${tokens.ink},0.08)`, marginLeft: 14 }}/>}
@@ -7390,6 +7449,16 @@ function TideStationListRow({ station, showDivider, onSelect }) {
           textAlign: "left",
         }}
       >
+        {gradeInfo && (
+          <span style={{
+            flexShrink: 0, minWidth: 34, padding: "2px 0", borderRadius: 6,
+            background: gradeInfo.color, color: "#000",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 11, fontWeight: 800,
+          }}>
+            {tsunamiGradeShortLabel(station.activeGrade)}
+          </span>
+        )}
         <span style={{
           flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
@@ -7398,7 +7467,7 @@ function TideStationListRow({ station, showDivider, onSelect }) {
         </span>
         <span style={{
           fontSize: 11, color: `rgba(${tokens.ink},0.45)`,
-          flexShrink: 0, whiteSpace: "nowrap", maxWidth: "50%",
+          flexShrink: 0, whiteSpace: "nowrap", maxWidth: "40%",
           overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {prefName} {station.areaName}
@@ -8506,6 +8575,7 @@ const TAB_SETTINGS_CATEGORIES = [
 const SETTINGS_ITEMS = {
   advanced: [
     { id: "appearance", label: "外観" },
+    { id: "experimental", label: "実験的・テスト機能" },
   ],
 };
 
@@ -8590,6 +8660,111 @@ function SettingsToggleRow({ label, description, checked, onChange, disabled = f
     </div>
   );
 }
+
+/* ─────────────────────────────────────────────────────
+   TSUNAMI TEST BROADCAST PANEL — 実験的機能の1つ。
+   実際のP2P地震情報とは完全に別のダミーデータ(isTest: true)を津波タブに
+   一時的に流し込み、UIの動作確認(一覧・カード・地図の塗り分け・凡例・
+   潮位観測点への警報反映など)ができるようにする。
+   ───────────────────────────────────────────────────── */
+const TEST_TSUNAMI_GRADE_OPTIONS = [
+  { value: "MajorWarning", label: "大津波警報" },
+  { value: "Warning",      label: "津波警報" },
+  { value: "Watch",        label: "津波注意報" },
+  { value: "NonEffective", label: "津波予報" },
+];
+
+function TsunamiTestBroadcastPanel({ testTsunami, onBroadcast, onCancel, onClear }) {
+  const { tokens, mode } = useContext(ThemeContext);
+  const [grade, setGrade] = useState("Warning");
+  const [areaName, setAreaName] = useState("テスト予報区");
+
+  return (
+    <>
+      <SettingsHeader title="津波警報テスト配信"/>
+      <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
+        実際の気象庁発表ではない、動作確認用のダミーデータです。津波タブの一覧・カード・地図の塗り分け・
+        潮位観測点への反映などが、このデータを使って表示されます。「配信を削除」で元に戻ります。
+      </div>
+
+      <SettingsCard>
+        <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
+          グレード
+        </div>
+        <div style={{ padding: "0 14px 12px" }}>
+          <OptionPicker value={grade} options={TEST_TSUNAMI_GRADE_OPTIONS} onChange={setGrade}/>
+        </div>
+        <SettingsCardDivider/>
+        <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
+          予報区名
+        </div>
+        <div style={{ padding: "0 14px 12px" }}>
+          <input
+            type="text"
+            value={areaName}
+            onChange={e => setAreaName(e.target.value)}
+            placeholder="例: 東京都・北海道太平洋沿岸東部 など"
+            style={eqdbInputStyle(tokens, mode)}
+          />
+        </div>
+      </SettingsCard>
+
+      <SettingsCard>
+        <PressableButton
+          type="button"
+          onClick={() => onBroadcast?.({ grade, areaName: areaName.trim() || "テスト予報区" })}
+          style={{
+            width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+            background: "transparent", textAlign: "center",
+            fontSize: 14, fontWeight: 700, color: "#FF453A",
+          }}
+        >
+          テスト配信する
+        </PressableButton>
+        {testTsunami && !testTsunami.cancelled && (
+          <>
+            <SettingsCardDivider/>
+            <PressableButton
+              type="button"
+              onClick={onCancel}
+              style={{
+                width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+                background: "transparent", textAlign: "center",
+                fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.7)`,
+              }}
+            >
+              解除を配信する
+            </PressableButton>
+          </>
+        )}
+        {testTsunami && (
+          <>
+            <SettingsCardDivider/>
+            <PressableButton
+              type="button"
+              onClick={onClear}
+              style={{
+                width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
+                background: "transparent", textAlign: "center",
+                fontSize: 14, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
+              }}
+            >
+              配信を削除(片付ける)
+            </PressableButton>
+          </>
+        )}
+      </SettingsCard>
+
+      {testTsunami && (
+        <div style={{ margin: "6px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.5)`, lineHeight: 1.7 }}>
+          現在の配信状況: {testTsunami.cancelled ? "解除済み" : tsunamiGradeInfo(testTsunami.maxGrade).label}
+          ({testTsunami.areas?.[0]?.name})・{testTsunami.time}
+        </div>
+      )}
+    </>
+  );
+}
+
 
 // 地震一覧の取得件数の設定画面。スライダー(左右に動かして数値を決める) + よく使う件数のプリセットチップ。
 // 以前は数値入力欄だったが、タップした瞬間にiOS側でページ全体がズームされてしまうため、
@@ -9087,6 +9262,8 @@ function SettingsBody({
   boundaryLineColorId, onChangeBoundaryLineColorId,
   quakeFetchLimit, onChangeQuakeFetchLimit,
   stationListDisplayMode, onChangeStationListDisplayMode,
+  experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
+  testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
 }) {
   // 「フローティングを不透明にする」トグル用。BottomDock経由でpropsを何段も
   // 通す代わりに、Appのトップレベルで配信しているcontextを直接購読する。
@@ -9306,6 +9483,31 @@ function SettingsBody({
             disabled={glassOpaqueSuspectedBroken}
           />
         </SettingsCard>
+      </>
+    );
+  }
+
+  // 実験的・テスト機能(詳細設定の項目)の中身。
+  if (category === "advanced" && leaf === "experimental") {
+    return (
+      <>
+        <SettingsHeader title="実験的・テスト機能"/>
+        <SettingsCard>
+          <SettingsToggleRow
+            label="実験的機能を有効にする"
+            description="開発中・テスト用の機能を使えるようにします。実際の防災情報とは異なる場合があるため、通常時はOFFのままにしてください。"
+            checked={experimentalFeaturesEnabled}
+            onChange={() => onChangeExperimentalFeaturesEnabled(!experimentalFeaturesEnabled)}
+          />
+        </SettingsCard>
+        {experimentalFeaturesEnabled && (
+          <TsunamiTestBroadcastPanel
+            testTsunami={testTsunami}
+            onBroadcast={onBroadcastTestTsunami}
+            onCancel={onCancelTestTsunami}
+            onClear={onClearTestTsunami}
+          />
+        )}
       </>
     );
   }
@@ -9766,6 +9968,17 @@ export default function App() {
     saveAreaFillEnabled(next);
   }
 
+  // 実験的・テスト機能のON/OFF。設定「詳細設定」内のトグルで操作し、localStorageに永続化する。
+  const [experimentalFeaturesEnabled, setExperimentalFeaturesEnabledState] = useState(loadStoredExperimentalFeaturesEnabled);
+
+  function handleChangeExperimentalFeaturesEnabled(next) {
+    setExperimentalFeaturesEnabledState(next);
+    saveExperimentalFeaturesEnabled(next);
+    // OFFに戻したら、テスト配信中のダミー津波情報も片付けておく
+    // (OFFなのにテストデータだけ残り続ける事故を防ぐ)。
+    if (!next) clearTestTsunami();
+  }
+
   // 断層(faults.geojson)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
   // localStorageに永続化する。ファイルサイズが大きいためデフォルトはOFF。
   const [faultsEnabled, setFaultsEnabledState] = useState(loadStoredFaultsEnabled);
@@ -9831,6 +10044,42 @@ export default function App() {
   const [tsunamis,          setTsunamis]          = useState([]);
   const [tsunamiStatus,     setTsunamiStatus]     = useState("loading"); // loading | ready | error
   const [selectedTsunamiId, setSelectedTsunamiId] = useState(null);
+
+  /* ─────────────────────────────────────────────────────
+     実験的機能: 津波警報テスト配信
+     設定の「実験的・テスト機能」がONの時だけ使える、UI確認用のダミー津波情報。
+     実際のtsunamis(WebSocketで更新され続ける)とは別のstateに持たせ、
+     使う場面(effectiveTsunamis)でだけ合成することで、本物のデータ更新に
+     巻き込まれて消えてしまわないようにしている。
+     ───────────────────────────────────────────────────── */
+  const [testTsunami, setTestTsunami] = useState(null); // { ...tsunamiカード, isTest: true } | null
+
+  function broadcastTestTsunami({ grade, areaName }) {
+    const now = new Date();
+    const pad2 = n => String(n).padStart(2, "0");
+    const timeStr = `${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
+    setTestTsunami({
+      id: `test_${now.getTime()}`,
+      time: timeStr,
+      cancelled: false,
+      areas: [{
+        name: areaName || "テスト予報区", grade,
+        immediate: false, firstHeightCondition: null, firstHeightTime: null, maxHeightDescription: null,
+      }],
+      maxGrade: grade,
+      isTest: true,
+    });
+  }
+  function cancelTestTsunami() {
+    setTestTsunami(prev => (prev ? { ...prev, cancelled: true, maxGrade: null } : null));
+  }
+  function clearTestTsunami() {
+    setTestTsunami(null);
+  }
+
+  // テスト配信中は、実際の一覧の先頭にテストデータを合成する。以降、津波タブに
+  // 関するApp側の判定(現在有効な津波・選択中の津波・地図表示)は、すべてこちらを使う。
+  const effectiveTsunamis = testTsunami ? [testTsunami, ...tsunamis] : tsunamis;
 
   // 津波タブ「過去」モード用。直近一覧(tsunamis)とは別に、/history APIを
   // offsetで遡りながら追加取得した過去の津波情報を保持する(地震タブの
@@ -10198,16 +10447,41 @@ export default function App() {
   // その地震の震源・観測点を地図に出す(causingQuakeCard参照)。
   const showQuakeMapLayers = activeNav === "quake" || activeNav === "settings" || (activeNav === "tsunami" && causingQuakeCard != null);
 
-  // 津波予報区の色分けは、津波タブ・設定タブで、かつ具体的な津波情報の詳細を
-  // 開いている時だけ出す(一覧を見ているだけの時は、どの回の予報区を塗るべきか
-  // 一意に決まらないため出さない)。
+  // 津波予報区の色分けは、津波タブ・設定タブを見ている間に出す。
+  // 「過去の津波(履歴)」を選んでいる時はその回の予報区を、それ以外(一覧を見て
+  // いるだけの時・直近一覧から選んだ時・何も選んでいない時)は、常に「現在進行形で
+  // 有効な津波情報」があればその予報区を表示する。
   const showTsunamiMapLayers = activeNav === "tsunami" || activeNav === "settings";
-  const selectedTsunami = tsunamis.find(t => t.id === selectedTsunamiId)
-    || tsunamiHistory.items.find(t => t.id === selectedTsunamiId)
-    || null;
-  const tsunamiAreasForMap = (showTsunamiMapLayers && selectedTsunami && !selectedTsunami.cancelled)
-    ? selectedTsunami.areas
-    : EMPTY_EQDB_LIST;
+  const selectedFromRecent = effectiveTsunamis.find(t => t.id === selectedTsunamiId) || null;
+  const selectedFromHistory = !selectedFromRecent
+    ? (tsunamiHistory.items.find(t => t.id === selectedTsunamiId) || null)
+    : null;
+  const selectedTsunami = selectedFromRecent || selectedFromHistory;
+
+  // 現在進行形で有効な(解除されていない)、一番新しい津波情報。
+  const activeTsunami = effectiveTsunamis.find(t => !t.cancelled) || null;
+
+  const tsunamiAreasForMap = !showTsunamiMapLayers
+    ? EMPTY_EQDB_LIST
+    : selectedFromHistory
+    ? (selectedFromHistory.cancelled ? EMPTY_EQDB_LIST : selectedFromHistory.areas)
+    : (activeTsunami ? activeTsunami.areas : EMPTY_EQDB_LIST);
+
+  // 潮位観測点に、現在有効な津波情報の警報グレードを大まかに対応付ける。
+  // 潮位観測点データ(tide_area.json)には正式な津波予報区名が含まれていないため、
+  // 都道府県名の前方一致という簡易的な判定にとどめている
+  // (同じ県内に複数の津波予報区がある場合、実際の海岸線とズレる可能性がある)。
+  const tideStationsWithGrade = useMemo(() => {
+    if (!activeTsunami || activeTsunami.cancelled || !Array.isArray(activeTsunami.areas) || activeTsunami.areas.length === 0) {
+      return tideStations;
+    }
+    return tideStations.map(st => {
+      const prefName = (st.addr || "").split(/[ 　]/)[0] || "";
+      if (!prefName) return st;
+      const match = activeTsunami.areas.find(a => a.name && a.name.startsWith(prefName));
+      return match ? { ...st, activeGrade: match.grade } : st;
+    });
+  }, [tideStations, activeTsunami]);
 
   return (
     <ThemeContext.Provider value={themeContextValue}>
@@ -10223,7 +10497,7 @@ export default function App() {
           onReady={setMap}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
-          tideStationPoints={showTideGaugeLayer ? tideStations : EMPTY_EQDB_LIST}
+          tideStationPoints={showTideGaugeLayer ? tideStationsWithGrade : EMPTY_EQDB_LIST}
           onSelectTideStation={setSelectedTideStationCode}
           selectedTideStationCode={selectedTideStationCode}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
@@ -10321,14 +10595,14 @@ export default function App() {
                   quakeStatus={quakeStatus}
                   selectedQuakeId={selectedQuakeId}
                   onSelectQuake={setSelectedQuakeId}
-                  tsunamis={tsunamis}
+                  tsunamis={effectiveTsunamis}
                   tsunamiStatus={tsunamiStatus}
                   selectedTsunamiId={selectedTsunamiId}
                   onSelectTsunami={setSelectedTsunamiId}
                   tsunamiHistory={tsunamiHistory}
                   onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
                   onTsunamiViewModeChange={setTsunamiViewModeTop}
-                  tideStations={tideStations}
+                  tideStations={tideStationsWithGrade}
                   tideStationsStatus={tideStationsStatus}
                   selectedTideStationCode={selectedTideStationCode}
                   onSelectTideStation={setSelectedTideStationCode}
@@ -10355,6 +10629,12 @@ export default function App() {
                   onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
                   stationListDisplayMode={stationListDisplayMode}
                   onChangeStationListDisplayMode={handleChangeStationListDisplayMode}
+                  experimentalFeaturesEnabled={experimentalFeaturesEnabled}
+                  onChangeExperimentalFeaturesEnabled={handleChangeExperimentalFeaturesEnabled}
+                  testTsunami={testTsunami}
+                  onBroadcastTestTsunami={broadcastTestTsunami}
+                  onCancelTestTsunami={cancelTestTsunami}
+                  onClearTestTsunami={clearTestTsunami}
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
@@ -10377,14 +10657,14 @@ export default function App() {
               quakeStatus={quakeStatus}
               selectedQuakeId={selectedQuakeId}
               onSelectQuake={setSelectedQuakeId}
-              tsunamis={tsunamis}
+              tsunamis={effectiveTsunamis}
               tsunamiStatus={tsunamiStatus}
               selectedTsunamiId={selectedTsunamiId}
               onSelectTsunami={setSelectedTsunamiId}
               tsunamiHistory={tsunamiHistory}
               onLoadMoreTsunamiHistory={loadMoreTsunamiHistory}
               onTsunamiViewModeChange={setTsunamiViewModeTop}
-              tideStations={tideStations}
+              tideStations={tideStationsWithGrade}
               tideStationsStatus={tideStationsStatus}
               selectedTideStationCode={selectedTideStationCode}
               onSelectTideStation={setSelectedTideStationCode}
@@ -10411,6 +10691,12 @@ export default function App() {
               onChangeQuakeFetchLimit={handleChangeQuakeFetchLimit}
               stationListDisplayMode={stationListDisplayMode}
               onChangeStationListDisplayMode={handleChangeStationListDisplayMode}
+              experimentalFeaturesEnabled={experimentalFeaturesEnabled}
+              onChangeExperimentalFeaturesEnabled={handleChangeExperimentalFeaturesEnabled}
+              testTsunami={testTsunami}
+              onBroadcastTestTsunami={broadcastTestTsunami}
+              onCancelTestTsunami={cancelTestTsunami}
+              onClearTestTsunami={clearTestTsunami}
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
