@@ -5101,7 +5101,7 @@ function BottomDock({
   // 津波タブ版の表示モード。"recent" = 直近の津波情報一覧、
   // "history" = 過去に発表された津波情報一覧(/history APIをoffsetで遡って取得)。
   // 考え方はquakeViewModeと全く同じ(タブを離れたら「一覧」に戻す/選択中は維持)。
-  const [tsunamiViewMode, setTsunamiViewMode] = useState("recent"); // "recent" | "history"
+  const [tsunamiViewMode, setTsunamiViewMode] = useState("recent"); // "recent" | "history" | "tidegauge"
   useEffect(() => {
     if (active !== "tsunami" && selectedTsunamiId == null) setTsunamiViewMode("recent");
   }, [active, selectedTsunamiId]);
@@ -6624,6 +6624,22 @@ function HistoryClockIcon({ size = 18 }) {
 }
 
 /* ─────────────────────────────────────────────────────
+   TIDE GAUGE ICON — 潮位計タブ用。目盛り付きの棒+波線で「水位計」を表す。
+   ───────────────────────────────────────────────────── */
+function TideGaugeIcon({ size = 18 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none"
+         stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 21V4.5"/>
+      <path d="M6 7h2.5"/>
+      <path d="M6 11h2.5"/>
+      <path d="M6 15h2.5"/>
+      <path d="M11 15c1.4-1.6 2.9-1.6 4.3 0s2.9 1.6 4.3 0"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────
    QUAKE LIST ROW
    地震一覧の1行分。「直近の一覧」と「検索結果一覧」の両方から共通で使う。
    ───────────────────────────────────────────────────── */
@@ -6999,6 +7015,18 @@ function TsunamiTabBody({
           </div>
         )}
       </>
+    );
+  }
+
+  // 「潮位計」モード: 全国の潮位計データを見る機能(まだ形だけ・準備中)。
+  if (viewMode === "tidegauge") {
+    return (
+      <div style={{ padding: "28px 18px", textAlign: "center" }}>
+        <TideGaugeIcon size={28}/>
+        <div style={{ marginTop: 10, fontSize: 12.5, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.8 }}>
+          潮位計機能は準備中です
+        </div>
+      </div>
     );
   }
 
@@ -7722,8 +7750,9 @@ const QUAKE_TOOLBAR_ITEMS = [
 // 直近一覧⇄過去の津波情報を切り替える(過去分は/history APIをoffsetで
 // 遡って追加取得するTsunamiHistoryのモード)。
 const TSUNAMI_TOOLBAR_ITEMS = [
-  { id: "recent",  label: "津波情報", icon: ListViewIcon },
-  { id: "history", label: "過去の津波", icon: HistoryClockIcon },
+  { id: "recent",    label: "津波情報",   icon: ListViewIcon },
+  { id: "history",   label: "過去の津波", icon: HistoryClockIcon },
+  { id: "tidegauge", label: "潮位計",     icon: TideGaugeIcon },
 ];
 
 function QuakeListToolbar({ mode, onModeChange, onHandoffToPanelDrag, items = QUAKE_TOOLBAR_ITEMS }) {
