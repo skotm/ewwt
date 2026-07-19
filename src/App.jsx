@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0a";
+const APP_VERSION = "1.2.0b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -3477,6 +3477,8 @@ async function fetchTideStations() {
           level4: class30.standard?.level4 ?? null,
           level5: class30.standard?.level5 ?? null,
           areaName: class20.name,
+          class20Code: st.parents?.class20 ?? null,
+          class30Code: st.parents?.class30 ?? null,
           lat: st.lat,
           lon: st.lon,
         });
@@ -7333,6 +7335,7 @@ const TIDE_RANGE_OPTIONS = [
 function TideStationDetail({ station, obs, onBack }) {
   const { tokens, mode } = useContext(ThemeContext);
   const [rangeId, setRangeId] = useState("24h");
+  const isStandalonePwa = useIsStandalonePwa();
 
   // ダーク/ライトそれぞれで見やすい配色。
   // (ダークでは黒基準線が見えなくなるため、ダーク時は白系に切り替える)
@@ -7471,7 +7474,20 @@ function TideStationDetail({ station, obs, onBack }) {
             <div style={{ marginTop: 8, fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
               過去最高潮位: {station.max.level}cm({tideMaxDatetimeDisplay(station.max.datetime)}・{station.max.description})
             </div>
+          )}
 
+          {station.class20Code && station.class30Code && (
+            <a
+              href={`https://www.jma.go.jp/bosai/tidelevel/#area_type=class20s&area_code=${station.class20Code}&point_code=${station.code}&class30s=${station.class30Code}&filter=0`}
+              {...(isStandalonePwa ? {} : { target: "_blank", rel: "noopener noreferrer" })}
+              style={{
+                display: "block", textAlign: "center", padding: "10px 0",
+                fontSize: 12, fontWeight: 600, color: tokens.accentText || "#0A84FF",
+                textDecoration: "none",
+              }}
+            >
+              気象庁の該当ページを開く ↗
+            </a>
           )}
         </>
       )}
