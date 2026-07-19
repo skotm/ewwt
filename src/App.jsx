@@ -711,7 +711,7 @@ function MapCanvas({
   pointsLoading = false, epicenterLoading = false,
   tsunamiAreas = [],
   stationMarkersVisible = true,
-  tideStationPoints = [], onSelectTideStation,
+  tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1051,9 +1051,9 @@ function MapCanvas({
             type: "circle",
             source: "tide-station-points",
             paint: {
-              "circle-radius": 5.5,
-              "circle-color": "#30D5C8",
-              "circle-stroke-width": 1.5,
+              "circle-radius": ["case", ["get", "selected"], 9, 5.5],
+              "circle-color": ["case", ["get", "selected"], "#FF9F0A", "#30D5C8"],
+              "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
               "circle-stroke-color": "#ffffff",
             },
           });
@@ -1504,7 +1504,8 @@ function MapCanvas({
   }, [epicenterPoints, status]);
 
   // 潮位観測点ピンの更新。tideStationPointsが空の間(潮位計モードでない間)は
-  // 何も表示されない。
+  // 何も表示されない。選択中の地点は"selected"プロパティを立てて、レイヤー側の
+  // data-drivenなpaint式で強調表示させる。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -1515,10 +1516,10 @@ function MapCanvas({
       .map(p => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-        properties: { code: p.code, name: p.name },
+        properties: { code: p.code, name: p.name, selected: p.code === selectedTideStationCode },
       }));
     source.setData({ type: "FeatureCollection", features });
-  }, [tideStationPoints, status]);
+  }, [tideStationPoints, selectedTideStationCode, status]);
 
   // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
   // 縁取り色はライト/ダークでも変わりうるため(気象庁配色の震度1のみ)、modeも依存に含める。
@@ -7330,8 +7331,17 @@ const TIDE_RANGE_OPTIONS = [
 ];
 
 function TideStationDetail({ station, obs, onBack }) {
-  const { tokens } = useContext(ThemeContext);
+  const { tokens, mode } = useContext(ThemeContext);
   const [rangeId, setRangeId] = useState("24h");
+
+  // ダーク/ライトそれぞれで見やすい配色。
+  // (ダークでは黒基準線が見えなくなるため、ダーク時は白系に切り替える)
+  const tideColor  = mode === "dark" ? "#64D2FF" : "#0A5FCC";
+  const astroColor = mode === "dark" ? "#FFD60A" : "#FF9500";
+  const depColor   = mode === "dark" ? "#64D2FF" : "#0A5FCC";
+  const level5Color = mode === "dark" ? "#F2F2F7" : "#1C1C1E";
+  const level4Color = "#BF5AF2";
+  const maxColor     = "#30D158";
 
   if (!station) {
     return (
@@ -7427,38 +7437,41 @@ function TideStationDetail({ station, obs, onBack }) {
             ))}
           </div>
 
-          <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "2px 2px 4px" }}>
-            潮位(cm)
-          </div>
-          <TideLineChart
-            series={[
-              // 実際の潮位を最後(=一番手前)に描くことで、天文潮位・基準線より前面に出す。
-              ...(astroWindowed ? [{ name: "天文潮位", color: "#FF9F0A", values: astroWindowed }] : []),
-              { name: "実際の潮位", color: "#5E5CE6", values: tideWindowed || [] },
-            ]}
-            thresholds={[
-              ...(station.level5 != null ? [{ label: `レベル5特別警報基準(${station.level5}cm)`, value: station.level5, color: "#1C1C1E" }] : []),
-              ...(station.level4 != null ? [{ label: `レベル4危険警報基準(${station.level4}cm)`, value: station.level4, color: "#BF5AF2" }] : []),
-              ...(station.max?.level != null ? [{ label: `過去最高潮位(${station.max.level}cm)`, value: station.max.level, color: "#30D158", dashed: true }] : []),
-            ]}
-            startTime={windowStartTime}
-            intervalSec={intervalSec}
-          />
+          <Glass radius={16} style={{ padding: "10px 12px 12px" }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "2px 2px 4px" }}>
+              潮位(cm)
+            </div>
+            <TideLineChart
+              series={[
+                // 実際の潮位を最後(=一番手前)に描くことで、天文潮位・基準線より前面に出す。
+                ...(astroWindowed ? [{ name: "天文潮位", color: astroColor, values: astroWindowed }] : []),
+                { name: "実際の潮位", color: tideColor, values: tideWindowed || [] },
+              ]}
+              thresholds={[
+                ...(station.level5 != null ? [{ label: `レベル5特別警報基準(${station.level5}cm)`, value: station.level5, color: level5Color }] : []),
+                ...(station.level4 != null ? [{ label: `レベル4危険警報基準(${station.level4}cm)`, value: station.level4, color: level4Color }] : []),
+                ...(station.max?.level != null ? [{ label: `過去最高潮位(${station.max.level}cm)`, value: station.max.level, color: maxColor, dashed: true }] : []),
+              ]}
+              startTime={windowStartTime}
+              intervalSec={intervalSec}
+            />
 
-          <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "10px 2px 4px" }}>
-            潮位偏差(cm)
-          </div>
-          <TideLineChart
-            series={[{ name: "潮位偏差", color: "#5E5CE6", values: departureWindowed || [] }]}
-            zeroLine
-            startTime={windowStartTime}
-            intervalSec={intervalSec}
-          />
+            <div style={{ fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`, padding: "10px 2px 4px" }}>
+              潮位偏差(cm)
+            </div>
+            <TideLineChart
+              series={[{ name: "潮位偏差", color: depColor, values: departureWindowed || [] }]}
+              zeroLine
+              startTime={windowStartTime}
+              intervalSec={intervalSec}
+            />
+          </Glass>
 
           {station.max && (
             <div style={{ marginTop: 8, fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
               過去最高潮位: {station.max.level}cm({tideMaxDatetimeDisplay(station.max.datetime)}・{station.max.description})
             </div>
+
           )}
         </>
       )}
@@ -7541,11 +7554,11 @@ function TideLineChart({ series, thresholds = [], height = 150, zeroLine = false
         {thresholds.map((t, i) => (
           t.value >= dataMin && t.value <= dataMax && (
             <line key={i} x1={padding.left} x2={width - padding.right} y1={yScale(t.value)} y2={yScale(t.value)}
-              stroke={t.color} strokeWidth="1.5" strokeDasharray={t.dashed ? "4 3" : undefined}/>
+              stroke={t.color} strokeWidth="2" strokeDasharray={t.dashed ? "5 3" : undefined}/>
           )
         ))}
         {series.map((s, i) => (
-          <path key={i} d={pathFor(s.values || [])} fill="none" stroke={s.color} strokeWidth="1.5" strokeLinejoin="round"/>
+          <path key={i} d={pathFor(s.values || [])} fill="none" stroke={s.color} strokeWidth="2.25" strokeLinejoin="round" strokeLinecap="round"/>
         ))}
         {/* 横軸(時刻) */}
         {xTicks.length > 0 && (
@@ -10119,6 +10132,7 @@ export default function App() {
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={showTideGaugeLayer ? tideStations : EMPTY_EQDB_LIST}
           onSelectTideStation={setSelectedTideStationCode}
+          selectedTideStationCode={selectedTideStationCode}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
