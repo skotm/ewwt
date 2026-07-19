@@ -7,13 +7,12 @@
 - **地震情報**
   <img width="1278" height="590" alt="image" src="https://github.com/user-attachments/assets/c5297fdd-1c50-4b18-bb80-b0be32356a59" />
 
-  <div>P2P地震情報APIから取得した地震情報を表示します。その他、気象庁の震度データベースから取得した地震情報を表示することができます。
+  <div>P2P地震情報APIから取得した地震情報を表示します。その他、気象庁の震度データベースから取得した地震情報や、地震の推計震度分布を表示することができます。
 
 - **津波情報**
   <img width="1278" height="590" alt="image" src="https://github.com/user-attachments/assets/7f513dd4-27a0-4ac0-aa1f-82e592685f3e" />
 
-  (現在開発中)
-
+  <div>P2P地震情報APIや気象庁から取得した津波警報のデータを表示します。その他、津波を引き起こした地震を確認することができます。
 - **気象情報**
 
   (現在開発中)
