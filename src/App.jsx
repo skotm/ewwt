@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.1.9f";
+const APP_VERSION = "1.1.9g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5181,6 +5181,9 @@ function BottomDock({
     onSelectTsunami(null);
   }
   const backFromTsunamiLabel = showingCausingQuakeFor != null ? "予報区一覧に戻る" : "津波情報一覧に戻る";
+  // 観測点表示切替ボタンは、「引き起こした地震」が実際に見つかった時だけ出す
+  // (読み込み中・見つからなかった時・エラー時は観測点自体が無いので出さない)。
+  const causingQuakeFound = showingCausingQuakeFor != null && causingQuakeState[showingCausingQuakeFor]?.status === "done";
 
   async function handleFindCausingQuake(tsunamiCard) {
     const id = tsunamiCard.id;
@@ -5835,7 +5838,7 @@ function BottomDock({
               onClick={handleBackFromTsunami}
               label={backFromTsunamiLabel}
             />
-            {showingCausingQuakeFor != null && (
+            {causingQuakeFound && (
               <div style={{ marginTop: 12 }}>
                 <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
               </div>
@@ -5850,7 +5853,7 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
-          {showingCausingQuakeFor != null && (
+          {causingQuakeFound && (
             <div style={{ marginBottom: 12 }}>
               <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
             </div>
