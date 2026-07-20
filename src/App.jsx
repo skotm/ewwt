@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.1g";
+const APP_VERSION = "1.2.2";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -712,6 +712,7 @@ function MapCanvas({
   tsunamiAreas = [],
   stationMarkersVisible = true,
   tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
+  tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreaName = null,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -738,6 +739,14 @@ function MapCanvas({
   onSelectEpicenterPointRef.current = onSelectEpicenterPoint;
   const onSelectTideStationRef = useRef(onSelectTideStation);
   onSelectTideStationRef.current = onSelectTideStation;
+
+  // 津波予報区の「地図タップで選択」モード用。map.on("load")内の登録は初回のみなので、
+  // 最新のモードON/OFF・コールバック・読み込み済みデータをrefで参照できるようにする。
+  const tsunamiAreaPickActiveRef = useRef(tsunamiAreaPickActive);
+  tsunamiAreaPickActiveRef.current = tsunamiAreaPickActive;
+  const onPickTsunamiAreaRef = useRef(onPickTsunamiArea);
+  onPickTsunamiAreaRef.current = onPickTsunamiArea;
+  const tsunamiAreasGeoDataRef = useRef(null);
   // 地図の基本配色(海・陸・都道府県境界線)。ライト/ダークモードで切り替える。
   const { tokens: themeTokens, mode } = useContext(ThemeContext);
   const tokens = themeTokens; // 下方で自動変換されたtokens.*参照のためのエイリアス
@@ -993,6 +1002,21 @@ function MapCanvas({
             },
           }, "station-points-symbol");
 
+          // 津波テスト配信「地図タップで選択」機能用: 現在選んでいる予報区(1件)
+          // だけをアクセントカラーで太く強調するレイヤー。同じソース(tsunami-areas)を
+          // 使い回し、setFilterで対象の予報区名だけに絞り込む。
+          map.addLayer({
+            id: "tsunami-areas-pick-highlight-layer",
+            type: "line",
+            source: "tsunami-areas",
+            layout: { "line-cap": "round", "line-join": "round" },
+            filter: ["==", ["get", "name"], "__none__"],
+            paint: {
+              "line-color": "#FF9F0A",
+              "line-width": 6,
+            },
+          }, "station-points-symbol");
+
           // 震央分布(P2P地震一覧・近傍地震検索・データベース検索の結果を、
           // 震度配色の丸として地図上に重ねて表示する)。
           // 独自のcanvasレイヤーではなくMapLibre標準のcircleレイヤーにすることで、
@@ -1110,6 +1134,19 @@ function MapCanvas({
             if (!e.features || !e.features.length) return;
             setEpicenterTooltip(null);
             onSelectEpicenterPointRef.current?.(e.features[0].properties.id);
+          });
+
+          // 津波テスト配信「地図タップで選択」モード中だけ有効になる、地図全体を対象と
+          // したクリック(レイヤー指定なし)。タップ地点から一番近い予報区(海岸線)の
+          // 頂点を探し、近すぎず遠すぎない(60km以内)場合だけ選択として採用する。
+          // 海上や地図の対象外の場所を誤ってタップした場合は何も起きない。
+          map.on("click", (e) => {
+            if (!tsunamiAreaPickActiveRef.current) return;
+            const geo = tsunamiAreasGeoDataRef.current;
+            if (!geo) return;
+            const nearest = findNearestTsunamiAreaWithDistance(e.lngLat.lat, e.lngLat.lng, geo);
+            if (!nearest || nearest.distanceKm > 60) return;
+            onPickTsunamiAreaRef.current?.(nearest.name);
           });
 
           setStatus("ready");
@@ -1264,12 +1301,21 @@ function MapCanvas({
     if (!map || status !== "ready") return;
     if (!map.getLayer("tsunami-areas-layer")) return;
 
-    map.setPaintProperty("tsunami-areas-layer", "line-color", buildTsunamiAreaColorExpr(tsunamiAreas));
+    // ピックモード中は、まだ何も選ばれていなくても海岸線自体が見えていないと
+    // タップする場所が分からないため、全予報区を薄く一律で見せる。
+    // 通常時は今まで通り、実際に有効な津波情報の予報区だけをグレードの色で塗る。
+    map.setPaintProperty(
+      "tsunami-areas-layer",
+      "line-color",
+      tsunamiAreaPickActive ? "rgba(120,190,255,0.55)" : buildTsunamiAreaColorExpr(tsunamiAreas)
+    );
+    map.getCanvas().style.cursor = tsunamiAreaPickActive ? "crosshair" : "";
 
-    if (tsunamiAreas.length > 0 && !tsunamiAreasLoadedRef.current) {
+    if ((tsunamiAreas.length > 0 || tsunamiAreaPickActive) && !tsunamiAreasLoadedRef.current) {
       tsunamiAreasLoadedRef.current = true;
       loadTsunamiAreasData()
         .then((geojson) => {
+          tsunamiAreasGeoDataRef.current = geojson; // クリック時の最近傍探索用に保持
           const source = map.getSource("tsunami-areas");
           if (source) source.setData(geojson);
         })
@@ -1278,7 +1324,16 @@ function MapCanvas({
           tsunamiAreasLoadedRef.current = false; // 失敗時は次回表示対象が出た時に再試行できるようにする
         });
     }
-  }, [tsunamiAreas, status]);
+  }, [tsunamiAreas, tsunamiAreaPickActive, status]);
+
+  // ピックモードで選ばれている予報区(pickedTsunamiAreaName)だけを、強調レイヤーで
+  // アクセントカラー表示する。選択が無い間はフィルタが何にも一致しないようにして隠す。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    if (!map.getLayer("tsunami-areas-pick-highlight-layer")) return;
+    map.setFilter("tsunami-areas-pick-highlight-layer", ["==", ["get", "name"], pickedTsunamiAreaName || "__none__"]);
+  }, [pickedTsunamiAreaName, status]);
 
   // 選択中の地震(hypocenters)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源(複数の場合は全件)+周辺の観測点がちょうど収まる範囲へズームする。
@@ -3538,6 +3593,30 @@ function findNearestTsunamiArea(lat, lon, tsunamiAreasGeoJSON) {
   return best; // { code, name } | null
 }
 
+// findNearestTsunamiAreaと同じ距離計算だが、地図タップでの予報区選択用に
+// 「どれだけ近かったか(km)」も一緒に返す。海上の何もない場所や地図の範囲外を
+// 誤ってタップした場合に、呼び出し側で距離が遠すぎる結果を弾けるようにするため。
+function findNearestTsunamiAreaWithDistance(lat, lon, tsunamiAreasGeoJSON) {
+  if (lat == null || lon == null || !tsunamiAreasGeoJSON || !Array.isArray(tsunamiAreasGeoJSON.features)) return null;
+  let best = null;
+  let bestDist2 = Infinity;
+  for (const feature of tsunamiAreasGeoJSON.features) {
+    const multiLine = feature.geometry?.coordinates;
+    if (!Array.isArray(multiLine)) continue;
+    for (const line of multiLine) {
+      for (const pt of line) {
+        const d2 = fastDist2(lat, lon, pt[1], pt[0]);
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          best = feature.properties;
+        }
+      }
+    }
+  }
+  if (!best) return null;
+  return { ...best, distanceKm: Math.sqrt(bestDist2) }; // { code, name, distanceKm } | null
+}
+
 async function fetchTideStations() {
   const res = await fetch(TIDE_AREA_URL);
   if (!res.ok) throw new Error(`潮位観測点一覧の取得に失敗(HTTP ${res.status})`);
@@ -5214,6 +5293,7 @@ function BottomDock({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
+  tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreaName,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
   onEpicenterLoadingChange,
@@ -5836,6 +5916,23 @@ function BottomDock({
     }
     lastActiveForSettings.current = active;
   }, [active]);
+
+  // 津波警報テスト配信の「地図タップで選択」モード。ONになった瞬間、その時点の
+  // 高さを覚えたうえでフローティングを完全にたたみ(低=0)、地図全体をタップできる
+  // ようにする。OFFに戻った瞬間(予報区を選び終えた時・キャンセルした時のどちらも
+  // App側ではtsunamiAreaPickActive=falseにするだけなので、ここでは真偽値の変化だけを
+  // 見て判定する)、覚えておいた高さへ自動的に戻す。
+  const preTsunamiPickSnapIndexRef = useRef(snapIndex);
+  const lastTsunamiAreaPickActive = useRef(tsunamiAreaPickActive);
+  useEffect(() => {
+    if (!lastTsunamiAreaPickActive.current && tsunamiAreaPickActive) {
+      preTsunamiPickSnapIndexRef.current = snapIndex; // ピック開始直前の高さを覚えておく
+      setSnapIndex(0);
+    } else if (lastTsunamiAreaPickActive.current && !tsunamiAreaPickActive) {
+      setSnapIndex(preTsunamiPickSnapIndexRef.current); // 覚えておいた高さに戻す
+    }
+    lastTsunamiAreaPickActive.current = tsunamiAreaPickActive;
+  }, [tsunamiAreaPickActive]);
 
   function handleSnap(newIndex) {
     setSnapIndex(newIndex);
@@ -6475,6 +6572,9 @@ function BottomDock({
                   onBroadcastTestTsunami={onBroadcastTestTsunami}
                   onCancelTestTsunami={onCancelTestTsunami}
                   onClearTestTsunami={onClearTestTsunami}
+                  tsunamiAreaPickActive={tsunamiAreaPickActive}
+                  onStartTsunamiAreaPick={onStartTsunamiAreaPick}
+                  pickedTsunamiAreaName={pickedTsunamiAreaName}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -8741,14 +8841,21 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
   { value: "NonEffective", label: "津波予報" },
 ];
 
-function TsunamiTestBroadcastPanel({ testTsunami, onBroadcast, onCancel, onClear }) {
+function TsunamiTestBroadcastPanel({
+  testTsunami, onBroadcast, onCancel, onClear,
+  tsunamiAreaPickActive, onStartAreaPick, pickedAreaName,
+}) {
   const { tokens, mode } = useContext(ThemeContext);
   const [grade, setGrade] = useState("Warning");
-  const [areaName, setAreaName] = useState("テスト予報区");
+  const [areaName, setAreaName] = useState(pickedAreaName || "テスト予報区");
+
+  // 地図で予報区がタップされる(pickedAreaNameが変わる)たびに、その名前を採用する。
+  useEffect(() => {
+    if (pickedAreaName) setAreaName(pickedAreaName);
+  }, [pickedAreaName]);
 
   return (
     <>
-      <SettingsHeader title="津波警報テスト配信"/>
       <div style={{ margin: "-4px 14px 10px", fontSize: 11, color: `rgba(${tokens.ink},0.45)`, lineHeight: 1.7 }}>
         実際の気象庁発表ではない、動作確認用のダミーデータです。津波タブの一覧・カード・地図の塗り分け・
         潮位観測点への反映などが、このデータを使って表示されます。「配信を削除」で元に戻ります。
@@ -8763,16 +8870,32 @@ function TsunamiTestBroadcastPanel({ testTsunami, onBroadcast, onCancel, onClear
         </div>
         <SettingsCardDivider/>
         <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
-          予報区名
+          予報区
         </div>
-        <div style={{ padding: "0 14px 12px" }}>
-          <input
-            type="text"
-            value={areaName}
-            onChange={e => setAreaName(e.target.value)}
-            placeholder="例: 東京都・北海道太平洋沿岸東部 など"
-            style={eqdbInputStyle(tokens, mode)}
-          />
+        <div style={{ padding: "0 14px 12px", display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{
+            flex: 1, minWidth: 0, padding: "10px 12px", borderRadius: 10,
+            background: mode === "dark" ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.045)",
+            fontSize: 14, fontWeight: 600, color: tokens.text,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {areaName}
+          </div>
+          <PressableButton
+            type="button"
+            onClick={() => onStartAreaPick?.()}
+            style={{
+              flexShrink: 0, padding: "10px 14px", borderRadius: 10, border: "none", cursor: "pointer",
+              background: tsunamiAreaPickActive ? "#FF9F0A" : "rgba(10,132,255,0.14)",
+              fontSize: 13, fontWeight: 700,
+              color: tsunamiAreaPickActive ? "#fff" : "#0A84FF",
+            }}
+          >
+            {tsunamiAreaPickActive ? "地図で選択中…" : "地図で選択"}
+          </PressableButton>
+        </div>
+        <div style={{ margin: "-6px 14px 12px", fontSize: 11, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.6 }}>
+          「地図で選択」を押すと地図が全画面に表示されます。対象にしたい予報区の海岸線をタップしてください。
         </div>
       </SettingsCard>
 
@@ -9331,6 +9454,7 @@ function SettingsBody({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
+  tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreaName,
 }) {
   // 「フローティングを不透明にする」トグル用。BottomDock経由でpropsを何段も
   // 通す代わりに、Appのトップレベルで配信しているcontextを直接購読する。
@@ -9342,6 +9466,21 @@ function SettingsBody({
 
   // ライト/ダークモード切り替え用。同じくcontext経由で直接購読する。
   const { mode: themeMode, tokens, modePref: themeModePref, setModePref: onChangeThemeModePref } = useContext(ThemeContext);
+
+  // 「津波警報テスト配信」画面を開いたまま実験的機能がOFFに戻された場合、
+  // 一つ上の階層(実験的・テスト機能メニュー)へ自動的に戻す。
+  // (通常はBottomDock側でトグルOFF時にpickモードごと片付けるが、念のためここでも
+  // 画面遷移そのものの整合性を保証しておく。setStateはrender中ではなくeffect内で行う。)
+  useEffect(() => {
+    if (
+      path.length >= 2 &&
+      path[path.length - 1] === "tsunamiTestBroadcast" &&
+      path[path.length - 2] === "experimental" &&
+      !experimentalFeaturesEnabled
+    ) {
+      onNavigate(path.slice(0, -1));
+    }
+  }, [path, experimentalFeaturesEnabled, onNavigate]);
 
   // トップメニュー(カテゴリ一覧)
   if (path.length === 0) {
@@ -9555,7 +9694,7 @@ function SettingsBody({
   }
 
   // 実験的・テスト機能(詳細設定の項目)の中身。
-  if (category === "advanced" && leaf === "experimental") {
+  if (category === "advanced" && leaf === "experimental" && !sub) {
     return (
       <>
         <SettingsHeader title="実験的・テスト機能"/>
@@ -9568,13 +9707,34 @@ function SettingsBody({
           />
         </SettingsCard>
         {experimentalFeaturesEnabled && (
-          <TsunamiTestBroadcastPanel
-            testTsunami={testTsunami}
-            onBroadcast={onBroadcastTestTsunami}
-            onCancel={onCancelTestTsunami}
-            onClear={onClearTestTsunami}
-          />
+          <SettingsCard>
+            <SettingsMenuRow
+              label="津波警報テスト配信"
+              onClick={() => onNavigate([...path, "tsunamiTestBroadcast"])}
+            />
+          </SettingsCard>
         )}
+      </>
+    );
+  }
+
+  // 実験的機能: 津波警報テスト配信メニュー。実験的機能そのものがOFFに戻された場合の
+  // 画面遷移は上部のuseEffectが行うので、ここでは切り替わるまでの一瞬だけ何も
+  // 描画しないようにする。
+  if (category === "advanced" && leaf === "experimental" && sub === "tsunamiTestBroadcast") {
+    if (!experimentalFeaturesEnabled) return null;
+    return (
+      <>
+        <SettingsHeader title="津波警報テスト配信"/>
+        <TsunamiTestBroadcastPanel
+          testTsunami={testTsunami}
+          onBroadcast={onBroadcastTestTsunami}
+          onCancel={onCancelTestTsunami}
+          onClear={onClearTestTsunami}
+          tsunamiAreaPickActive={tsunamiAreaPickActive}
+          onStartAreaPick={onStartTsunamiAreaPick}
+          pickedAreaName={pickedTsunamiAreaName}
+        />
       </>
     );
   }
@@ -10089,7 +10249,11 @@ export default function App() {
     saveExperimentalFeaturesEnabled(next);
     // OFFに戻したら、テスト配信中のダミー津波情報も片付けておく
     // (OFFなのにテストデータだけ残り続ける事故を防ぐ)。
-    if (!next) clearTestTsunami();
+    if (!next) {
+      clearTestTsunami();
+      setTsunamiAreaPickActive(false);
+      setPickedTsunamiAreaName(null);
+    }
   }
 
   // 断層(faults.geojson)の表示ON/OFF。設定タブ「地震」内のトグルで操作し、
@@ -10193,6 +10357,23 @@ export default function App() {
   // テスト配信中は、実際の一覧の先頭にテストデータを合成する。以降、津波タブに
   // 関するApp側の判定(現在有効な津波・選択中の津波・地図表示)は、すべてこちらを使う。
   const effectiveTsunamis = testTsunami ? [testTsunami, ...tsunamis] : tsunamis;
+
+  /* ─────────────────────────────────────────────────────
+     津波警報テスト配信: 予報区名を「地図上の海岸線タップ」で選ぶモード。
+     予報区名を手入力する代わりに、地図に表示される津波予報区の海岸線を
+     直接タップして選べるようにする。ON中はBottomDock側がフローティングを
+     低くたたんで地図を見せ(BottomDockのuseEffectでtsunamiAreaPickActiveを
+     監視)、MapCanvas側は全予報区の海岸線を薄く表示してタップを受け付ける
+     (MapCanvas参照)。選択またはキャンセルでこのフラグをfalseに戻すと、
+     BottomDock側は元の高さへ自動的に戻る。
+     ───────────────────────────────────────────────────── */
+  const [tsunamiAreaPickActive, setTsunamiAreaPickActive] = useState(false);
+  const [pickedTsunamiAreaName, setPickedTsunamiAreaName] = useState(null);
+
+  function handlePickTsunamiArea(name) {
+    setPickedTsunamiAreaName(name);
+    setTsunamiAreaPickActive(false);
+  }
 
   // 津波タブ「過去」モード用。直近一覧(tsunamis)とは別に、/history APIを
   // offsetで遡りながら追加取得した過去の津波情報を保持する(地震タブの
@@ -10644,7 +10825,43 @@ export default function App() {
           pointsLoading={showQuakeMapLayers && stationPointsProcessing}
           epicenterLoading={showQuakeMapLayers && epicenterLoading}
           tsunamiAreas={tsunamiAreasForMap}
+          tsunamiAreaPickActive={tsunamiAreaPickActive}
+          onPickTsunamiArea={handlePickTsunamiArea}
+          pickedTsunamiAreaName={pickedTsunamiAreaName}
         />
+
+        {/* 津波テスト配信「地図タップで選択」中のバナー — 画面上部中央に浮かぶ。
+            指示文とキャンセルボタンだけの軽量なガラスピル。 */}
+        {tsunamiAreaPickActive && (
+          <div style={{
+            position: "absolute",
+            top: "calc(16px + env(safe-area-inset-top))",
+            left: 0, right: 0,
+            display: "flex", justifyContent: "center",
+            zIndex: 30, padding: "0 16px",
+          }}>
+            <Glass radius={999} style={{
+              display: "inline-flex", alignItems: "center", gap: 10,
+              padding: "9px 10px 9px 16px",
+              animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text }}>
+                地図の海岸線をタップして予報区を選択
+              </span>
+              <PressableButton
+                type="button"
+                onClick={() => setTsunamiAreaPickActive(false)}
+                style={{
+                  padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                  background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                  fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                }}
+              >
+                キャンセル
+              </PressableButton>
+            </Glass>
+          </div>
+        )}
 
         {/* 震度凡例 — 地震を選択している間だけ、画面右上に縦並びで浮かぶ */}
         {activeNav === "quake" && selectedQuake && (
@@ -10767,6 +10984,9 @@ export default function App() {
                   onBroadcastTestTsunami={broadcastTestTsunami}
                   onCancelTestTsunami={cancelTestTsunami}
                   onClearTestTsunami={clearTestTsunami}
+                  tsunamiAreaPickActive={tsunamiAreaPickActive}
+                  onStartTsunamiAreaPick={() => setTsunamiAreaPickActive(true)}
+                  pickedTsunamiAreaName={pickedTsunamiAreaName}
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
@@ -10831,6 +11051,9 @@ export default function App() {
               onBroadcastTestTsunami={broadcastTestTsunami}
               onCancelTestTsunami={cancelTestTsunami}
               onClearTestTsunami={clearTestTsunami}
+              tsunamiAreaPickActive={tsunamiAreaPickActive}
+              onStartTsunamiAreaPick={() => setTsunamiAreaPickActive(true)}
+              pickedTsunamiAreaName={pickedTsunamiAreaName}
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
