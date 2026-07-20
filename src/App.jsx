@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.1d";
+const APP_VERSION = "1.2.1f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5988,37 +5988,16 @@ function BottomDock({
   }
 
   // タップ(pointermove なし)は click でも拾えるようフォールバック。
-  // パネルが閉じている状態でアクティブなタブを再タップした場合は、
-  // 待たずに1回のタップで即座に開く。
-  // パネルが開いている状態で同じタブを既定時間内に2回タップした場合は
-  // ダブルタップとみなし、閉じる(誤って閉じないよう、閉じる側だけ2回タップを要求する)。
-  const lastTapTime = useRef(0);
-  const lastTapId   = useRef(null);
-  const DOUBLE_TAP_MS = 320;
-
+  // タップ回数(シングル/ダブル)の判定は、ここでは一切行わない。
+  // 1回の物理タップに対して pointerup(handleNavPointerUp)とclick(この関数)の
+  // 両方から onNav が呼ばれる点も含め、判定はすべてApp側のhandleNavTapに一本化する
+  // (SideNavRailのhandleClickと同じ考え方)。以前はここにも独自のダブルタップ判定
+  // (lastTapTime/DOUBLE_TAP_MS)を持っていたが、App側の判定(navCollapseSignal/
+  // navDoubleTapSignal、80ms/400msの窓)と別々のタイマーが同時に動くことになり、
+  // 判定窓のズレ(320ms vs 400ms)や layerOpen と snapIndex の不整合により
+  // ダブルタップが効かない・動作が不安定になる原因になっていたため撤去した。
   function handleNavClick(id) {
     if (navMoved.current) return;   // ドラッグ完了後の二重発火を防ぐ
-
-    if (id === active && !layerOpen) {
-      lastTapTime.current = 0;      // 直後の別タップを誤って連続タップ扱いしないようリセット
-      lastTapId.current   = null;
-      onLayerOpenChange(true);
-      return;                       // 1回のタップで開く
-    }
-
-    const now = Date.now();
-    const isDoubleTap =
-      lastTapId.current === id && (now - lastTapTime.current) < DOUBLE_TAP_MS;
-
-    if (isDoubleTap) {
-      lastTapTime.current = 0;       // 3連続タップ目を誤検知しないようリセット
-      lastTapId.current   = null;
-      onLayerOpenChange(!layerOpen);
-      return;                        // ダブルタップ時はナビ切替を行わない
-    }
-
-    lastTapTime.current = now;
-    lastTapId.current   = id;
 
     const idx = NAV.findIndex(n => n.id === id);
     setHighlightLeft(idx * tabW);
