@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0g";
+const APP_VERSION = "1.2.0h";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5736,7 +5736,7 @@ function BottomDock({
   }, [active]);
 
   // タブバーで、既にアクティブなタブがもう一度タップされた時(navCollapseSignalの変化で検知)、
-  // フローティングを開閉トグルする。閉じている(0)なら「中」まで開き、それ以外なら閉じる。
+  // フローティングを開閉トグルする。閉じている(0)なら「中高」まで開き、それ以外なら閉じる。
   const isFirstNavCollapseRender = useRef(true);
   useEffect(() => {
     if (isFirstNavCollapseRender.current) {
@@ -5744,7 +5744,7 @@ function BottomDock({
       return;
     }
     killScrollMomentum();
-    setSnapIndex(prev => (prev === 0 ? 1 : 0));
+    setSnapIndex(prev => (prev === 0 ? 3 : 0));
   }, [navCollapseSignal]);
 
   // 親から渡される layerOpen(真偽値)を 低(0)⇄高(4) として反映する。
