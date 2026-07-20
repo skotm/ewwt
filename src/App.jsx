@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0f";
+const APP_VERSION = "1.2.0g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5195,7 +5195,7 @@ function useSnapDrag({ heights, index, onSnap }) {
      歪な円形になるのを防ぐため)。
    ───────────────────────────────────────────────────── */
 function BottomDock({
-  active, onNav, layerOpen, layers, onToggleLayer, onLayerOpenChange,
+  active, onNav, navCollapseSignal, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
@@ -5722,6 +5722,30 @@ function BottomDock({
     Math.max(fullscreenContentHeight, highHeight),
   ];
   const [snapIndex, setSnapIndex] = useState(0);
+
+  // 別のタブに切り替えた時は、フローティングを「中高」まで開く。
+  // (同じタブを再タップした時の開閉トグルとは別物なので、prevActiveRefで
+  // 「本当にタブが変わった時だけ」を判定している)
+  const prevActiveRef = useRef(active);
+  useEffect(() => {
+    if (prevActiveRef.current !== active) {
+      killScrollMomentum();
+      setSnapIndex(3);
+    }
+    prevActiveRef.current = active;
+  }, [active]);
+
+  // タブバーで、既にアクティブなタブがもう一度タップされた時(navCollapseSignalの変化で検知)、
+  // フローティングを開閉トグルする。閉じている(0)なら「中」まで開き、それ以外なら閉じる。
+  const isFirstNavCollapseRender = useRef(true);
+  useEffect(() => {
+    if (isFirstNavCollapseRender.current) {
+      isFirstNavCollapseRender.current = false;
+      return;
+    }
+    killScrollMomentum();
+    setSnapIndex(prev => (prev === 0 ? 1 : 0));
+  }, [navCollapseSignal]);
 
   // 親から渡される layerOpen(真偽値)を 低(0)⇄高(4) として反映する。
   // ドラッグで内部的に決めたスナップを、ここで二重に上書きしないようrefで判定する。
@@ -9920,6 +9944,18 @@ function TermsConsentGate() {
    ───────────────────────────────────────────────────── */
 export default function App() {
   const [activeNav, setActiveNav] = useState("quake");
+
+  // タブバーで、既にアクティブなタブをもう一度タップした時に、フローティングを
+  // 開閉トグルさせるための信号。値そのものに意味は無く、変化すること自体を
+  // BottomDock側のuseEffectで検知してsnapIndexを切り替える。
+  const [navCollapseSignal, setNavCollapseSignal] = useState(0);
+  function handleNavTap(id) {
+    if (id === activeNav) {
+      setNavCollapseSignal(s => s + 1);
+    } else {
+      setActiveNav(id);
+    }
+  }
   const [layers,    setLayers]    = useState(LAYERS);
   const [layerOpen, setLayerOpen] = useState(false);
   const [map,       setMap]       = useState(null);
@@ -10635,12 +10671,13 @@ export default function App() {
                 <Glass radius={28} style={{ height: "100%" }}>
                   <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
                     <div style={{ width: WIDE_RAIL_WIDTH, flexShrink: 0, position: "relative" }}>
-                      <SideNavRail active={activeNav} onNav={setActiveNav} uiScale={wideUIScale}/>
+                      <SideNavRail active={activeNav} onNav={handleNavTap} uiScale={wideUIScale}/>
                     </div>
                     <div style={{ width: 1, alignSelf: "stretch", background: `rgba(${tokens.ink},0.14)` }}/>
                     <BottomDock
                       active={activeNav}
-                      onNav={setActiveNav}
+                      onNav={handleNavTap}
+                      navCollapseSignal={navCollapseSignal}
                       layerOpen={layerOpen}
                       layers={layersForPanel}
                       onToggleLayer={toggleLayer}
@@ -10703,7 +10740,8 @@ export default function App() {
           ) : (
             <BottomDock
               active={activeNav}
-              onNav={setActiveNav}
+              onNav={handleNavTap}
+              navCollapseSignal={navCollapseSignal}
               layerOpen={layerOpen}
               layers={layersForPanel}
               onToggleLayer={toggleLayer}
