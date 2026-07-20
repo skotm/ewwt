@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.1b";
+const APP_VERSION = "1.2.1c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -9983,16 +9983,13 @@ export default function App() {
   // なっている(ドラッグでタブを選べるようにするための設計)。そのため、まず
   // 「ごく短時間(80ms未満)内の連続呼び出し」を同一タップ由来の二重発火として無視し、
   // 残った「論理的な1タップ」だけを数える。
-  // その上で、論理的な1タップ目から一定時間内に2タップ目が来たら「本物のダブルタップ」
-  // と判定し、フローティングを一気に「高」まで開く(navDoubleTapSignal)。
-  // 来なければ(タイマー満了)、通常の開閉トグル(navCollapseSignal)を実行する。
-  const navTapStateRef = useRef({ rawTime: 0, pendingTimer: null });
+  // 通常のタップ操作(開閉トグル)は待たせず即座に実行する。その代わり、フローティングの
+  // 開閉アニメーション中(0.4秒。BottomDockのheightトランジションと同じ長さ)にもう一度
+  // タップされた場合だけ、それを「動作の途中のタップ」とみなして「高」まで一気に開く。
+  const NAV_TRANSITION_MS = 400;
+  const navTapStateRef = useRef({ rawTime: 0, logicalTapTime: 0 });
   function handleNavTap(id) {
     if (id !== activeNav) {
-      if (navTapStateRef.current.pendingTimer) {
-        clearTimeout(navTapStateRef.current.pendingTimer);
-        navTapStateRef.current.pendingTimer = null;
-      }
       setActiveNav(id);
       return;
     }
@@ -10003,18 +10000,15 @@ export default function App() {
     }
     navTapStateRef.current.rawTime = now;
 
-    if (navTapStateRef.current.pendingTimer) {
-      // 待ち受け中に2回目の論理タップが来た → ダブルタップ確定
-      clearTimeout(navTapStateRef.current.pendingTimer);
-      navTapStateRef.current.pendingTimer = null;
+    const sinceLastLogicalTap = now - navTapStateRef.current.logicalTapTime;
+    if (navTapStateRef.current.logicalTapTime && sinceLastLogicalTap < NAV_TRANSITION_MS) {
+      // 直前の開閉トグルがまだアニメーション中 → 「高」まで一気に開く
+      navTapStateRef.current.logicalTapTime = 0;
       setNavDoubleTapSignal(s => s + 1);
-    } else {
-      // 1回目。ダブルタップが来るかどうかをタイマーで待つ
-      navTapStateRef.current.pendingTimer = setTimeout(() => {
-        navTapStateRef.current.pendingTimer = null;
-        setNavCollapseSignal(s => s + 1);
-      }, 280);
+      return;
     }
+    navTapStateRef.current.logicalTapTime = now;
+    setNavCollapseSignal(s => s + 1);
   }
   const [layers,    setLayers]    = useState(LAYERS);
   const [layerOpen, setLayerOpen] = useState(false);
