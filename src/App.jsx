@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0h";
+const APP_VERSION = "1.2.1";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5723,6 +5723,11 @@ function BottomDock({
   ];
   const [snapIndex, setSnapIndex] = useState(0);
 
+  // 「今、自分(タブタップの開閉トグル)が開いた状態にしているか」を表すref。
+  // タブ切り替えで開いた場合もここを立てておくことで、直後の同じタブの再タップで
+  // 正しく閉じられるようにする(現在のsnapIndexの読み取りには依存しない)。
+  const openedByTapRef = useRef(false);
+
   // 別のタブに切り替えた時は、フローティングを「中高」まで開く。
   // (同じタブを再タップした時の開閉トグルとは別物なので、prevActiveRefで
   // 「本当にタブが変わった時だけ」を判定している)
@@ -5731,12 +5736,14 @@ function BottomDock({
     if (prevActiveRef.current !== active) {
       killScrollMomentum();
       setSnapIndex(3);
+      openedByTapRef.current = true;
     }
     prevActiveRef.current = active;
   }, [active]);
 
   // タブバーで、既にアクティブなタブがもう一度タップされた時(navCollapseSignalの変化で検知)、
-  // フローティングを開閉トグルする。閉じている(0)なら「中高」まで開き、それ以外なら閉じる。
+  // フローティングを開閉トグルする。前回タップ(またはタブ切り替え)で自分が開いたかどうかを
+  // refで直接管理し、現在のsnapIndexの読み取り(ドラッグ操作等の影響を受けうる)には依存しないようにする。
   const isFirstNavCollapseRender = useRef(true);
   useEffect(() => {
     if (isFirstNavCollapseRender.current) {
@@ -5744,7 +5751,13 @@ function BottomDock({
       return;
     }
     killScrollMomentum();
-    setSnapIndex(prev => (prev === 0 ? 3 : 0));
+    if (openedByTapRef.current) {
+      openedByTapRef.current = false;
+      setSnapIndex(0);
+    } else {
+      openedByTapRef.current = true;
+      setSnapIndex(3);
+    }
   }, [navCollapseSignal]);
 
   // 親から渡される layerOpen(真偽値)を 低(0)⇄高(4) として反映する。
