@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.2a";
+const APP_VERSION = "1.2.2b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -712,7 +712,7 @@ function MapCanvas({
   tsunamiAreas = [],
   stationMarkersVisible = true,
   tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
-  tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreaNames = [], pickedTsunamiAreaGrade = "Warning",
+  tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -1327,17 +1327,16 @@ function MapCanvas({
     }
   }, [tsunamiAreas, tsunamiAreaPickActive, status]);
 
-  // ピックモードで選ばれている予報区(pickedTsunamiAreaNames、複数可)を、選択中の
-  // テストグレードの実際の配色で強調レイヤーに反映する。buildTsunamiAreaColorExprは
+  // ピックモードで選ばれている予報区(pickedTsunamiAreas、複数・グレード別可)を、
+  // それぞれの実際の配色で強調レイヤーに反映する。buildTsunamiAreaColorExprは
   // 「(name, grade)の配列→match式」を作る関数で、実際の津波警報表示と全く同じロジックを
   // 使うことで、選択中の色と本番配信時の色が必ず一致するようにしている。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     if (!map.getLayer("tsunami-areas-pick-highlight-layer")) return;
-    const areas = pickedTsunamiAreaNames.map(name => ({ name, grade: pickedTsunamiAreaGrade }));
-    map.setPaintProperty("tsunami-areas-pick-highlight-layer", "line-color", buildTsunamiAreaColorExpr(areas));
-  }, [pickedTsunamiAreaNames, pickedTsunamiAreaGrade, status]);
+    map.setPaintProperty("tsunami-areas-pick-highlight-layer", "line-color", buildTsunamiAreaColorExpr(pickedTsunamiAreas));
+  }, [pickedTsunamiAreas, status]);
 
   // 選択中の地震(hypocenters)が変わるたびに、震源のバツ印マーカーを更新し、
   // 震源(複数の場合は全件)+周辺の観測点がちょうど収まる範囲へズームする。
@@ -5297,8 +5296,8 @@ function BottomDock({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
-  tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreaNames,
-  onRemoveTsunamiAreaPick, testBroadcastGrade, onChangeTestBroadcastGrade,
+  tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
+  onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
   onEpicenterLoadingChange,
@@ -6579,10 +6578,9 @@ function BottomDock({
                   onClearTestTsunami={onClearTestTsunami}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={onStartTsunamiAreaPick}
-                  pickedTsunamiAreaNames={pickedTsunamiAreaNames}
+                  pickedTsunamiAreas={pickedTsunamiAreas}
                   onRemoveTsunamiAreaPick={onRemoveTsunamiAreaPick}
-                  testBroadcastGrade={testBroadcastGrade}
-                  onChangeTestBroadcastGrade={onChangeTestBroadcastGrade}
+                  onCycleTsunamiAreaGrade={onCycleTsunamiAreaGrade}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -8851,11 +8849,9 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
 
 function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
-  tsunamiAreaPickActive, onStartAreaPick, pickedAreaNames = [], onRemoveAreaPick,
-  grade, onChangeGrade,
+  tsunamiAreaPickActive, onStartAreaPick, pickedAreas = [], onRemoveAreaPick, onCycleAreaGrade,
 }) {
   const { tokens } = useContext(ThemeContext);
-  const gradeColor = tsunamiGradeInfo(grade).color;
 
   return (
     <>
@@ -8866,42 +8862,48 @@ function TsunamiTestBroadcastPanel({
 
       <SettingsCard>
         <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
-          グレード
+          予報区とグレード(複数選択可・予報区ごとに別グレードも可)
         </div>
         <div style={{ padding: "0 14px 12px" }}>
-          <OptionPicker value={grade} options={TEST_TSUNAMI_GRADE_OPTIONS} onChange={onChangeGrade}/>
-        </div>
-        <SettingsCardDivider/>
-        <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
-          予報区(複数選択可)
-        </div>
-        <div style={{ padding: "0 14px 12px" }}>
-          {pickedAreaNames.length > 0 ? (
+          {pickedAreas.length > 0 ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-              {pickedAreaNames.map(name => (
-                <div key={name} style={{
-                  display: "inline-flex", alignItems: "center", gap: 6,
-                  padding: "6px 6px 6px 12px", borderRadius: 999,
-                  background: `${gradeColor}26`, // 選択中グレードの色を薄く敷いて、配信時の色を予感させる
-                }}>
-                  <span style={{
-                    width: 8, height: 8, borderRadius: 999, background: gradeColor, flexShrink: 0,
-                  }}/>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text }}>{name}</span>
-                  <PressableButton
-                    type="button"
-                    onClick={() => onRemoveAreaPick?.(name)}
-                    aria-label={`${name}を選択解除`}
-                    style={{
-                      width: 20, height: 20, borderRadius: 999, border: "none", cursor: "pointer",
-                      background: `rgba(${tokens.ink},0.1)`, display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 12, fontWeight: 700, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1,
-                    }}
-                  >
-                    ×
-                  </PressableButton>
-                </div>
-              ))}
+              {pickedAreas.map(({ name, grade }) => {
+                const color = tsunamiGradeInfo(grade).color;
+                return (
+                  <div key={name} style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "6px 6px 6px 6px", borderRadius: 999,
+                    background: `${color}26`, // 選択中グレードの色を薄く敷いて、配信時の色を予感させる
+                  }}>
+                    <PressableButton
+                      type="button"
+                      onClick={() => onCycleAreaGrade?.(name)}
+                      aria-label={`${name}のグレードを変更(現在: ${tsunamiGradeInfo(grade).label})`}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6,
+                        padding: "3px 8px 3px 10px", borderRadius: 999, border: "none", cursor: "pointer",
+                        background: "transparent",
+                      }}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }}/>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: tokens.text }}>{name}</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, color }}>{tsunamiGradeInfo(grade).label}</span>
+                    </PressableButton>
+                    <PressableButton
+                      type="button"
+                      onClick={() => onRemoveAreaPick?.(name)}
+                      aria-label={`${name}を選択解除`}
+                      style={{
+                        width: 20, height: 20, borderRadius: 999, border: "none", cursor: "pointer",
+                        background: `rgba(${tokens.ink},0.1)`, display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 12, fontWeight: 700, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1, flexShrink: 0,
+                      }}
+                    >
+                      ×
+                    </PressableButton>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)`, marginBottom: 10 }}>
@@ -8922,15 +8924,15 @@ function TsunamiTestBroadcastPanel({
           </PressableButton>
         </div>
         <div style={{ margin: "-6px 14px 12px", fontSize: 11, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.6 }}>
-          「地図で選択」を押すと地図が全画面に表示されます。対象にしたい予報区の海岸線をタップして選択・
-          もう一度タップして解除できます。複数選べたら「完了」を押してください。
+          「地図で選択」を押すと地図が全画面に表示され、パレットで選んだグレードを海岸線タップで割り当てられます。
+          選択済みの予報区名をタップすると、地図に戻らずグレードだけ変更できます。
         </div>
       </SettingsCard>
 
       <SettingsCard>
         <PressableButton
           type="button"
-          onClick={() => onBroadcast?.({ grade, areaNames: pickedAreaNames })}
+          onClick={() => onBroadcast?.({ areas: pickedAreas })}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
             background: "transparent", textAlign: "center",
@@ -9482,8 +9484,8 @@ function SettingsBody({
   stationListDisplayMode, onChangeStationListDisplayMode,
   experimentalFeaturesEnabled, onChangeExperimentalFeaturesEnabled,
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
-  tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreaNames,
-  onRemoveTsunamiAreaPick, testBroadcastGrade, onChangeTestBroadcastGrade,
+  tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
+  onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
 }) {
   // 「フローティングを不透明にする」トグル用。BottomDock経由でpropsを何段も
   // 通す代わりに、Appのトップレベルで配信しているcontextを直接購読する。
@@ -9762,10 +9764,9 @@ function SettingsBody({
           onClear={onClearTestTsunami}
           tsunamiAreaPickActive={tsunamiAreaPickActive}
           onStartAreaPick={onStartTsunamiAreaPick}
-          pickedAreaNames={pickedTsunamiAreaNames}
+          pickedAreas={pickedTsunamiAreas}
           onRemoveAreaPick={onRemoveTsunamiAreaPick}
-          grade={testBroadcastGrade}
-          onChangeGrade={onChangeTestBroadcastGrade}
+          onCycleAreaGrade={onCycleTsunamiAreaGrade}
         />
       </>
     );
@@ -10284,7 +10285,7 @@ export default function App() {
     if (!next) {
       clearTestTsunami();
       setTsunamiAreaPickActive(false);
-      setPickedTsunamiAreaNames([]);
+      setPickedTsunamiAreas([]);
     }
   }
 
@@ -10363,23 +10364,28 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const [testTsunami, setTestTsunami] = useState(null); // { ...tsunamiカード, isTest: true } | null
 
-  function broadcastTestTsunami({ grade, areaNames }) {
+  function broadcastTestTsunami({ areas }) {
     const now = new Date();
     const pad2 = n => String(n).padStart(2, "0");
     const timeStr = `${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
-    const names = (areaNames && areaNames.length > 0) ? areaNames : ["テスト予報区"];
+    const list = (areas && areas.length > 0) ? areas : [{ name: "テスト予報区", grade: "Warning" }];
+    // 実際の津波情報(toTsunamiCard)と同じ考え方で、選んだ予報区の中で最も危険度が
+    // 高いgradeを代表(maxGrade)として使う。予報区ごとに異なるグレードを選べるため。
+    let maxGrade = null;
+    let maxWeight = -1;
+    list.forEach(a => {
+      const w = tsunamiGradeInfo(a.grade).weight;
+      if (w > maxWeight) { maxWeight = w; maxGrade = a.grade; }
+    });
     setTestTsunami({
       id: `test_${now.getTime()}`,
       time: timeStr,
       cancelled: false,
-      // 複数の予報区を選んでいた場合、この配信ではすべて同じgradeとして扱う
-      // (テストツールとしての単純さを優先。予報区ごとに別gradeを設定したい場合は
-      // 複数回に分けて配信すること)。
-      areas: names.map(name => ({
-        name, grade,
+      areas: list.map(a => ({
+        name: a.name, grade: a.grade,
         immediate: false, firstHeightCondition: null, firstHeightTime: null, maxHeightDescription: null,
       })),
-      maxGrade: grade,
+      maxGrade,
       isTest: true,
     });
   }
@@ -10395,42 +10401,63 @@ export default function App() {
   const effectiveTsunamis = testTsunami ? [testTsunami, ...tsunamis] : tsunamis;
 
   /* ─────────────────────────────────────────────────────
-     津波警報テスト配信: 予報区を「地図上の海岸線タップ」で選ぶモード(複数選択可)。
+     津波警報テスト配信: 予報区を「地図上の海岸線タップ」で選ぶモード(複数選択・
+     予報区ごとに異なるグレードの割り当てが可能)。
      予報区名を手入力する代わりに、地図に表示される津波予報区の海岸線を
-     直接タップして選べるようにする。同じ予報区を再度タップすると選択解除される
-     (トグル式)ので、何度でもタップし直せる。ON中はBottomDock側がフローティングを
-     低くたたんで地図を見せ(BottomDockのuseEffectでtsunamiAreaPickActiveを監視)、
-     MapCanvas側は全予報区の海岸線を薄く表示してタップを受け付け、選択済みの予報区は
-     実際の津波警報と同じグレード配色で強調表示する(MapCanvas参照)。
+     直接タップして選べるようにする。ピックモード中は「今どのグレードで塗るか」を
+     activePickGradeで管理し(バナーのパレットで切り替え)、タップした瞬間の
+     activePickGradeがその予報区に割り当てられる。
+       ・未選択の予報区をタップ → activePickGradeで新規追加
+       ・すでにactivePickGradeと同じグレードで選択済みの予報区をタップ → 選択解除
+       ・すでに別のグレードで選択済みの予報区をタップ → activePickGradeに塗り替え
+     ON中はBottomDock側がフローティングを低くたたんで地図を見せ(BottomDockの
+     useEffectでtsunamiAreaPickActiveを監視)、MapCanvas側は全予報区の海岸線を薄く
+     表示してタップを受け付け、選択済みの予報区は各自のグレードに応じた実際の
+     津波警報と同じ配色で強調表示する(MapCanvas参照。buildTsunamiAreaColorExprを
+     そのまま再利用)。
      1回のタップごとに閉じるのではなく、「完了」で確定・「キャンセル」でピック開始時点の
      選択に戻す、という明示的な操作でモードを終える。
      ───────────────────────────────────────────────────── */
   const [tsunamiAreaPickActive, setTsunamiAreaPickActive] = useState(false);
-  const [pickedTsunamiAreaNames, setPickedTsunamiAreaNames] = useState([]);
-  const [testBroadcastGrade, setTestBroadcastGrade] = useState("Warning");
-  const pickedTsunamiAreaNamesSnapshotRef = useRef([]); // キャンセル時に戻す先
+  const [pickedTsunamiAreas, setPickedTsunamiAreas] = useState([]); // [{ name, grade }]
+  const [activePickGrade, setActivePickGrade] = useState("Warning"); // 今タップしたら何グレードで塗るか
+  const pickedTsunamiAreasSnapshotRef = useRef([]); // キャンセル時に戻す先
 
   function startTsunamiAreaPick() {
-    pickedTsunamiAreaNamesSnapshotRef.current = pickedTsunamiAreaNames;
+    pickedTsunamiAreasSnapshotRef.current = pickedTsunamiAreas;
     setTsunamiAreaPickActive(true);
   }
   function finishTsunamiAreaPick() {
     setTsunamiAreaPickActive(false);
   }
   function cancelTsunamiAreaPick() {
-    setPickedTsunamiAreaNames(pickedTsunamiAreaNamesSnapshotRef.current);
+    setPickedTsunamiAreas(pickedTsunamiAreasSnapshotRef.current);
     setTsunamiAreaPickActive(false);
   }
   function handlePickTsunamiArea(name) {
-    // 同じ予報区をもう一度タップしたら選択解除(トグル)。それ以外は選択に追加する。
-    setPickedTsunamiAreaNames(prev =>
-      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
-    );
+    setPickedTsunamiAreas(prev => {
+      const idx = prev.findIndex(a => a.name === name);
+      if (idx === -1) return [...prev, { name, grade: activePickGrade }]; // 新規選択
+      if (prev[idx].grade === activePickGrade) return prev.filter(a => a.name !== name); // 同じグレードの再タップ→解除
+      const next = [...prev]; // 別グレードでの再タップ→塗り替え
+      next[idx] = { name, grade: activePickGrade };
+      return next;
+    });
   }
   // テスト配信パネル側の一覧チップの×ボタンから、地図タップ(ピックモード)を
   // 経由せずに直接1件だけ選択解除する。
   function removeTsunamiAreaPick(name) {
-    setPickedTsunamiAreaNames(prev => prev.filter(n => n !== name));
+    setPickedTsunamiAreas(prev => prev.filter(a => a.name !== name));
+  }
+  // パネルの一覧チップから、地図に戻らず直接そのグレードを変更する
+  // (TEST_TSUNAMI_GRADE_OPTIONSの並び順で次のグレードへ巡回)。
+  function cycleTsunamiAreaGrade(name) {
+    const order = TEST_TSUNAMI_GRADE_OPTIONS.map(o => o.value);
+    setPickedTsunamiAreas(prev => prev.map(a => {
+      if (a.name !== name) return a;
+      const next = order[(order.indexOf(a.grade) + 1) % order.length];
+      return { ...a, grade: next };
+    }));
   }
 
   // 津波タブ「過去」モード用。直近一覧(tsunamis)とは別に、/history APIを
@@ -10885,12 +10912,13 @@ export default function App() {
           tsunamiAreas={tsunamiAreasForMap}
           tsunamiAreaPickActive={tsunamiAreaPickActive}
           onPickTsunamiArea={handlePickTsunamiArea}
-          pickedTsunamiAreaNames={pickedTsunamiAreaNames}
-          pickedTsunamiAreaGrade={testBroadcastGrade}
+          pickedTsunamiAreas={pickedTsunamiAreas}
         />
 
         {/* 津波テスト配信「地図タップで選択」中のバナー — 画面上部中央に浮かぶ。
-            指示文・現在の選択件数・キャンセル/完了ボタンを載せた軽量なガラスピル。
+            上段: 指示文・選択件数・キャンセル/完了ボタン。
+            下段: 「今タップしたらどのグレードで塗るか」を選ぶパレット。予報区ごとに
+            違うグレードを割り当てたいので、パレットで切り替えてからタップする方式。
             複数の予報区を選べるようにするため、1回タップしただけではモードを終えず、
             「完了」を押すまで何度でもタップし直せる。「キャンセル」はピック開始時点の
             選択に戻す。 */}
@@ -10902,37 +10930,66 @@ export default function App() {
             display: "flex", justifyContent: "center",
             zIndex: 30, padding: "0 16px",
           }}>
-            <Glass radius={999} style={{
-              display: "inline-flex", alignItems: "center", gap: 10,
-              padding: "9px 10px 9px 16px",
+            <Glass radius={22} style={{
+              display: "flex", flexDirection: "column", gap: 8,
+              padding: "10px 12px",
               animation: "appear 0.3s cubic-bezier(.25,1,.5,1)",
             }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text }}>
-                海岸線をタップして予報区を選択
-                {pickedTsunamiAreaNames.length > 0 && `(${pickedTsunamiAreaNames.length}件選択中)`}
-              </span>
-              <PressableButton
-                type="button"
-                onClick={cancelTsunamiAreaPick}
-                style={{
-                  padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
-                  background: `rgba(${themeContextValue.tokens.ink},0.08)`,
-                  fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
-                }}
-              >
-                キャンセル
-              </PressableButton>
-              <PressableButton
-                type="button"
-                onClick={finishTsunamiAreaPick}
-                style={{
-                  padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
-                  background: "#0A84FF",
-                  fontSize: 12, fontWeight: 700, color: "#fff",
-                }}
-              >
-                完了
-              </PressableButton>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text, flex: 1 }}>
+                  海岸線をタップして予報区を選択
+                  {pickedTsunamiAreas.length > 0 && `(${pickedTsunamiAreas.length}件選択中)`}
+                </span>
+                <PressableButton
+                  type="button"
+                  onClick={cancelTsunamiAreaPick}
+                  style={{
+                    flexShrink: 0, padding: "6px 12px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: `rgba(${themeContextValue.tokens.ink},0.08)`,
+                    fontSize: 12, fontWeight: 700, color: themeContextValue.tokens.textSecondary,
+                  }}
+                >
+                  キャンセル
+                </PressableButton>
+                <PressableButton
+                  type="button"
+                  onClick={finishTsunamiAreaPick}
+                  style={{
+                    flexShrink: 0, padding: "6px 14px", borderRadius: 999, border: "none", cursor: "pointer",
+                    background: "#0A84FF",
+                    fontSize: 12, fontWeight: 700, color: "#fff",
+                  }}
+                >
+                  完了
+                </PressableButton>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 11, color: themeContextValue.tokens.textSecondary, flexShrink: 0 }}>
+                  塗るグレード:
+                </span>
+                {TEST_TSUNAMI_GRADE_OPTIONS.map(opt => {
+                  const active = activePickGrade === opt.value;
+                  const color = tsunamiGradeInfo(opt.value).color;
+                  return (
+                    <PressableButton
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setActivePickGrade(opt.value)}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        padding: "5px 10px 5px 8px", borderRadius: 999, cursor: "pointer",
+                        border: active ? `1.5px solid ${color}` : "1.5px solid transparent",
+                        background: active ? `${color}26` : `rgba(${themeContextValue.tokens.ink},0.05)`,
+                        fontSize: 11, fontWeight: 700,
+                        color: active ? themeContextValue.tokens.text : themeContextValue.tokens.textSecondary,
+                      }}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }}/>
+                      {opt.label}
+                    </PressableButton>
+                  );
+                })}
+              </div>
             </Glass>
           </div>
         )}
@@ -11060,10 +11117,9 @@ export default function App() {
                   onClearTestTsunami={clearTestTsunami}
                   tsunamiAreaPickActive={tsunamiAreaPickActive}
                   onStartTsunamiAreaPick={startTsunamiAreaPick}
-                  pickedTsunamiAreaNames={pickedTsunamiAreaNames}
+                  pickedTsunamiAreas={pickedTsunamiAreas}
                   onRemoveTsunamiAreaPick={removeTsunamiAreaPick}
-                  testBroadcastGrade={testBroadcastGrade}
-                  onChangeTestBroadcastGrade={setTestBroadcastGrade}
+                  onCycleTsunamiAreaGrade={cycleTsunamiAreaGrade}
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
@@ -11130,10 +11186,9 @@ export default function App() {
               onClearTestTsunami={clearTestTsunami}
               tsunamiAreaPickActive={tsunamiAreaPickActive}
               onStartTsunamiAreaPick={startTsunamiAreaPick}
-              pickedTsunamiAreaNames={pickedTsunamiAreaNames}
+              pickedTsunamiAreas={pickedTsunamiAreas}
               onRemoveTsunamiAreaPick={removeTsunamiAreaPick}
-              testBroadcastGrade={testBroadcastGrade}
-              onChangeTestBroadcastGrade={setTestBroadcastGrade}
+              onCycleTsunamiAreaGrade={cycleTsunamiAreaGrade}
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
