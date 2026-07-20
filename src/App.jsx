@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.2.0b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -9962,8 +9962,21 @@ export default function App() {
   // 開閉トグルさせるための信号。値そのものに意味は無く、変化すること自体を
   // BottomDock側のuseEffectで検知してsnapIndexを切り替える。
   const [navCollapseSignal, setNavCollapseSignal] = useState(0);
+  // SideNavRail・狭幅ナビはどちらも、1回のタップに対してhandlePointerUp(ドラッグ解放時)と
+  // handleClick(単純クリック時)の両方からonNavを呼ぶ作りになっている
+  // (ドラッグでタブを選べるようにするための設計)。onNavが単なるsetActiveNavだった頃は
+  // 同じidで2回呼ばれても実害が無かったが、同じタブの再タップに開閉トグルの副作用を
+  // 持たせた今は、1タップにつき2回トグルが走って「開いて即閉じる」=見た目上何も
+  // 変わらない、という不具合になっていた。同じid・短時間内の連続呼び出しは
+  // 2回目以降を無視することで、1タップ=1トグルに固定する。
+  const lastNavTapRef = useRef({ id: null, time: 0 });
   function handleNavTap(id) {
     if (id === activeNav) {
+      const now = Date.now();
+      if (lastNavTapRef.current.id === id && now - lastNavTapRef.current.time < 400) {
+        return;
+      }
+      lastNavTapRef.current = { id, time: now };
       setNavCollapseSignal(s => s + 1);
     } else {
       setActiveNav(id);
