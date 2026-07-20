@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.0b";
+const APP_VERSION = "1.2.1b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5195,7 +5195,7 @@ function useSnapDrag({ heights, index, onSnap }) {
      歪な円形になるのを防ぐため)。
    ───────────────────────────────────────────────────── */
 function BottomDock({
-  active, onNav, navCollapseSignal, layerOpen, layers, onToggleLayer, onLayerOpenChange,
+  active, onNav, navCollapseSignal, navDoubleTapSignal, layerOpen, layers, onToggleLayer, onLayerOpenChange,
   quakes, quakeStatus, selectedQuakeId, onSelectQuake, stationPoints = [],
   tsunamis = [], tsunamiStatus = "loading", selectedTsunamiId, onSelectTsunami,
   tsunamiHistory, onLoadMoreTsunamiHistory, onCausingQuakeChange,
@@ -5759,6 +5759,19 @@ function BottomDock({
       setSnapIndex(3);
     }
   }, [navCollapseSignal]);
+
+  // タブバーで、既にアクティブなタブをダブルタップした時、フローティングを一気に
+  // 「高」(中高のひとつ上)まで開く。
+  const isFirstNavDoubleTapRender = useRef(true);
+  useEffect(() => {
+    if (isFirstNavDoubleTapRender.current) {
+      isFirstNavDoubleTapRender.current = false;
+      return;
+    }
+    killScrollMomentum();
+    openedByTapRef.current = true;
+    setSnapIndex(4);
+  }, [navDoubleTapSignal]);
 
   // 親から渡される layerOpen(真偽値)を 低(0)⇄高(4) として反映する。
   // ドラッグで内部的に決めたスナップを、ここで二重に上書きしないようrefで判定する。
@@ -9962,24 +9975,45 @@ export default function App() {
   // 開閉トグルさせるための信号。値そのものに意味は無く、変化すること自体を
   // BottomDock側のuseEffectで検知してsnapIndexを切り替える。
   const [navCollapseSignal, setNavCollapseSignal] = useState(0);
-  // SideNavRail・狭幅ナビはどちらも、1回のタップに対してhandlePointerUp(ドラッグ解放時)と
-  // handleClick(単純クリック時)の両方からonNavを呼ぶ作りになっている
-  // (ドラッグでタブを選べるようにするための設計)。onNavが単なるsetActiveNavだった頃は
-  // 同じidで2回呼ばれても実害が無かったが、同じタブの再タップに開閉トグルの副作用を
-  // 持たせた今は、1タップにつき2回トグルが走って「開いて即閉じる」=見た目上何も
-  // 変わらない、という不具合になっていた。同じid・短時間内の連続呼び出しは
-  // 2回目以降を無視することで、1タップ=1トグルに固定する。
-  const lastNavTapRef = useRef({ id: null, time: 0 });
+  // 既にアクティブなタブをダブルタップした時に、フローティングを「高」まで一気に
+  // 開かせるための信号。navCollapseSignalと同様、値の変化自体をBottomDock側で検知する。
+  const [navDoubleTapSignal, setNavDoubleTapSignal] = useState(0);
+  // SideNavRail・狭幅ナビはどちらも、1回の物理的なタップに対してhandlePointerUp
+  // (ポインタを離した時)とhandleClick(単純クリック時)の両方からonNavを呼ぶ作りに
+  // なっている(ドラッグでタブを選べるようにするための設計)。そのため、まず
+  // 「ごく短時間(80ms未満)内の連続呼び出し」を同一タップ由来の二重発火として無視し、
+  // 残った「論理的な1タップ」だけを数える。
+  // その上で、論理的な1タップ目から一定時間内に2タップ目が来たら「本物のダブルタップ」
+  // と判定し、フローティングを一気に「高」まで開く(navDoubleTapSignal)。
+  // 来なければ(タイマー満了)、通常の開閉トグル(navCollapseSignal)を実行する。
+  const navTapStateRef = useRef({ rawTime: 0, pendingTimer: null });
   function handleNavTap(id) {
-    if (id === activeNav) {
-      const now = Date.now();
-      if (lastNavTapRef.current.id === id && now - lastNavTapRef.current.time < 400) {
-        return;
+    if (id !== activeNav) {
+      if (navTapStateRef.current.pendingTimer) {
+        clearTimeout(navTapStateRef.current.pendingTimer);
+        navTapStateRef.current.pendingTimer = null;
       }
-      lastNavTapRef.current = { id, time: now };
-      setNavCollapseSignal(s => s + 1);
-    } else {
       setActiveNav(id);
+      return;
+    }
+    const now = Date.now();
+    if (now - navTapStateRef.current.rawTime < 80) {
+      navTapStateRef.current.rawTime = now;
+      return;
+    }
+    navTapStateRef.current.rawTime = now;
+
+    if (navTapStateRef.current.pendingTimer) {
+      // 待ち受け中に2回目の論理タップが来た → ダブルタップ確定
+      clearTimeout(navTapStateRef.current.pendingTimer);
+      navTapStateRef.current.pendingTimer = null;
+      setNavDoubleTapSignal(s => s + 1);
+    } else {
+      // 1回目。ダブルタップが来るかどうかをタイマーで待つ
+      navTapStateRef.current.pendingTimer = setTimeout(() => {
+        navTapStateRef.current.pendingTimer = null;
+        setNavCollapseSignal(s => s + 1);
+      }, 280);
     }
   }
   const [layers,    setLayers]    = useState(LAYERS);
@@ -10704,6 +10738,7 @@ export default function App() {
                       active={activeNav}
                       onNav={handleNavTap}
                       navCollapseSignal={navCollapseSignal}
+                      navDoubleTapSignal={navDoubleTapSignal}
                       layerOpen={layerOpen}
                       layers={layersForPanel}
                       onToggleLayer={toggleLayer}
@@ -10768,6 +10803,7 @@ export default function App() {
               active={activeNav}
               onNav={handleNavTap}
               navCollapseSignal={navCollapseSignal}
+              navDoubleTapSignal={navDoubleTapSignal}
               layerOpen={layerOpen}
               layers={layersForPanel}
               onToggleLayer={toggleLayer}
