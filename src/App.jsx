@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.2e";
+const APP_VERSION = "1.2.2f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -5909,7 +5909,7 @@ function BottomDock({
   useEffect(() => {
     if (tideStationSelectSignal !== lastTideStationSelectSignal.current) {
       lastTideStationSelectSignal.current = tideStationSelectSignal;
-      setSnapIndex(1); // 丸タップでの地震選択と同じく「中」の高さに揃える
+      setSnapIndex(4); // 潮位の詳細がしっかり見えるよう「高」の高さに揃える
     }
   }, [tideStationSelectSignal]);
 
