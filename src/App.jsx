@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.2b";
+const APP_VERSION = "1.2.2";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1065,7 +1065,8 @@ function MapCanvas({
             },
           });
 
-          // 潮位観測点のピン。津波タブの「潮位計」モードでだけデータが入る
+          // 潮位観測点のピン。津波タブの「潮位計」モード、または現在進行形の津波情報が
+          // ある間(発令中の予報区の観測点のみ)にデータが入る
           // (tideStationPointsが空の間は何も描かれない)。
           map.addSource("tide-station-points", {
             type: "geojson",
@@ -1577,8 +1578,8 @@ function MapCanvas({
     source.setData({ type: "FeatureCollection", features });
   }, [epicenterPoints, status]);
 
-  // 潮位観測点ピンの更新。tideStationPointsが空の間(潮位計モードでない間)は
-  // 何も表示されない。選択中の地点は"selected"プロパティを立てて、レイヤー側の
+  // 潮位観測点ピンの更新。tideStationPointsが空の間(潮位計モードでもなく、有効な
+  // 津波情報も無い間)は何も表示されない。選択中の地点は"selected"プロパティを立てて、レイヤー側の
   // data-drivenなpaint式で強調表示させるのに加え、配列の最後に置くことで
   // (MapLibreは描画順=配列順のため)他のピンより必ず前面に来るようにする。
   useEffect(() => {
@@ -5285,6 +5286,7 @@ function BottomDock({
   tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
   selectedTideStationCode, onSelectTideStation, tideObsByStation = {}, onLoadTideObs,
   stationMarkersVisible = true, onToggleStationMarkersVisible,
+  tideStationMarkersVisible = true, onToggleTideStationMarkersVisible,
   onChangeQuakeColorScheme,
   estIntensityEnabled, onChangeEstIntensityEnabled,
   areaFillEnabled, onChangeAreaFillEnabled,
@@ -5474,6 +5476,14 @@ function BottomDock({
   // 観測点表示切替ボタンは、「引き起こした地震」が実際に見つかった時だけ出す
   // (読み込み中・見つからなかった時・エラー時は観測点自体が無いので出さない)。
   const causingQuakeFound = showingCausingQuakeFor != null && causingQuakeState[showingCausingQuakeFor]?.status === "done";
+
+  // 現在進行形で有効な(解除されていない)津波情報。App側の同名の計算(地図の
+  // 予報区塗り分け用)と同じ考え方で、ここでは「潮位観測点オンオフボタン」を
+  // 出すかどうかの判定にだけ使う。
+  const activeTsunami = tsunamis.find(t => !t.cancelled) || null;
+  // 潮位観測点の自動表示は、有効な津波情報がある間・かつ「引き起こした地震」を
+  // 見ていない間だけ提供する(引き起こした地震を見ている間は、その地震の震度観測点
+  // 用に同じボタン枠を使っているため)。
 
   async function handleFindCausingQuake(tsunamiCard) {
     const id = tsunamiCard.id;
@@ -6160,9 +6170,21 @@ function BottomDock({
         )
       )}
 
-      {/* 津波タブ版。地震タブの戻るボタンと全く同じ考え方。観測点表示切替ボタンは
-          「引き起こした地震」を表示している間だけ出す(通常の津波一覧には観測点が無いため)。 */}
-      {active === "tsunami" && (selectedTsunamiId != null || (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)) && (
+      {/* 津波タブ版。地震タブの戻るボタンと全く同じ考え方。
+          ボタン群を出す条件は3通りある(いずれか1つで表示):
+            1. 個別の津波情報を選択中(戻るボタン)
+            2. 潮位計モードで観測点を選択中(戻るボタン)
+            3. 現在進行形の津波情報がある(一覧に戻るものが無くても、潮位観測点
+               オンオフボタンだけは出す。「引き起こした地震」を見ている間は
+               その地震の震度観測点用に同じ枠を使うため出さない)
+          観測点表示切替ボタンは、「引き起こした地震」を表示している間は震度観測点用
+          (stationMarkersVisible)、それ以外で有効な津波情報がある間は潮位観測点用
+          (tideStationMarkersVisible)を出す。両方同時に出ることはない。 */}
+      {active === "tsunami" && (
+        selectedTsunamiId != null ||
+        (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null) ||
+        (activeTsunami != null && !causingQuakeFound)
+      ) && (
         isWide && wideAnchorRect ? createPortal(
           <div style={{
             position: "fixed",
@@ -6170,13 +6192,19 @@ function BottomDock({
             top: wideAnchorRect.top + 16,
             zIndex: 50,
           }}>
-            <BackToListButton
-              onClick={handleBackFromTsunami}
-              label={backFromTsunamiLabel}
-            />
-            {causingQuakeFound && (
+            {(selectedTsunamiId != null || (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)) && (
+              <BackToListButton
+                onClick={handleBackFromTsunami}
+                label={backFromTsunamiLabel}
+              />
+            )}
+            {causingQuakeFound ? (
               <div style={{ marginTop: 12 }}>
                 <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
+              </div>
+            ) : activeTsunami != null && (
+              <div style={{ marginTop: 12 }}>
+                <StationMarkerToggleButton visible={tideStationMarkersVisible} onClick={onToggleTideStationMarkersVisible}/>
               </div>
             )}
           </div>,
@@ -6189,15 +6217,21 @@ function BottomDock({
           transition: isDragging ? "none" : "bottom 0.4s cubic-bezier(.22,1,.36,1)",
           zIndex: 10,
         }}>
-          {causingQuakeFound && (
+          {causingQuakeFound ? (
             <div style={{ marginBottom: 12 }}>
               <StationMarkerToggleButton visible={stationMarkersVisible} onClick={onToggleStationMarkersVisible}/>
             </div>
+          ) : activeTsunami != null && (
+            <div style={{ marginBottom: 12 }}>
+              <StationMarkerToggleButton visible={tideStationMarkersVisible} onClick={onToggleTideStationMarkersVisible}/>
+            </div>
           )}
-          <BackToListButton
-            onClick={handleBackFromTsunami}
-            label={backFromTsunamiLabel}
-          />
+          {(selectedTsunamiId != null || (tsunamiViewMode === "tidegauge" && selectedTideStationCode != null)) && (
+            <BackToListButton
+              onClick={handleBackFromTsunami}
+              label={backFromTsunamiLabel}
+            />
+          )}
         </div>
         )
       )}
@@ -10524,16 +10558,21 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const [tsunamiViewModeTop, setTsunamiViewModeTop] = useState("recent");
   const showTideGaugeLayer = activeNav === "tsunami" && tsunamiViewModeTop === "tidegauge";
+  // 現在進行形で有効な(解除されていない)津波情報があるかどうか。潮位観測点
+  // マスタの取得トリガー・自動表示の判定の両方で使う軽量な判定。
+  const hasActiveTsunami = effectiveTsunamis.some(t => !t.cancelled);
 
   const [tideStations, setTideStations] = useState(EMPTY_EQDB_LIST);
   const [tideStationsStatus, setTideStationsStatus] = useState("idle"); // idle | loading | ready | error
   useEffect(() => {
-    if (!showTideGaugeLayer || tideStationsStatus !== "idle") return;
+    // 潮位計モードを開いた時だけでなく、有効な津波情報がある間は「発令中の予報区の
+    // 観測点」を地図に自動表示したいので、その場合もマスタを取得しておく。
+    if ((!showTideGaugeLayer && !hasActiveTsunami) || tideStationsStatus !== "idle") return;
     setTideStationsStatus("loading");
     fetchTideStations()
       .then(list => { setTideStations(list); setTideStationsStatus("ready"); })
       .catch(err => { console.error("潮位観測点一覧の取得に失敗:", err); setTideStationsStatus("error"); });
-  }, [showTideGaugeLayer, tideStationsStatus]);
+  }, [showTideGaugeLayer, hasActiveTsunami, tideStationsStatus]);
 
   const [selectedTideStationCode, setSelectedTideStationCode] = useState(null);
   // 潮位タブを離れたら選択を解除する(戻ってきた時に地図のピンと表示がズレないように)。
@@ -10879,6 +10918,23 @@ export default function App() {
     });
   }, [tideStationsWithArea, activeTsunami]);
 
+  // 潮位観測点(発令中の予報区分)の表示/非表示。地震タブの観測点表示ボタンと
+  // 同じ考え方で、パネルの外に浮かぶ丸ボタンから切り替える。
+  const [tideStationMarkersVisible, setTideStationMarkersVisible] = useState(true);
+  // 新しく津波情報が有効になるたびに、必ず「表示」状態からスタートする
+  // (前回OFFにしたまま覚えておくと、次の警報で見落とす恐れがあるため)。
+  useEffect(() => {
+    if (activeTsunami != null) setTideStationMarkersVisible(true);
+  }, [activeTsunami?.id]);
+
+  // 潮位観測点ピンの自動表示: 有効な津波情報がある間・かつ「引き起こした地震」を
+  // 見ていない間だけ(その間は震度観測点の表示に専念させたいため、地震タブ同様
+  // stationMarkersVisibleがfalseから始まる=causingQuakeCardのuseEffect参照)。
+  // 潮位計モード(手動で観測点一覧を見ている間)は、そちらの全件表示が優先されるため
+  // ここでは判定しない(下のtideStationPoints算出側でshowTideGaugeLayerを優先している)。
+  const showActiveTsunamiTideStations =
+    showTsunamiMapLayers && causingQuakeCard == null && activeTsunami != null && tideStationMarkersVisible;
+
   return (
     <ThemeContext.Provider value={themeContextValue}>
     <GlassOpaqueContext.Provider value={glassOpaqueContextValue}>
@@ -10893,7 +10949,11 @@ export default function App() {
           onReady={setMap}
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
-          tideStationPoints={showTideGaugeLayer ? tideStationsWithGrade : EMPTY_EQDB_LIST}
+          tideStationPoints={
+            showTideGaugeLayer ? tideStationsWithGrade
+            : showActiveTsunamiTideStations ? tideStationsWithGrade.filter(s => s.activeGrade)
+            : EMPTY_EQDB_LIST
+          }
           onSelectTideStation={setSelectedTideStationCode}
           selectedTideStationCode={selectedTideStationCode}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
@@ -11091,6 +11151,8 @@ export default function App() {
                   onCausingQuakeChange={setCausingQuakeCard}
                   stationMarkersVisible={stationMarkersVisible}
                   onToggleStationMarkersVisible={() => setStationMarkersVisible(v => !v)}
+                  tideStationMarkersVisible={tideStationMarkersVisible}
+                  onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
                   stationPoints={selectedQuakePoints}
                   onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
                   estIntensityEnabled={estIntensityEnabled}
@@ -11160,6 +11222,8 @@ export default function App() {
               onCausingQuakeChange={setCausingQuakeCard}
               stationMarkersVisible={stationMarkersVisible}
               onToggleStationMarkersVisible={() => setStationMarkersVisible(v => !v)}
+              tideStationMarkersVisible={tideStationMarkersVisible}
+              onToggleTideStationMarkersVisible={() => setTideStationMarkersVisible(v => !v)}
               stationPoints={selectedQuakePoints}
               onChangeQuakeColorScheme={handleChangeQuakeColorScheme}
               estIntensityEnabled={estIntensityEnabled}
