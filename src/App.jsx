@@ -5361,6 +5361,7 @@ function BottomDock({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
+  pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
   onEpicenterLoadingChange,
@@ -6695,6 +6696,9 @@ function BottomDock({
                   pickedTsunamiAreas={pickedTsunamiAreas}
                   onRemoveTsunamiAreaPick={onRemoveTsunamiAreaPick}
                   onCycleTsunamiAreaGrade={onCycleTsunamiAreaGrade}
+                  pickedTsunamiHeights={pickedTsunamiHeights}
+                  onChangeTsunamiHeightPick={onChangeTsunamiHeightPick}
+                  onRemoveTsunamiHeightPick={onRemoveTsunamiHeightPick}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -8968,6 +8972,7 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
 function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
   tsunamiAreaPickActive, onStartAreaPick, pickedAreas = [], onRemoveAreaPick, onCycleAreaGrade,
+  pickedHeights = [], onChangeHeightPick, onRemoveHeightPick,
 }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -9048,9 +9053,69 @@ function TsunamiTestBroadcastPanel({
       </SettingsCard>
 
       <SettingsCard>
+        <div style={{ padding: "12px 14px 4px", fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)` }}>
+          観測点ごとの津波の高さ(テスト用・任意)
+        </div>
+        <div style={{ padding: "0 14px 12px" }}>
+          {pickedHeights.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+              {pickedHeights.map(({ code, name, heightM }) => (
+                <div key={code} style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "6px 6px 6px 12px", borderRadius: 10,
+                  background: `rgba(${tokens.ink},0.045)`,
+                }}>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {name}
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step={0.1}
+                    value={heightM}
+                    onChange={e => {
+                      const v = parseFloat(e.target.value);
+                      onChangeHeightPick?.(code, Number.isFinite(v) ? v : 0);
+                    }}
+                    style={{
+                      width: 64, padding: "6px 8px", borderRadius: 8, border: "none",
+                      background: `rgba(${tokens.ink},0.08)`, color: tokens.text,
+                      fontSize: 13, fontWeight: 600, textAlign: "right",
+                    }}
+                  />
+                  <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.45)`, flexShrink: 0 }}>m</span>
+                  <PressableButton
+                    type="button"
+                    onClick={() => onRemoveHeightPick?.(code)}
+                    aria-label={`${name}の高さ設定を解除`}
+                    style={{
+                      width: 20, height: 20, borderRadius: 999, border: "none", cursor: "pointer",
+                      background: `rgba(${tokens.ink},0.1)`, display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 12, fontWeight: 700, color: `rgba(${tokens.ink},0.6)`, lineHeight: 1, flexShrink: 0,
+                    }}
+                  >
+                    ×
+                  </PressableButton>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)`, marginBottom: 10 }}>
+              まだ観測点が選ばれていません(未設定の間は、実際の潮位データから自動計算されます)
+            </div>
+          )}
+        </div>
+        <div style={{ margin: "-6px 14px 12px", fontSize: 11, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.6 }}>
+          「地図で選択」中に、海岸線の代わりに観測点(丸)をタップすると、ここに追加されます
+          (もう一度タップで解除)。選んだ予報区の中の観測点でないと、地図上には反映されません。
+          ±0.2m未満は微弱として扱われ、実際の表示と同様バーは出ません。
+        </div>
+      </SettingsCard>
+
+      <SettingsCard>
         <PressableButton
           type="button"
-          onClick={() => onBroadcast?.({ areas: pickedAreas })}
+          onClick={() => onBroadcast?.({ areas: pickedAreas, heightOverrides: pickedHeights })}
           style={{
             width: "100%", padding: "12px 14px", border: "none", cursor: "pointer",
             background: "transparent", textAlign: "center",
@@ -9604,6 +9669,7 @@ function SettingsBody({
   testTsunami, onBroadcastTestTsunami, onCancelTestTsunami, onClearTestTsunami,
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
+  pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
 }) {
   // 「フローティングを不透明にする」トグル用。BottomDock経由でpropsを何段も
   // 通す代わりに、Appのトップレベルで配信しているcontextを直接購読する。
@@ -9885,6 +9951,9 @@ function SettingsBody({
           pickedAreas={pickedTsunamiAreas}
           onRemoveAreaPick={onRemoveTsunamiAreaPick}
           onCycleAreaGrade={onCycleTsunamiAreaGrade}
+          pickedHeights={pickedTsunamiHeights}
+          onChangeHeightPick={onChangeTsunamiHeightPick}
+          onRemoveHeightPick={onRemoveTsunamiHeightPick}
         />
       </>
     );
@@ -10482,7 +10551,7 @@ export default function App() {
      ───────────────────────────────────────────────────── */
   const [testTsunami, setTestTsunami] = useState(null); // { ...tsunamiカード, isTest: true } | null
 
-  function broadcastTestTsunami({ areas }) {
+  function broadcastTestTsunami({ areas, heightOverrides }) {
     const now = new Date();
     const pad2 = n => String(n).padStart(2, "0");
     const timeStr = `${now.getFullYear()}/${pad2(now.getMonth() + 1)}/${pad2(now.getDate())} ${pad2(now.getHours())}:${pad2(now.getMinutes())}:${pad2(now.getSeconds())}`;
@@ -10495,6 +10564,10 @@ export default function App() {
       const w = tsunamiGradeInfo(a.grade).weight;
       if (w > maxWeight) { maxWeight = w; maxGrade = a.grade; }
     });
+    // 観測点コード→高さ(m)の対応表。tsunamiHeightByStationの計算で、実際の
+    // 潮位データから求めた値より優先して使われる(App側参照)。
+    const heightOverridesMap = {};
+    (heightOverrides || []).forEach(h => { heightOverridesMap[h.code] = h.heightM; });
     setTestTsunami({
       id: `test_${now.getTime()}`,
       time: timeStr,
@@ -10505,6 +10578,7 @@ export default function App() {
       })),
       maxGrade,
       isTest: true,
+      heightOverrides: heightOverridesMap,
     });
   }
   function cancelTestTsunami() {
@@ -10543,6 +10617,7 @@ export default function App() {
 
   function startTsunamiAreaPick() {
     pickedTsunamiAreasSnapshotRef.current = pickedTsunamiAreas;
+    pickedTsunamiHeightsSnapshotRef.current = pickedTsunamiHeights;
     setTsunamiAreaPickActive(true);
   }
   function finishTsunamiAreaPick() {
@@ -10550,6 +10625,7 @@ export default function App() {
   }
   function cancelTsunamiAreaPick() {
     setPickedTsunamiAreas(pickedTsunamiAreasSnapshotRef.current);
+    setPickedTsunamiHeights(pickedTsunamiHeightsSnapshotRef.current);
     setTsunamiAreaPickActive(false);
   }
   function handlePickTsunamiArea(name) {
@@ -10576,6 +10652,32 @@ export default function App() {
       const next = order[(order.indexOf(a.grade) + 1) % order.length];
       return { ...a, grade: next };
     }));
+  }
+
+  /* ─────────────────────────────────────────────────────
+     津波警報テスト配信: 観測点(潮位計)の「観測された津波の高さ」もテストできるように、
+     実在の観測点をタップして高さ(m)を手入力できるようにする。予報区ピックと同じ
+     ピックモード・同じ地図タップ操作を共有し(handleSelectTideStationOnMap内で分岐)、
+     海岸線をタップすれば予報区、観測点の丸をタップすれば高さ入力、という使い分けに
+     なる。ここで設定した値は、実際の潮位データから計算する値の代わりに使われる
+     (App側のtsunamiHeightByStation参照)。
+     ───────────────────────────────────────────────────── */
+  const [pickedTsunamiHeights, setPickedTsunamiHeights] = useState([]); // [{ code, name, heightM }]
+  const pickedTsunamiHeightsSnapshotRef = useRef([]); // キャンセル時に戻す先
+
+  function handlePickTsunamiHeightStation(code) {
+    setPickedTsunamiHeights(prev => {
+      if (prev.some(h => h.code === code)) return prev.filter(h => h.code !== code); // 再タップで解除
+      const st = tideStations.find(s => s.code === code);
+      if (!st) return prev;
+      return [...prev, { code: st.code, name: st.name, heightM: 1.0 }]; // 分かりやすいデフォルト値
+    });
+  }
+  function changeTsunamiHeightPick(code, heightM) {
+    setPickedTsunamiHeights(prev => prev.map(h => (h.code === code ? { ...h, heightM } : h)));
+  }
+  function removeTsunamiHeightPick(code) {
+    setPickedTsunamiHeights(prev => prev.filter(h => h.code !== code));
   }
 
   // 津波タブ「過去」モード用。直近一覧(tsunamis)とは別に、/history APIを
@@ -10649,14 +10751,15 @@ export default function App() {
   const [tideStations, setTideStations] = useState(EMPTY_EQDB_LIST);
   const [tideStationsStatus, setTideStationsStatus] = useState("idle"); // idle | loading | ready | error
   useEffect(() => {
-    // 潮位計モードを開いた時だけでなく、有効な津波情報がある間は「発令中の予報区の
-    // 観測点」を地図に自動表示したいので、その場合もマスタを取得しておく。
-    if ((!showTideGaugeLayer && !hasActiveTsunami) || tideStationsStatus !== "idle") return;
+    // 潮位計モードを開いた時・有効な津波情報がある間に加えて、津波警報テスト配信の
+    // 予報区ピックモード中も取得しておく(テスト用の観測点タップ選択で実在の
+    // 観測点一覧が必要なため)。
+    if ((!showTideGaugeLayer && !hasActiveTsunami && !tsunamiAreaPickActive) || tideStationsStatus !== "idle") return;
     setTideStationsStatus("loading");
     fetchTideStations()
       .then(list => { setTideStations(list); setTideStationsStatus("ready"); })
       .catch(err => { console.error("潮位観測点一覧の取得に失敗:", err); setTideStationsStatus("error"); });
-  }, [showTideGaugeLayer, hasActiveTsunami, tideStationsStatus]);
+  }, [showTideGaugeLayer, hasActiveTsunami, tsunamiAreaPickActive, tideStationsStatus]);
 
   const [selectedTideStationCode, setSelectedTideStationCode] = useState(null);
   // 津波タブそのものを離れたら選択を解除する(戻ってきた時に地図のピンと表示が
@@ -11046,7 +11149,11 @@ export default function App() {
   );
   useEffect(() => {
     if (!activeTsunami || !warnedStationCodesKey) return;
-    const codes = warnedStationCodesKey.split(",");
+    const overrides = activeTsunami.heightOverrides || null;
+    // テスト配信で手入力の高さを設定済みの観測点は、実データが無くても表示できるので
+    // 取得をスキップする(無駄なリクエストを増やさないため)。
+    const codes = warnedStationCodesKey.split(",").filter(code => !(overrides && overrides[code] != null));
+    if (codes.length === 0) return;
     let cancelled = false;
     const CONCURRENCY = 4; // 同時に投げる数を絞って、重くならないようにする
 
@@ -11080,9 +11187,15 @@ export default function App() {
     if (!activeTsunami) return {};
     const startMs = new Date(activeTsunami.time).getTime();
     if (!Number.isFinite(startMs)) return {};
+    const overrides = activeTsunami.heightOverrides || null; // テスト配信用の手入力値(App側参照)
     const result = {};
     tideStationsWithGrade.forEach(st => {
       if (!st.activeGrade) return;
+      if (overrides && overrides[st.code] != null) {
+        const m = overrides[st.code];
+        if (Math.abs(m) >= TSUNAMI_HEIGHT_NEGLIGIBLE_M) result[st.code] = m; // 手入力値も微弱ルールは同様に適用
+        return;
+      }
       const obs = tideObsByStation[st.code];
       if (!obs || obs.status !== "ready" || !obs.data) return;
       const cm = computeMaxTsunamiHeightCm(obs.data, startMs);
@@ -11129,6 +11242,10 @@ export default function App() {
   // だけの値」パターンを踏襲し、BottomDock側のuseEffectで実際の切り替えを行う。
   const [tideStationSelectSignal, setTideStationSelectSignal] = useState(0);
   function handleSelectTideStationOnMap(code) {
+    if (tsunamiAreaPickActive) {
+      handlePickTsunamiHeightStation(code);
+      return;
+    }
     setSelectedTideStationCode(code);
     setTideStationSelectSignal(n => n + 1);
   }
@@ -11150,6 +11267,7 @@ export default function App() {
           tideStationPoints={
             showTideGaugeLayer ? tideStationsWithGrade
             : showActiveTsunamiTideStations ? tideStationsWithGrade.filter(s => s.activeGrade)
+            : tsunamiAreaPickActive ? tideStationsWithGrade // テスト配信の予報区ピック中は、観測点タップで高さも設定できるよう全件表示
             : EMPTY_EQDB_LIST
           }
           onSelectTideStation={handleSelectTideStationOnMap}
@@ -11196,8 +11314,9 @@ export default function App() {
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text, flex: 1 }}>
-                  海岸線をタップして予報区を選択
-                  {pickedTsunamiAreas.length > 0 && `(${pickedTsunamiAreas.length}件選択中)`}
+                  海岸線=予報区、観測点(丸)=高さ設定
+                  {pickedTsunamiAreas.length > 0 && ` / 予報区${pickedTsunamiAreas.length}件`}
+                  {pickedTsunamiHeights.length > 0 && ` / 観測点${pickedTsunamiHeights.length}件`}
                 </span>
                 <PressableButton
                   type="button"
@@ -11382,6 +11501,9 @@ export default function App() {
                   pickedTsunamiAreas={pickedTsunamiAreas}
                   onRemoveTsunamiAreaPick={removeTsunamiAreaPick}
                   onCycleTsunamiAreaGrade={cycleTsunamiAreaGrade}
+                  pickedTsunamiHeights={pickedTsunamiHeights}
+                  onChangeTsunamiHeightPick={changeTsunamiHeightPick}
+                  onRemoveTsunamiHeightPick={removeTsunamiHeightPick}
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
@@ -11454,6 +11576,9 @@ export default function App() {
               pickedTsunamiAreas={pickedTsunamiAreas}
               onRemoveTsunamiAreaPick={removeTsunamiAreaPick}
               onCycleTsunamiAreaGrade={cycleTsunamiAreaGrade}
+              pickedTsunamiHeights={pickedTsunamiHeights}
+              onChangeTsunamiHeightPick={changeTsunamiHeightPick}
+              onRemoveTsunamiHeightPick={removeTsunamiHeightPick}
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
