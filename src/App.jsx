@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.2f";
+const APP_VERSION = "1.2.3";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -712,6 +712,7 @@ function MapCanvas({
   tsunamiAreas = [],
   stationMarkersVisible = true,
   tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
+  tsunamiHeightBars = [],
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
 }) {
   const containerRef = useRef(null);
@@ -1062,6 +1063,25 @@ function MapCanvas({
               "icon-size": 28 / 36,
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
+            },
+          });
+
+          // 観測された津波の高さ(推定)を表すバー。潮位観測点の座標を起点に、緯度方向
+          // (北向き)へ高さに応じた長さの線分を伸ばして表現する(App側の
+          // tsunamiHeightBars参照。データが空の間は何も描かれない)。観測点ピンの
+          // 「土台」に見えるよう、ピンのレイヤーより先(下)に追加しておく。
+          map.addSource("tsunami-height-bars", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "tsunami-height-bars-layer",
+            type: "line",
+            source: "tsunami-height-bars",
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": ["get", "color"],
+              "line-width": 5,
             },
           });
 
@@ -1601,6 +1621,21 @@ function MapCanvas({
       }));
     source.setData({ type: "FeatureCollection", features });
   }, [tideStationPoints, selectedTideStationCode, status]);
+
+  // 観測された津波の高さバーの更新。App側で既に「バーとして描く座標(from/to)・色」
+  // まで計算済みのものが渡ってくるので、ここではGeoJSONに詰め替えるだけでよい。
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || status !== "ready") return;
+    const source = map.getSource("tsunami-height-bars");
+    if (!source) return;
+    const features = (tsunamiHeightBars || []).map(bar => ({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: [bar.from, bar.to] },
+      properties: { code: bar.code, color: bar.color },
+    }));
+    source.setData({ type: "FeatureCollection", features });
+  }, [tsunamiHeightBars, status]);
 
   // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
   // 縁取り色はライト/ダークでも変わりうるため(気象庁配色の震度1のみ)、modeも依存に含める。
@@ -3657,6 +3692,31 @@ async function fetchTideObs(dateStr, stationCode) {
   const res = await fetch(tideObsUrl(dateStr, stationCode));
   if (!res.ok) throw new Error(`潮位観測値の取得に失敗(HTTP ${res.status})`);
   return res.json();
+}
+
+// 観測された津波の高さ(推定)を、潮位観測データから計算する。
+// 気象庁の解説(https://www.jma.go.jp/jma/kishou/know/jishin/joho/tsunamiinfo.html)の
+// 「津波観測に関する情報」が示す考え方どおり、潮位の実測値から天文潮位(推算潮位)を
+// 差し引いた値が津波による海面変動の高さにあたる。この値はtide_obsのdeparture配列に
+// そのまま「潮位偏差」として入っている(このアプリのTideStationDetailで表示している
+// ものと同じ値)ため、追加の逆算はせずdepartureをそのまま使う。
+// startMs以降(=警報等の発表時刻以降)で絶対値が最大になった値(符号付き、cm単位)を返す。
+// データの終端は「取得できている最新時点まで」が自動的に上限になるため、終了時刻を
+// 別途指定する必要はない。該当データが無ければnull。
+function computeMaxTsunamiHeightCm(obsData, startMs) {
+  if (!obsData || !Array.isArray(obsData.departure) || !obsData.time) return null;
+  const dayStartMs = new Date(obsData.time).getTime();
+  if (!Number.isFinite(dayStartMs) || !Number.isFinite(startMs)) return null;
+  const intervalMs = (obsData.interval || 15) * 1000;
+  let maxAbs = -1;
+  let signedAtMax = null;
+  obsData.departure.forEach((v, i) => {
+    if (v == null) return;
+    const t = dayStartMs + i * intervalMs;
+    if (t < startMs) return; // 警報発表より前の値は対象外
+    if (Math.abs(v) > maxAbs) { maxAbs = Math.abs(v); signedAtMax = v; }
+  });
+  return signedAtMax; // cm(符号付き)。該当データが1件も無ければnull
 }
 
 
@@ -10609,10 +10669,15 @@ export default function App() {
 
   // 形: { [stationCode]: { date: "YYYYMMDD", status: "loading"|"ready"|"error", data } }
   const [tideObsByStation, setTideObsByStation] = useState({});
-  async function loadTideObs(stationCode) {
+  // forceがtrueの時は、すでに読み込み済み(status: "ready")でも取得し直す。
+  // 津波の観測値表示(観測点詳細)は1回読めば十分だが、地図上の「観測された津波の
+  // 高さ」バーは警報等が続く間ずっと最新の最大波を追いたいので、そちらの定期更新
+  // からはforce=trueで呼ぶ。
+  async function loadTideObs(stationCode, force = false) {
     const dateStr = toTideDateStr(new Date());
     const cur = tideObsByStation[stationCode];
-    if (cur && cur.date === dateStr && (cur.status === "loading" || cur.status === "ready")) return;
+    if (cur && cur.status === "loading") return; // 進行中なら常にスキップ(forceでも二重発火は防ぐ)
+    if (!force && cur && cur.date === dateStr && cur.status === "ready") return; // 通常時は読み込み済みならスキップ
     setTideObsByStation(prev => ({ ...prev, [stationCode]: { date: dateStr, status: "loading", data: null } }));
     try {
       const data = await fetchTideObs(dateStr, stationCode);
@@ -10962,6 +11027,101 @@ export default function App() {
   const showActiveTsunamiTideStations =
     showTsunamiMapLayers && causingQuakeCard == null && activeTsunami != null && tideStationMarkersVisible;
 
+  /* ─────────────────────────────────────────────────────
+     観測された津波の高さ(地図上のバー表示)。
+     気象庁の電文(有料)は使わず、既に取得している潮位観測データ(潮位偏差=
+     実測潮位−天文潮位。TideStationDetailで表示しているものと同じ値)から、
+     警報等の発表時刻以降で絶対値が最大になった値を「観測された津波の高さ」として
+     使う(computeMaxTsunamiHeightCm参照。気象庁の考え方に沿った近似値)。
+     ・対象は発令中の予報区の観測点のみ(全国の観測点を取りに行くと重くなるため)。
+     ・同時リクエスト数を絞ったワーカープールで順に取得する(fetchTideStations等と
+       同じ考え方)。
+     ・警報等が続く間は最大波が更新され得るので、数分おきに再取得する。
+     ・±0.2m未満は「微弱」として扱い、バー自体を表示しない
+       (気象庁も同程度の小さい値は数値を出さない運用のため)。
+     ───────────────────────────────────────────────────── */
+  const warnedStationCodesKey = useMemo(
+    () => tideStationsWithGrade.filter(s => s.activeGrade).map(s => s.code).sort().join(","),
+    [tideStationsWithGrade]
+  );
+  useEffect(() => {
+    if (!activeTsunami || !warnedStationCodesKey) return;
+    const codes = warnedStationCodesKey.split(",");
+    let cancelled = false;
+    const CONCURRENCY = 4; // 同時に投げる数を絞って、重くならないようにする
+
+    async function runPool(force) {
+      let nextIndex = 0;
+      async function worker() {
+        while (!cancelled) {
+          const i = nextIndex++;
+          if (i >= codes.length) return;
+          await loadTideObs(codes[i], force);
+        }
+      }
+      const workers = [];
+      for (let i = 0; i < CONCURRENCY; i++) workers.push(worker());
+      await Promise.all(workers);
+    }
+
+    runPool(false); // 初回は「未取得の分だけ」取得する
+
+    // 警報等が続いている間、最大波が更新されていないか3分おきに取得し直す。
+    const REFRESH_MS = 3 * 60 * 1000;
+    const intervalId = setInterval(() => { if (!cancelled) runPool(true); }, REFRESH_MS);
+
+    return () => { cancelled = true; clearInterval(intervalId); };
+  }, [warnedStationCodesKey, activeTsunami != null]);
+
+  // 観測点コードごとの、観測された津波の高さ(メートル、符号付き)。
+  // ±0.2m未満は「微弱」としてnull扱いにする(バーを出さない)。
+  const TSUNAMI_HEIGHT_NEGLIGIBLE_M = 0.2;
+  const tsunamiHeightByStation = useMemo(() => {
+    if (!activeTsunami) return {};
+    const startMs = new Date(activeTsunami.time).getTime();
+    if (!Number.isFinite(startMs)) return {};
+    const result = {};
+    tideStationsWithGrade.forEach(st => {
+      if (!st.activeGrade) return;
+      const obs = tideObsByStation[st.code];
+      if (!obs || obs.status !== "ready" || !obs.data) return;
+      const cm = computeMaxTsunamiHeightCm(obs.data, startMs);
+      if (cm == null) return;
+      const m = cm / 100;
+      if (Math.abs(m) < TSUNAMI_HEIGHT_NEGLIGIBLE_M) return; // 微弱
+      result[st.code] = m;
+    });
+    return result;
+  }, [activeTsunami, tideStationsWithGrade, tideObsByStation]);
+
+  // 地図に描く「観測された津波の高さ」バー。station本体の座標を起点に、緯度方向
+  // (北向き)へ高さに応じた長さだけ伸ばした線分として表現する(北向き固定なのは、
+  // 海岸線ごとに正確な「沖向き」を計算するのは重く・複雑になるため、シンプルさと
+  // 軽さを優先した簡略化。緯度方向なら1度=約111kmで場所によらず一定なので、
+  // 見た目の長さが場所によって歪まない)。色は予報区のグレード配色(既存の
+  // buildTsunamiAreaColorExprと同じ配色)を流用し、地図の凡例と一致させる。
+  const TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG = 0.02;  // 0.2m相当の最小の長さ
+  const TSUNAMI_HEIGHT_BAR_MAX_LEN_DEG = 0.16;  // 10m以上でこの長さで頭打ち
+  const TSUNAMI_HEIGHT_BAR_MAX_M = 10;
+  const tsunamiHeightBars = useMemo(() => {
+    return tideStationsWithGrade
+      .filter(st => st.activeGrade && tsunamiHeightByStation[st.code] != null)
+      .map(st => {
+        const heightM = tsunamiHeightByStation[st.code];
+        const clamped = Math.min(Math.abs(heightM), TSUNAMI_HEIGHT_BAR_MAX_M);
+        const t = (clamped - TSUNAMI_HEIGHT_NEGLIGIBLE_M) / (TSUNAMI_HEIGHT_BAR_MAX_M - TSUNAMI_HEIGHT_NEGLIGIBLE_M);
+        const lenDeg = TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG + t * (TSUNAMI_HEIGHT_BAR_MAX_LEN_DEG - TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG);
+        return {
+          code: st.code,
+          name: st.name,
+          heightM,
+          color: tsunamiGradeInfo(st.activeGrade).color,
+          from: [st.lon, st.lat],
+          to: [st.lon, st.lat + lenDeg],
+        };
+      });
+  }, [tideStationsWithGrade, tsunamiHeightByStation]);
+
   // 潮位観測点ピン(発令中の予報区分。潮位計モードでない間に表示しているもの)を
   // 地図上でタップした時、手動で潮位計モードに入って観測点を選んだ時と同じ体験に
   // したいので、選択だけでなく「潮位計モードに切り替えてほしい」という信号も
@@ -10994,6 +11154,7 @@ export default function App() {
           }
           onSelectTideStation={handleSelectTideStationOnMap}
           selectedTideStationCode={selectedTideStationCode}
+          tsunamiHeightBars={showActiveTsunamiTideStations ? tsunamiHeightBars : EMPTY_EQDB_LIST}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
