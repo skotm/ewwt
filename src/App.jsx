@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.3b";
+const APP_VERSION = "1.2.3c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -719,11 +719,19 @@ function roundRectPath(ctx, x, y, w, h, r) {
 // heightPx(バー本体の高さ、CSSピクセル)を4px単位に丸めて、生成するアイコンの
 // 種類(color × 高さ)を抑える。同じ(色, 丸めた高さ)の組み合わせは1回だけ描画し、
 // map.addImageで登録して使い回す。
-function tsunamiBarIconId(map, color, heightPx) {
-  const BAR_W = 12;      // バー本体の幅(CSSピクセル)
+// バー本体の幅(観測点の丸=tide-station-points-layerのcircle-radiusと直径を揃える。
+// ズームで大きさが変わる丸に対して、ズームで変わらないバー側は代表的な太さとして
+// 「中間くらいのズーム時の直径」に固定している)。
+const TSUNAMI_BAR_WIDTH_PX = 14;
+
+function tsunamiBarIconId(map, color, heightPx, pxPerMeter) {
+  const BAR_W = TSUNAMI_BAR_WIDTH_PX;
   const BORDER = 2;      // 白縁の太さ(CSSピクセル)
   const bucket = Math.max(10, Math.round(heightPx / 4) * 4);
-  const id = `tsunami-bar-icon-${color.replace("#", "")}-${bucket}`;
+  // 目盛り(0.2m刻みの白い点)の間隔もアイコンの見た目に含まれるので、キャッシュキーに
+  // 含めておく(pxPerMeterは呼び出し側で固定値のため、実質的には常に同じ値になる)。
+  const tickStepPx = Math.max(1, pxPerMeter * 0.2);
+  const id = `tsunami-bar-icon-${color.replace("#", "")}-${bucket}-${Math.round(tickStepPx * 10)}`;
   if (map.hasImage(id)) return id;
 
   const pixelRatio = typeof window !== "undefined" && window.devicePixelRatio ? Math.min(window.devicePixelRatio, 3) : 1;
@@ -742,6 +750,18 @@ function tsunamiBarIconId(map, color, heightPx) {
   roundRectPath(ctx, BORDER, BORDER, BAR_W, bucket, BAR_W / 2);
   ctx.fillStyle = color;
   ctx.fill();
+
+  // 0.2m刻みの目盛り(白い点)。バーの根本(観測点側=下端)を0mとして、そこから
+  // tickStepPxごとに上へ向かって点を打つ。バーの先端付近(見切れそうな位置)には
+  // 打たない。
+  const cx = totalW / 2;
+  const bottomY = BORDER + bucket;
+  ctx.fillStyle = "#ffffff";
+  for (let d = tickStepPx; d < bucket - 2; d += tickStepPx) {
+    ctx.beginPath();
+    ctx.arc(cx, bottomY - d, 1.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   map.addImage(id, ctx.getImageData(0, 0, canvas.width, canvas.height), { pixelRatio });
   return id;
@@ -1685,11 +1705,14 @@ function MapCanvas({
     if (!map || status !== "ready") return;
     const source = map.getSource("tsunami-height-bars");
     if (!source) return;
-    const MIN_PX = 14;  // 0.2m相当の最小の高さ(ピクセル、見やすさのため少し大きめに)
-    const MAX_PX = 90;  // 10m以上でこの高さで頭打ち
+    const MIN_PX = 22;   // 0.2m相当の最小の高さ(ピクセル)
+    const MAX_PX = 170;  // 10m以上でこの高さで頭打ち(見やすさのため長めに)
+    const MAX_M = 10;
+    const NEGLIGIBLE_M = 0.2;
+    const pxPerMeter = (MAX_PX - MIN_PX) / (MAX_M - NEGLIGIBLE_M); // 0.2m刻みの目盛り間隔の計算用
     const features = (tsunamiHeightBars || []).map(bar => {
       const heightPx = MIN_PX + Math.max(0, Math.min(1, bar.heightT)) * (MAX_PX - MIN_PX);
-      const iconId = tsunamiBarIconId(map, bar.color, heightPx);
+      const iconId = tsunamiBarIconId(map, bar.color, heightPx, pxPerMeter);
       return {
         type: "Feature",
         geometry: { type: "Point", coordinates: [bar.lng, bar.lat] },
