@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.3e";
+const APP_VERSION = "1.2.3f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -701,9 +701,12 @@ function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.d
 /* ─────────────────────────────────────────────────────
    観測された津波の高さバー用のアイコン生成。
    地図の座標オフセットで長さを表現する線分だと、ズームするたびに実際の距離のまま
-   拡大縮小されて見た目の長さが変わってしまう。ピクセル上の見た目のサイズをズームに
+   拡大縮小されて見た目の長さが変わってしまう。ピクセル上の見た目の「長さ」をズームに
    関わらず一定に保つため、あらかじめキャンバスに「白縁+色付きの縦長バー」を
    描いておき、MapLibreのsymbolレイヤー(icon-size固定)としてピン留めする方式にする。
+   一方で「太さ」は観測点の丸(circle-radius)と揃えたいので、丸の半径と全く同じ
+   ズーム連動の式(TSUNAMI_BAR_WIDTH_STOPS)で太さだけをズームごとに求め、その太さの
+   アイコンをズームが変わるたびに(ズーム段階が変わった時だけ)差し替える。
    ───────────────────────────────────────────────────── */
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -716,22 +719,41 @@ function roundRectPath(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// heightPx(バー本体の高さ、CSSピクセル)を4px単位に丸めて、生成するアイコンの
-// 種類(color × 高さ)を抑える。同じ(色, 丸めた高さ)の組み合わせは1回だけ描画し、
-// map.addImageで登録して使い回す。
-// バー本体の幅(観測点の丸=tide-station-points-layerのcircle-radiusと直径を揃える。
-// ズームで大きさが変わる丸に対して、ズームで変わらないバー側は代表的な太さとして
-// 「中間くらいのズーム時の直径」に固定している)。
-const TSUNAMI_BAR_WIDTH_PX = 14;
+// 観測点の丸(tide-station-points-layerの非選択時circle-radius)と全く同じズーム段階・
+// 半径の組み合わせ(直径に換算済み)。バーの太さをこれに合わせて連動させる。
+const TSUNAMI_BAR_WIDTH_STOPS = [[4, 9], [8, 11], [12, 14], [16, 19]]; // [zoom, 直径px]
+function tsunamiBarWidthForZoom(zoom) {
+  const stops = TSUNAMI_BAR_WIDTH_STOPS;
+  if (zoom <= stops[0][0]) return stops[0][1];
+  if (zoom >= stops[stops.length - 1][0]) return stops[stops.length - 1][1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [z0, w0] = stops[i], [z1, w1] = stops[i + 1];
+    if (zoom >= z0 && zoom <= z1) return w0 + ((zoom - z0) / (z1 - z0)) * (w1 - w0);
+  }
+  return stops[stops.length - 1][1];
+}
 
-function tsunamiBarIconId(map, color, heightPx, pxPerMeter) {
-  const BAR_W = TSUNAMI_BAR_WIDTH_PX;
-  const BORDER = 2;      // 白縁の太さ(CSSピクセル)
-  const bucket = Math.max(10, Math.round(heightPx / 4) * 4);
-  // 目盛り(0.5m刻みの白い点)の間隔もアイコンの見た目に含まれるので、キャッシュキーに
-  // 含めておく(pxPerMeterは呼び出し側で固定値のため、実質的には常に同じ値になる)。
-  const tickStepPx = Math.max(1, pxPerMeter * 0.5);
-  const id = `tsunami-bar-icon-${color.replace("#", "")}-${bucket}-${Math.round(tickStepPx * 10)}`;
+// heightM(観測された津波の高さ、実測のm)から、バー本体の長さ(CSSピクセル)を
+// 求める式。MIN_PX〜MAX_PXの間はnegligibleM(=表示する最小の高さ)〜maxMに対して線形。
+// 目盛り(0.5m刻みの点)の位置も、この同じ式を使って求める(そうしないと、
+// 「バー全体の長さ」と「点の間隔」の基準がズレて点の数が合わなくなるため)。
+function tsunamiBarPxForHeight(heightM, geom) {
+  const { minPx, maxPx, maxM, negligibleM } = geom;
+  const t = Math.max(0, Math.min(1, (heightM - negligibleM) / (maxM - negligibleM)));
+  return minPx + t * (maxPx - minPx);
+}
+
+// (色, 高さ, 太さ)の組み合わせごとにキャンバスへ描画し、map.addImageで登録して
+// 使い回す。同じ組み合わせなら2回目以降は再描画せずキャッシュを返す。
+function tsunamiBarIconId(map, color, heightM, barWidthPx, geom) {
+  const BAR_W = Math.round(barWidthPx);
+  const BORDER = 2; // 白縁の太さ(CSSピクセル)
+  const heightPx = tsunamiBarPxForHeight(Math.min(heightM, geom.maxM), geom);
+  const bucket = Math.max(10, Math.round(heightPx / 4) * 4); // 矩形の高さは4px単位にまとめて種類を抑える
+  // 目盛りの位置計算にはheightMそのものを使うので、キャッシュキーにも含めておく
+  // (0.1m単位に丸めて、これ以上細かい違いは同じアイコンを使い回す)。
+  const heightM10 = Math.round(Math.min(heightM, geom.maxM) * 10);
+  const id = `tsunami-bar-icon-${color.replace("#", "")}-${BAR_W}-${bucket}-${heightM10}`;
   if (map.hasImage(id)) return id;
 
   const pixelRatio = typeof window !== "undefined" && window.devicePixelRatio ? Math.min(window.devicePixelRatio, 3) : 1;
@@ -751,15 +773,19 @@ function tsunamiBarIconId(map, color, heightPx, pxPerMeter) {
   ctx.fillStyle = color;
   ctx.fill();
 
-  // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側=下端)を0mとして、そこから
-  // tickStepPxごとに上へ向かって点を打つ。バーの先端付近(見切れそうな位置)には
-  // 打たない。主張しすぎないよう、不透明な白ではなく半透明の白で薄めに描く。
+  // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側=下端)を基準に、実際の高さの
+  // 0.5, 1.0, 1.5m…の位置に、バー全体の長さと同じ式(tsunamiBarPxForHeight)で
+  // 点を打つ。観測された高さを超える位置には打たない。主張しすぎないよう、
+  // 不透明な白ではなく半透明の白で薄めに描く。
   const cx = totalW / 2;
   const bottomY = BORDER + bucket;
-  ctx.fillStyle = "rgba(255,255,255,0.45)";
-  for (let d = tickStepPx; d < bucket - 2; d += tickStepPx) {
+  ctx.fillStyle = "rgba(255,255,255,0.4)";
+  const exactHeightM = heightM10 / 10;
+  for (let h = 0.5; h <= exactHeightM + 1e-9; h += 0.5) {
+    const d = tsunamiBarPxForHeight(h, geom);
+    if (d > bucket - 2) break; // 先端付近(見切れそうな位置)には打たない
     ctx.beginPath();
-    ctx.arc(cx, bottomY - d, 1.4, 0, Math.PI * 2);
+    ctx.arc(cx, bottomY - d, 1.3, 0, Math.PI * 2);
     ctx.fill();
   }
 
@@ -1674,6 +1700,8 @@ function MapCanvas({
   // 津波情報も無い間)は何も表示されない。選択中の地点は"selected"プロパティを立てて、レイヤー側の
   // data-drivenなpaint式で強調表示させるのに加え、配列の最後に置くことで
   // (MapLibreは描画順=配列順のため)他のピンより必ず前面に来るようにする。
+  // 選択中でないもの同士は、より南(緯度が小さい)ものが前面に来るよう並べる
+  // (津波の高さバーのレイヤーもsymbol-sort-keyで同じ考え方に揃えている。MapCanvas内)。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
@@ -1682,7 +1710,8 @@ function MapCanvas({
     const points = [...(tideStationPoints || [])].sort((a, b) => {
       const aSel = a.code === selectedTideStationCode ? 1 : 0;
       const bSel = b.code === selectedTideStationCode ? 1 : 0;
-      return aSel - bSel; // 選択中のものが最後(=最前面)に来るよう昇順ソート
+      if (aSel !== bSel) return aSel - bSel; // 選択中のものが最後(=最前面)に来るよう昇順ソート
+      return b.lat - a.lat; // より南のものが後(=前面)に来るよう並べる
     });
     const features = points
       .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
@@ -1694,29 +1723,49 @@ function MapCanvas({
     source.setData({ type: "FeatureCollection", features });
   }, [tideStationPoints, selectedTideStationCode, status]);
 
-  // 観測された津波の高さバーの更新。App側から届く高さは0〜1に正規化された値
-  // (heightT)なので、ここでピクセル上のバーの高さに変換し、対応するアイコン
-  // (無ければその場でキャンバスに描いて登録)のidをプロパティに詰めておく。
+  // 観測された津波の高さバーの更新。長さ(高さ方向)はズームで変わらない固定ピクセル
+  // だが、太さは観測点の丸に合わせてズームごとに変える必要があるため、
+  // tsunamiHeightBarsが変わった時だけでなく、ズーム段階が変わった時にも再描画する
+  // (ズーム段階が変わっていない間は何もしない=無駄な再生成をしない)。
+  const tsunamiHeightBarsRef = useRef(tsunamiHeightBars);
+  tsunamiHeightBarsRef.current = tsunamiHeightBars;
+  const tsunamiBarZoomBucketRef = useRef(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
-    const source = map.getSource("tsunami-height-bars");
-    if (!source) return;
+
     const MIN_PX = 22;   // 0.2m相当の最小の高さ(ピクセル)
     const MAX_PX = 170;  // 10m以上でこの高さで頭打ち(見やすさのため長めに)
-    const MAX_M = 10;
-    const NEGLIGIBLE_M = 0.2;
-    const pxPerMeter = (MAX_PX - MIN_PX) / (MAX_M - NEGLIGIBLE_M); // 0.2m刻みの目盛り間隔の計算用
-    const features = (tsunamiHeightBars || []).map(bar => {
-      const heightPx = MIN_PX + Math.max(0, Math.min(1, bar.heightT)) * (MAX_PX - MIN_PX);
-      const iconId = tsunamiBarIconId(map, bar.color, heightPx, pxPerMeter);
-      return {
-        type: "Feature",
-        geometry: { type: "Point", coordinates: [bar.lng, bar.lat] },
-        properties: { code: bar.code, iconId, sortKey: bar.sortKey || 0 },
-      };
-    });
-    source.setData({ type: "FeatureCollection", features });
+    const geom = { minPx: MIN_PX, maxPx: MAX_PX, maxM: 10, negligibleM: 0.2 }; // 0.2m = 表示する最小の高さ(App側のTSUNAMI_HEIGHT_NEGLIGIBLE_Mと同じ値)
+
+    function render() {
+      const source = map.getSource("tsunami-height-bars");
+      if (!source) return;
+      const barWidthPx = tsunamiBarWidthForZoom(map.getZoom());
+      const features = (tsunamiHeightBarsRef.current || []).map(bar => {
+        const iconId = tsunamiBarIconId(map, bar.color, Math.abs(bar.heightM), barWidthPx, geom);
+        return {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [bar.lng, bar.lat] },
+          properties: { code: bar.code, iconId, sortKey: bar.sortKey || 0 },
+        };
+      });
+      source.setData({ type: "FeatureCollection", features });
+    }
+
+    render(); // tsunamiHeightBars自体が変わった時は、ズーム段階に関わらず必ず再描画する
+
+    // ズームは連続的に発火するので、太さの見た目が変わるバケット(0.25刻み程度)が
+    // 実際に変わった時だけ再描画する。
+    function handleZoom() {
+      const bucket = Math.round(map.getZoom() * 4);
+      if (bucket === tsunamiBarZoomBucketRef.current) return;
+      tsunamiBarZoomBucketRef.current = bucket;
+      render();
+    }
+    tsunamiBarZoomBucketRef.current = Math.round(map.getZoom() * 4);
+    map.on("zoom", handleZoom);
+    return () => { map.off("zoom", handleZoom); };
   }, [tsunamiHeightBars, status]);
 
   // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
@@ -11358,16 +11407,6 @@ export default function App() {
     return result;
   }, [activeTsunami, tideStationsWithGrade, tideObsByStation]);
 
-  // 観測点の描画順(重なり方)を、地図上の丸のレイヤーと津波の高さバーのレイヤーとで
-  // 揃えるための、観測点コード→安定した通し番号のマップ。マスタ一覧(tideStations、
-  // 取得した順のまま)の並びを使うことで、フィルタしても・グレードが変わっても
-  // 相対的な並び順は変化しない。
-  const tideStationIndexByCode = useMemo(() => {
-    const m = new Map();
-    tideStations.forEach((st, i) => m.set(st.code, i));
-    return m;
-  }, [tideStations]);
-
   // 地図に表示する観測点一覧。丸の色(dotColor)は、予報区の公式グレードではなく
   // 実際に観測された津波の高さ(tsunamiHeightByStation)から決める
   // (tsunamiHeightBandColor参照。未観測・微弱の間は薄グレー)。
@@ -11398,13 +11437,14 @@ export default function App() {
           color: tsunamiHeightBandColor(heightM),
           lng: st.lon,
           lat: st.lat,
-          // 観測点の丸のレイヤー(circle、常に配列順=描画順)と、バーのレイヤー
-          // (symbol、symbol-sort-keyで明示的に順序指定)の重なり方を一致させるための
-          // 通し番号。
-          sortKey: tideStationIndexByCode.get(st.code) ?? 0,
+          // 地図上でより南(緯度が小さい)ものほど前面(=描画順で後)に来るようにする
+          // (観測点の丸のレイヤーも同じ考え方で並べ替えている。MapCanvas参照)。
+          // symbol-sort-keyは値が大きいほど後(前面)に描かれるため、緯度の符号を
+          // 反転させておく。
+          sortKey: -st.lat,
         };
       });
-  }, [tideStationsWithGrade, tsunamiHeightByStation, tideStationIndexByCode]);
+  }, [tideStationsWithGrade, tsunamiHeightByStation]);
 
   // 潮位観測点ピン(発令中の予報区分。潮位計モードでない間に表示しているもの)を
   // 地図上でタップした時、手動で潮位計モードに入って観測点を選んだ時と同じ体験に
