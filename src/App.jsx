@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.3a";
+const APP_VERSION = "1.2.3b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -699,6 +699,55 @@ function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.d
 }
 
 /* ─────────────────────────────────────────────────────
+   観測された津波の高さバー用のアイコン生成。
+   地図の座標オフセットで長さを表現する線分だと、ズームするたびに実際の距離のまま
+   拡大縮小されて見た目の長さが変わってしまう。ピクセル上の見た目のサイズをズームに
+   関わらず一定に保つため、あらかじめキャンバスに「白縁+色付きの縦長バー」を
+   描いておき、MapLibreのsymbolレイヤー(icon-size固定)としてピン留めする方式にする。
+   ───────────────────────────────────────────────────── */
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+// heightPx(バー本体の高さ、CSSピクセル)を4px単位に丸めて、生成するアイコンの
+// 種類(color × 高さ)を抑える。同じ(色, 丸めた高さ)の組み合わせは1回だけ描画し、
+// map.addImageで登録して使い回す。
+function tsunamiBarIconId(map, color, heightPx) {
+  const BAR_W = 12;      // バー本体の幅(CSSピクセル)
+  const BORDER = 2;      // 白縁の太さ(CSSピクセル)
+  const bucket = Math.max(10, Math.round(heightPx / 4) * 4);
+  const id = `tsunami-bar-icon-${color.replace("#", "")}-${bucket}`;
+  if (map.hasImage(id)) return id;
+
+  const pixelRatio = typeof window !== "undefined" && window.devicePixelRatio ? Math.min(window.devicePixelRatio, 3) : 1;
+  const totalW = BAR_W + BORDER * 2;
+  const totalH = bucket + BORDER * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(totalW * pixelRatio);
+  canvas.height = Math.ceil(totalH * pixelRatio);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(pixelRatio, pixelRatio);
+
+  // 白い縁取り(外側)を先に塗り、その内側を本体色で塗ることでケーシング(縁取り)を作る。
+  roundRectPath(ctx, 0, 0, totalW, totalH, BAR_W / 2 + BORDER);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  roundRectPath(ctx, BORDER, BORDER, BAR_W, bucket, BAR_W / 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+
+  map.addImage(id, ctx.getImageData(0, 0, canvas.width, canvas.height), { pixelRatio });
+  return id;
+}
+
+/* ─────────────────────────────────────────────────────
    MAP CANVAS — MapLibre GL JS(描画エンジン) + ローカルGeoJSON(データ)
    世界(world.json)・都道府県(prefectures.json)をベクターとして描画する。
    外部タイル・外部スタイルサーバーには依存しない。
@@ -1066,35 +1115,28 @@ function MapCanvas({
             },
           });
 
-          // 観測された津波の高さ(推定)を表すバー。潮位観測点の座標を起点に、緯度方向
-          // (北向き)へ高さに応じた長さの線分を伸ばして表現する(App側の
-          // tsunamiHeightBars参照。データが空の間は何も描かれない)。観測点ピンの
-          // 「土台」に見えるよう、ピンのレイヤーより先(下)に追加しておく。
-          // 警報グレードの色(海岸線と同系色)だけだと、海岸線のラインと同化して
-          // 見づらいため、まず白い縁取り(halo)を太めに描いてから、その上に本体の
-          // 色付きバーを重ねる、いわゆる「ケーシング」の手法で視認性を確保する。
+          // 観測された津波の高さ(推定)を表すバー。潮位観測点の座標を起点に、上向きに
+          // 高さに応じた長さのバーを表示する(App側のtsunamiHeightBars参照。データが
+          // 空の間は何も描かれない)。地図の座標オフセットで長さを表現する線分だと
+          // ズームするたびに見た目の長さが伸び縮みしてしまうため、代わりにキャンバスで
+          // 描いた画像をアイコンとして貼り付けるsymbolレイヤーにしている
+          // (アイコンのicon-sizeは常に1固定なので、ピクセル上のサイズはズームに
+          // 左右されない)。白い縁取りも、この画像の中にあらかじめ描き込んである。
+          // 観測点ピンの「土台」に見えるよう、ピンのレイヤーより先(下)に追加しておく。
           map.addSource("tsunami-height-bars", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
           });
           map.addLayer({
-            id: "tsunami-height-bars-halo-layer",
-            type: "line",
-            source: "tsunami-height-bars",
-            layout: { "line-cap": "round", "line-join": "round" },
-            paint: {
-              "line-color": "#ffffff",
-              "line-width": 10,
-            },
-          });
-          map.addLayer({
             id: "tsunami-height-bars-layer",
-            type: "line",
+            type: "symbol",
             source: "tsunami-height-bars",
-            layout: { "line-cap": "round", "line-join": "round" },
-            paint: {
-              "line-color": ["get", "color"],
-              "line-width": 6,
+            layout: {
+              "icon-image": ["get", "iconId"],
+              "icon-anchor": "bottom",
+              "icon-size": 1, // 固定(ズームに応じた拡大縮小をしない)
+              "icon-allow-overlap": true,
+              "icon-ignore-placement": true,
             },
           });
 
@@ -1635,18 +1677,25 @@ function MapCanvas({
     source.setData({ type: "FeatureCollection", features });
   }, [tideStationPoints, selectedTideStationCode, status]);
 
-  // 観測された津波の高さバーの更新。App側で既に「バーとして描く座標(from/to)・色」
-  // まで計算済みのものが渡ってくるので、ここではGeoJSONに詰め替えるだけでよい。
+  // 観測された津波の高さバーの更新。App側から届く高さは0〜1に正規化された値
+  // (heightT)なので、ここでピクセル上のバーの高さに変換し、対応するアイコン
+  // (無ければその場でキャンバスに描いて登録)のidをプロパティに詰めておく。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
     const source = map.getSource("tsunami-height-bars");
     if (!source) return;
-    const features = (tsunamiHeightBars || []).map(bar => ({
-      type: "Feature",
-      geometry: { type: "LineString", coordinates: [bar.from, bar.to] },
-      properties: { code: bar.code, color: bar.color },
-    }));
+    const MIN_PX = 14;  // 0.2m相当の最小の高さ(ピクセル、見やすさのため少し大きめに)
+    const MAX_PX = 90;  // 10m以上でこの高さで頭打ち
+    const features = (tsunamiHeightBars || []).map(bar => {
+      const heightPx = MIN_PX + Math.max(0, Math.min(1, bar.heightT)) * (MAX_PX - MIN_PX);
+      const iconId = tsunamiBarIconId(map, bar.color, heightPx);
+      return {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [bar.lng, bar.lat] },
+        properties: { code: bar.code, iconId },
+      };
+    });
     source.setData({ type: "FeatureCollection", features });
   }, [tsunamiHeightBars, status]);
 
@@ -8985,9 +9034,10 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
   { value: "NonEffective", label: "津波予報" },
 ];
 
-// テスト配信で観測点の高さを選ぶ時のプルダウン候補(m)。気象庁が発表する津波の
-// 高さの区切り方(0.2/0.3/0.5/1/2/3/4/5/8/10m超、など)を参考にした代表値。
-const TSUNAMI_HEIGHT_PICK_OPTIONS = [0.2, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0];
+// テスト配信で観測点の高さを選ぶ時のプルダウン候補(m)。0.2m(微弱ルールの境目)から
+// 10.0mまで0.1m刻み。浮動小数の誤差が出ないよう、整数(0.1m単位)で回してから
+// 10で割っている。
+const TSUNAMI_HEIGHT_PICK_OPTIONS = Array.from({ length: 99 }, (_, i) => (i + 2) / 10);
 
 function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
@@ -9103,7 +9153,7 @@ function TsunamiTestBroadcastPanel({
                     }}
                   >
                     {TSUNAMI_HEIGHT_PICK_OPTIONS.map(v => (
-                      <option key={v} value={v}>{v}m</option>
+                      <option key={v} value={v}>{v.toFixed(1)}m</option>
                     ))}
                   </select>
                   <PressableButton
@@ -11280,8 +11330,10 @@ export default function App() {
   // 軽さを優先した簡略化。緯度方向なら1度=約111kmで場所によらず一定なので、
   // 見た目の長さが場所によって歪まない)。色は予報区のグレード配色(既存の
   // buildTsunamiAreaColorExprと同じ配色)を流用し、地図の凡例と一致させる。
-  const TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG = 0.035; // 0.2m相当の最小の長さ(見やすさのため少し大きめに)
-  const TSUNAMI_HEIGHT_BAR_MAX_LEN_DEG = 0.26;  // 10m以上でこの長さで頭打ち
+  // 高さ(m)を0〜1に正規化した値(heightT)にしておく。実際のピクセル上のバーの
+  // 長さはMapCanvas側で決める(ズームで見た目の長さが変わらないよう、アイコンの
+  // ピクセルサイズとして描画するため。地図の座標オフセットで長さを表現すると
+  // ズームに応じて伸び縮みしてしまうので、ここでは使わない)。
   const TSUNAMI_HEIGHT_BAR_MAX_M = 10;
   const tsunamiHeightBars = useMemo(() => {
     return tideStationsWithGrade
@@ -11289,15 +11341,15 @@ export default function App() {
       .map(st => {
         const heightM = tsunamiHeightByStation[st.code];
         const clamped = Math.min(Math.abs(heightM), TSUNAMI_HEIGHT_BAR_MAX_M);
-        const t = (clamped - TSUNAMI_HEIGHT_NEGLIGIBLE_M) / (TSUNAMI_HEIGHT_BAR_MAX_M - TSUNAMI_HEIGHT_NEGLIGIBLE_M);
-        const lenDeg = TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG + t * (TSUNAMI_HEIGHT_BAR_MAX_LEN_DEG - TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG);
+        const heightT = (clamped - TSUNAMI_HEIGHT_NEGLIGIBLE_M) / (TSUNAMI_HEIGHT_BAR_MAX_M - TSUNAMI_HEIGHT_NEGLIGIBLE_M);
         return {
           code: st.code,
           name: st.name,
           heightM,
+          heightT,
           color: tsunamiGradeInfo(st.activeGrade).color,
-          from: [st.lon, st.lat],
-          to: [st.lon, st.lat + lenDeg],
+          lng: st.lon,
+          lat: st.lat,
         };
       });
   }, [tideStationsWithGrade, tsunamiHeightByStation]);
