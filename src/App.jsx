@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.3c";
+const APP_VERSION = "1.2.3e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -728,9 +728,9 @@ function tsunamiBarIconId(map, color, heightPx, pxPerMeter) {
   const BAR_W = TSUNAMI_BAR_WIDTH_PX;
   const BORDER = 2;      // 白縁の太さ(CSSピクセル)
   const bucket = Math.max(10, Math.round(heightPx / 4) * 4);
-  // 目盛り(0.2m刻みの白い点)の間隔もアイコンの見た目に含まれるので、キャッシュキーに
+  // 目盛り(0.5m刻みの白い点)の間隔もアイコンの見た目に含まれるので、キャッシュキーに
   // 含めておく(pxPerMeterは呼び出し側で固定値のため、実質的には常に同じ値になる)。
-  const tickStepPx = Math.max(1, pxPerMeter * 0.2);
+  const tickStepPx = Math.max(1, pxPerMeter * 0.5);
   const id = `tsunami-bar-icon-${color.replace("#", "")}-${bucket}-${Math.round(tickStepPx * 10)}`;
   if (map.hasImage(id)) return id;
 
@@ -751,12 +751,12 @@ function tsunamiBarIconId(map, color, heightPx, pxPerMeter) {
   ctx.fillStyle = color;
   ctx.fill();
 
-  // 0.2m刻みの目盛り(白い点)。バーの根本(観測点側=下端)を0mとして、そこから
+  // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側=下端)を0mとして、そこから
   // tickStepPxごとに上へ向かって点を打つ。バーの先端付近(見切れそうな位置)には
-  // 打たない。
+  // 打たない。主張しすぎないよう、不透明な白ではなく半透明の白で薄めに描く。
   const cx = totalW / 2;
   const bottomY = BORDER + bucket;
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = "rgba(255,255,255,0.45)";
   for (let d = tickStepPx; d < bucket - 2; d += tickStepPx) {
     ctx.beginPath();
     ctx.arc(cx, bottomY - d, 1.4, 0, Math.PI * 2);
@@ -1157,6 +1157,9 @@ function MapCanvas({
               "icon-size": 1, // 固定(ズームに応じた拡大縮小をしない)
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
+              // 観測点の丸のレイヤー(常に配列順=描画順)と重なり方を揃えるための
+              // 明示的な並び順(symbolレイヤーは指定しないと重なり順が保証されないため)。
+              "symbol-sort-key": ["get", "sortKey"],
             },
           });
 
@@ -1182,13 +1185,7 @@ function MapCanvas({
               "circle-color": [
                 "case",
                 ["get", "selected"], "#FF9F0A",
-                ["match", ["get", "grade"],
-                  "MajorWarning", "#BF5AF2",
-                  "Warning", "#FF453A",
-                  "Watch", "#FFD60A",
-                  "NonEffective", "#64D2FF",
-                  "#30D5C8",
-                ],
+                ["get", "dotColor"],
               ],
               "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
               "circle-stroke-color": "#ffffff",
@@ -1692,7 +1689,7 @@ function MapCanvas({
       .map(p => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [p.lon, p.lat] },
-        properties: { code: p.code, name: p.name, selected: p.code === selectedTideStationCode, grade: p.activeGrade || "" },
+        properties: { code: p.code, name: p.name, selected: p.code === selectedTideStationCode, dotColor: p.dotColor || "#B9B9C0" },
       }));
     source.setData({ type: "FeatureCollection", features });
   }, [tideStationPoints, selectedTideStationCode, status]);
@@ -1716,7 +1713,7 @@ function MapCanvas({
       return {
         type: "Feature",
         geometry: { type: "Point", coordinates: [bar.lng, bar.lat] },
-        properties: { code: bar.code, iconId },
+        properties: { code: bar.code, iconId, sortKey: bar.sortKey || 0 },
       };
     });
     source.setData({ type: "FeatureCollection", features });
@@ -2767,6 +2764,20 @@ const TSUNAMI_GRADE_FALLBACK = { label: "情報", weight: 0, color: "#8E8E93" };
 
 function tsunamiGradeInfo(grade) {
   return TSUNAMI_GRADE_INFO[grade] || TSUNAMI_GRADE_FALLBACK;
+}
+
+// 観測点の丸・観測された津波の高さバーの色は、予報区の公式なグレード(警報等の
+// 種類)ではなく、実際に観測された高さの大小そのものに応じて塗り分ける
+// (0.2〜1m=注意報色、1〜3m=警報色、3m以上=大津波警報色、それ未満・未観測は薄グレー)。
+// 「観測点」欄の丸は今どれくらいの実況かが一目で分かるように、という考え方。
+const TSUNAMI_DOT_DEFAULT_COLOR = "#B9B9C0"; // 観測なし・微弱の間の薄グレー
+function tsunamiHeightBandColor(heightM) {
+  if (heightM == null) return TSUNAMI_DOT_DEFAULT_COLOR;
+  const abs = Math.abs(heightM);
+  if (abs >= 3) return tsunamiGradeInfo("MajorWarning").color;
+  if (abs >= 1) return tsunamiGradeInfo("Warning").color;
+  if (abs >= 0.2) return tsunamiGradeInfo("Watch").color;
+  return TSUNAMI_DOT_DEFAULT_COLOR;
 }
 
 // tsunami-areas.json(津波予報区の海岸線)の各featureは properties.name に
@@ -11347,16 +11358,30 @@ export default function App() {
     return result;
   }, [activeTsunami, tideStationsWithGrade, tideObsByStation]);
 
-  // 地図に描く「観測された津波の高さ」バー。station本体の座標を起点に、緯度方向
-  // (北向き)へ高さに応じた長さだけ伸ばした線分として表現する(北向き固定なのは、
-  // 海岸線ごとに正確な「沖向き」を計算するのは重く・複雑になるため、シンプルさと
-  // 軽さを優先した簡略化。緯度方向なら1度=約111kmで場所によらず一定なので、
-  // 見た目の長さが場所によって歪まない)。色は予報区のグレード配色(既存の
-  // buildTsunamiAreaColorExprと同じ配色)を流用し、地図の凡例と一致させる。
-  // 高さ(m)を0〜1に正規化した値(heightT)にしておく。実際のピクセル上のバーの
-  // 長さはMapCanvas側で決める(ズームで見た目の長さが変わらないよう、アイコンの
-  // ピクセルサイズとして描画するため。地図の座標オフセットで長さを表現すると
-  // ズームに応じて伸び縮みしてしまうので、ここでは使わない)。
+  // 観測点の描画順(重なり方)を、地図上の丸のレイヤーと津波の高さバーのレイヤーとで
+  // 揃えるための、観測点コード→安定した通し番号のマップ。マスタ一覧(tideStations、
+  // 取得した順のまま)の並びを使うことで、フィルタしても・グレードが変わっても
+  // 相対的な並び順は変化しない。
+  const tideStationIndexByCode = useMemo(() => {
+    const m = new Map();
+    tideStations.forEach((st, i) => m.set(st.code, i));
+    return m;
+  }, [tideStations]);
+
+  // 地図に表示する観測点一覧。丸の色(dotColor)は、予報区の公式グレードではなく
+  // 実際に観測された津波の高さ(tsunamiHeightByStation)から決める
+  // (tsunamiHeightBandColor参照。未観測・微弱の間は薄グレー)。
+  const tideStationsForMap = useMemo(() => {
+    return tideStationsWithGrade.map(st => ({
+      ...st,
+      dotColor: tsunamiHeightBandColor(tsunamiHeightByStation[st.code]),
+    }));
+  }, [tideStationsWithGrade, tsunamiHeightByStation]);
+
+  // 地図に描く「観測された津波の高さ」バー。高さ(m)を0〜1に正規化した値(heightT)に
+  // しておき、実際のピクセル上のバーの長さはMapCanvas側で決める(ズームで見た目の
+  // 長さが変わらないよう、アイコンのピクセルサイズとして描画するため)。色は観測点の
+  // 丸と同じtsunamiHeightBandColorを使い、2つのレイヤーの色がズレないようにする。
   const TSUNAMI_HEIGHT_BAR_MAX_M = 10;
   const tsunamiHeightBars = useMemo(() => {
     return tideStationsWithGrade
@@ -11370,12 +11395,16 @@ export default function App() {
           name: st.name,
           heightM,
           heightT,
-          color: tsunamiGradeInfo(st.activeGrade).color,
+          color: tsunamiHeightBandColor(heightM),
           lng: st.lon,
           lat: st.lat,
+          // 観測点の丸のレイヤー(circle、常に配列順=描画順)と、バーのレイヤー
+          // (symbol、symbol-sort-keyで明示的に順序指定)の重なり方を一致させるための
+          // 通し番号。
+          sortKey: tideStationIndexByCode.get(st.code) ?? 0,
         };
       });
-  }, [tideStationsWithGrade, tsunamiHeightByStation]);
+  }, [tideStationsWithGrade, tsunamiHeightByStation, tideStationIndexByCode]);
 
   // 潮位観測点ピン(発令中の予報区分。潮位計モードでない間に表示しているもの)を
   // 地図上でタップした時、手動で潮位計モードに入って観測点を選んだ時と同じ体験に
@@ -11403,8 +11432,8 @@ export default function App() {
           stationPoints={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeCard.resolvedPoints || EMPTY_EQDB_LIST : selectedQuakePoints) : EMPTY_EQDB_LIST}
           stationMarkersVisible={showQuakeMapLayers && stationMarkersVisible}
           tideStationPoints={
-            showTideGaugeLayer ? tideStationsWithGrade
-            : showActiveTsunamiTideStations ? tideStationsWithGrade.filter(s => s.activeGrade)
+            showTideGaugeLayer ? tideStationsForMap
+            : showActiveTsunamiTideStations ? tideStationsForMap.filter(s => s.activeGrade)
             : EMPTY_EQDB_LIST
           }
           onSelectTideStation={handleSelectTideStationOnMap}
