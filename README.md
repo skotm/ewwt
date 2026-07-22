@@ -53,3 +53,9 @@ Webアプリケーションのため、[ウェブサイト](https://skotm.github
 
 津波タブの機能は
 [scratch-realtime-earthquake-viewer-page](https://github.com/kotoho7/scratch-realtime-earthquake-viewer-page)([kotoho7](https://github.com/kotoho7)氏)を参考にさせていただきました。
+
+### 参考にした記事
+[震度データベースの地震一覧を取得する](https://qiita.com/Ichihai1415/items/a2af335ad68224b1280f)
+
+[推計震度分布のGeoJSON化](https://qiita.com/soshi1822/items/59cac82f83b032653206)
+
