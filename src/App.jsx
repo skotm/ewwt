@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.3";
+const APP_VERSION = "1.2.3a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -1070,9 +1070,22 @@ function MapCanvas({
           // (北向き)へ高さに応じた長さの線分を伸ばして表現する(App側の
           // tsunamiHeightBars参照。データが空の間は何も描かれない)。観測点ピンの
           // 「土台」に見えるよう、ピンのレイヤーより先(下)に追加しておく。
+          // 警報グレードの色(海岸線と同系色)だけだと、海岸線のラインと同化して
+          // 見づらいため、まず白い縁取り(halo)を太めに描いてから、その上に本体の
+          // 色付きバーを重ねる、いわゆる「ケーシング」の手法で視認性を確保する。
           map.addSource("tsunami-height-bars", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
+          });
+          map.addLayer({
+            id: "tsunami-height-bars-halo-layer",
+            type: "line",
+            source: "tsunami-height-bars",
+            layout: { "line-cap": "round", "line-join": "round" },
+            paint: {
+              "line-color": "#ffffff",
+              "line-width": 10,
+            },
           });
           map.addLayer({
             id: "tsunami-height-bars-layer",
@@ -1081,7 +1094,7 @@ function MapCanvas({
             layout: { "line-cap": "round", "line-join": "round" },
             paint: {
               "line-color": ["get", "color"],
-              "line-width": 5,
+              "line-width": 6,
             },
           });
 
@@ -5362,6 +5375,7 @@ function BottomDock({
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
+  candidateHeightStations, onAddTsunamiHeightPick,
   stations, searchQuake, onFoundSearchQuake,
   onEpicenterPointsChange,
   onEpicenterLoadingChange,
@@ -6699,6 +6713,8 @@ function BottomDock({
                   pickedTsunamiHeights={pickedTsunamiHeights}
                   onChangeTsunamiHeightPick={onChangeTsunamiHeightPick}
                   onRemoveTsunamiHeightPick={onRemoveTsunamiHeightPick}
+                  candidateHeightStations={candidateHeightStations}
+                  onAddTsunamiHeightPick={onAddTsunamiHeightPick}
                 />
 
                 {/* フローティング部分(設定メニュー)とボタン類(ナビ行)の境界線 */}
@@ -8969,12 +8985,21 @@ const TEST_TSUNAMI_GRADE_OPTIONS = [
   { value: "NonEffective", label: "津波予報" },
 ];
 
+// テスト配信で観測点の高さを選ぶ時のプルダウン候補(m)。気象庁が発表する津波の
+// 高さの区切り方(0.2/0.3/0.5/1/2/3/4/5/8/10m超、など)を参考にした代表値。
+const TSUNAMI_HEIGHT_PICK_OPTIONS = [0.2, 0.3, 0.5, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0];
+
 function TsunamiTestBroadcastPanel({
   testTsunami, onBroadcast, onCancel, onClear,
   tsunamiAreaPickActive, onStartAreaPick, pickedAreas = [], onRemoveAreaPick, onCycleAreaGrade,
   pickedHeights = [], onChangeHeightPick, onRemoveHeightPick,
+  candidateHeightStations = [], onAddHeightPick,
 }) {
   const { tokens } = useContext(ThemeContext);
+  // 追加先の候補: すでに選択済みの観測点は除いておく(二重追加を防ぐ)。
+  const availableCandidates = candidateHeightStations.filter(
+    st => !pickedHeights.some(h => h.code === st.code)
+  );
 
   return (
     <>
@@ -9068,22 +9093,19 @@ function TsunamiTestBroadcastPanel({
                   <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: tokens.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {name}
                   </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    step={0.1}
+                  <select
                     value={heightM}
-                    onChange={e => {
-                      const v = parseFloat(e.target.value);
-                      onChangeHeightPick?.(code, Number.isFinite(v) ? v : 0);
-                    }}
+                    onChange={e => onChangeHeightPick?.(code, parseFloat(e.target.value))}
                     style={{
-                      width: 64, padding: "6px 8px", borderRadius: 8, border: "none",
+                      padding: "6px 8px", borderRadius: 8, border: "none",
                       background: `rgba(${tokens.ink},0.08)`, color: tokens.text,
-                      fontSize: 13, fontWeight: 600, textAlign: "right",
+                      fontSize: 13, fontWeight: 600,
                     }}
-                  />
-                  <span style={{ fontSize: 12, color: `rgba(${tokens.ink},0.45)`, flexShrink: 0 }}>m</span>
+                  >
+                    {TSUNAMI_HEIGHT_PICK_OPTIONS.map(v => (
+                      <option key={v} value={v}>{v}m</option>
+                    ))}
+                  </select>
                   <PressableButton
                     type="button"
                     onClick={() => onRemoveHeightPick?.(code)}
@@ -9104,11 +9126,34 @@ function TsunamiTestBroadcastPanel({
               まだ観測点が選ばれていません(未設定の間は、実際の潮位データから自動計算されます)
             </div>
           )}
+          {pickedAreas.length === 0 ? (
+            <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>
+              先に予報区を選ぶと、その予報区に属する観測点をここから選べるようになります
+            </div>
+          ) : availableCandidates.length === 0 ? (
+            <div style={{ fontSize: 12, color: `rgba(${tokens.ink},0.4)` }}>
+              選択中の予報区に属する観測点は、もうすべて追加済みです
+            </div>
+          ) : (
+            <select
+              value=""
+              onChange={e => { if (e.target.value) onAddHeightPick?.(e.target.value); }}
+              style={{
+                width: "100%", padding: "10px 12px", borderRadius: 10, border: "none", cursor: "pointer",
+                background: "rgba(10,132,255,0.14)", color: "#0A84FF",
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              <option value="">+ 観測点を追加…</option>
+              {availableCandidates.map(st => (
+                <option key={st.code} value={st.code}>{st.name}({st.tsunamiAreaName})</option>
+              ))}
+            </select>
+          )}
         </div>
         <div style={{ margin: "-6px 14px 12px", fontSize: 11, color: `rgba(${tokens.ink},0.4)`, lineHeight: 1.6 }}>
-          「地図で選択」中に、海岸線の代わりに観測点(丸)をタップすると、ここに追加されます
-          (もう一度タップで解除)。選んだ予報区の中の観測点でないと、地図上には反映されません。
-          ±0.2m未満は微弱として扱われ、実際の表示と同様バーは出ません。
+          上の予報区に実際に属する観測点だけが候補に出ます。±0.2m未満は微弱として扱われ、
+          実際の表示と同様バーは出ません。
         </div>
       </SettingsCard>
 
@@ -9670,6 +9715,7 @@ function SettingsBody({
   tsunamiAreaPickActive, onStartTsunamiAreaPick, pickedTsunamiAreas,
   onRemoveTsunamiAreaPick, onCycleTsunamiAreaGrade,
   pickedTsunamiHeights, onChangeTsunamiHeightPick, onRemoveTsunamiHeightPick,
+  candidateHeightStations, onAddTsunamiHeightPick,
 }) {
   // 「フローティングを不透明にする」トグル用。BottomDock経由でpropsを何段も
   // 通す代わりに、Appのトップレベルで配信しているcontextを直接購読する。
@@ -9954,6 +10000,8 @@ function SettingsBody({
           pickedHeights={pickedTsunamiHeights}
           onChangeHeightPick={onChangeTsunamiHeightPick}
           onRemoveHeightPick={onRemoveTsunamiHeightPick}
+          candidateHeightStations={candidateHeightStations}
+          onAddHeightPick={onAddTsunamiHeightPick}
         />
       </>
     );
@@ -10665,13 +10713,12 @@ export default function App() {
   const [pickedTsunamiHeights, setPickedTsunamiHeights] = useState([]); // [{ code, name, heightM }]
   const pickedTsunamiHeightsSnapshotRef = useRef([]); // キャンセル時に戻す先
 
-  function handlePickTsunamiHeightStation(code) {
-    setPickedTsunamiHeights(prev => {
-      if (prev.some(h => h.code === code)) return prev.filter(h => h.code !== code); // 再タップで解除
-      const st = tideStations.find(s => s.code === code);
-      if (!st) return prev;
-      return [...prev, { code: st.code, name: st.name, heightM: 1.0 }]; // 分かりやすいデフォルト値
-    });
+  const TSUNAMI_HEIGHT_PICK_DEFAULT_M = 1.0;
+  function addTsunamiHeightPick(code) {
+    if (!code || pickedTsunamiHeights.some(h => h.code === code)) return;
+    const st = candidateHeightStations.find(s => s.code === code);
+    if (!st) return;
+    setPickedTsunamiHeights(prev => [...prev, { code: st.code, name: st.name, heightM: TSUNAMI_HEIGHT_PICK_DEFAULT_M }]);
   }
   function changeTsunamiHeightPick(code, heightM) {
     setPickedTsunamiHeights(prev => prev.map(h => (h.code === code ? { ...h, heightM } : h)));
@@ -11099,6 +11146,26 @@ export default function App() {
     });
   }, [tideStations, tsunamiAreasGeoData]);
 
+  // 津波警報テスト配信で「予報区」として選んでいる(まだ配信前の作業中の)ものに
+  // 実際に属する観測点の候補一覧。地図タップではなく、この一覧からプルダウンで
+  // 選べるようにすることで、配信後に必ずactiveGradeが付く(=バーがちゃんと出る)
+  // 組み合わせだけを選ばせられる。
+  const candidateHeightStations = useMemo(() => {
+    const areaNames = new Set(pickedTsunamiAreas.map(a => a.name));
+    if (areaNames.size === 0) return EMPTY_EQDB_LIST;
+    return tideStationsWithArea.filter(st => st.tsunamiAreaName && areaNames.has(st.tsunamiAreaName));
+  }, [pickedTsunamiAreas, tideStationsWithArea]);
+
+  // 予報区の選択を後から変えて、既に高さを設定していた観測点が対象外になった場合は
+  // 一覧からも取り除く(配信しても反映されない設定が残り続けるのを防ぐ)。
+  useEffect(() => {
+    setPickedTsunamiHeights(prev => {
+      const validCodes = new Set(candidateHeightStations.map(st => st.code));
+      const next = prev.filter(h => validCodes.has(h.code));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [candidateHeightStations]);
+
   // 潮位観測点に、現在有効な津波情報の警報グレードを対応付ける。上で求めた
   // 「一番近い予報区の正式名称」と、津波情報側のareas[].nameを完全一致で照合するため、
   // 都道府県名だけで大まかに合わせていた以前の方式より正確なはず。
@@ -11213,8 +11280,8 @@ export default function App() {
   // 軽さを優先した簡略化。緯度方向なら1度=約111kmで場所によらず一定なので、
   // 見た目の長さが場所によって歪まない)。色は予報区のグレード配色(既存の
   // buildTsunamiAreaColorExprと同じ配色)を流用し、地図の凡例と一致させる。
-  const TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG = 0.02;  // 0.2m相当の最小の長さ
-  const TSUNAMI_HEIGHT_BAR_MAX_LEN_DEG = 0.16;  // 10m以上でこの長さで頭打ち
+  const TSUNAMI_HEIGHT_BAR_MIN_LEN_DEG = 0.035; // 0.2m相当の最小の長さ(見やすさのため少し大きめに)
+  const TSUNAMI_HEIGHT_BAR_MAX_LEN_DEG = 0.26;  // 10m以上でこの長さで頭打ち
   const TSUNAMI_HEIGHT_BAR_MAX_M = 10;
   const tsunamiHeightBars = useMemo(() => {
     return tideStationsWithGrade
@@ -11242,10 +11309,6 @@ export default function App() {
   // だけの値」パターンを踏襲し、BottomDock側のuseEffectで実際の切り替えを行う。
   const [tideStationSelectSignal, setTideStationSelectSignal] = useState(0);
   function handleSelectTideStationOnMap(code) {
-    if (tsunamiAreaPickActive) {
-      handlePickTsunamiHeightStation(code);
-      return;
-    }
     setSelectedTideStationCode(code);
     setTideStationSelectSignal(n => n + 1);
   }
@@ -11267,7 +11330,6 @@ export default function App() {
           tideStationPoints={
             showTideGaugeLayer ? tideStationsWithGrade
             : showActiveTsunamiTideStations ? tideStationsWithGrade.filter(s => s.activeGrade)
-            : tsunamiAreaPickActive ? tideStationsWithGrade // テスト配信の予報区ピック中は、観測点タップで高さも設定できるよう全件表示
             : EMPTY_EQDB_LIST
           }
           onSelectTideStation={handleSelectTideStationOnMap}
@@ -11314,9 +11376,8 @@ export default function App() {
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: themeContextValue.tokens.text, flex: 1 }}>
-                  海岸線=予報区、観測点(丸)=高さ設定
-                  {pickedTsunamiAreas.length > 0 && ` / 予報区${pickedTsunamiAreas.length}件`}
-                  {pickedTsunamiHeights.length > 0 && ` / 観測点${pickedTsunamiHeights.length}件`}
+                  海岸線をタップして予報区を選択
+                  {pickedTsunamiAreas.length > 0 && `(${pickedTsunamiAreas.length}件選択中)`}
                 </span>
                 <PressableButton
                   type="button"
@@ -11504,6 +11565,8 @@ export default function App() {
                   pickedTsunamiHeights={pickedTsunamiHeights}
                   onChangeTsunamiHeightPick={changeTsunamiHeightPick}
                   onRemoveTsunamiHeightPick={removeTsunamiHeightPick}
+                  candidateHeightStations={candidateHeightStations}
+                  onAddTsunamiHeightPick={addTsunamiHeightPick}
                   stations={stations}
                   searchQuake={searchQuake}
                   onFoundSearchQuake={setSearchQuake}
@@ -11579,6 +11642,8 @@ export default function App() {
               pickedTsunamiHeights={pickedTsunamiHeights}
               onChangeTsunamiHeightPick={changeTsunamiHeightPick}
               onRemoveTsunamiHeightPick={removeTsunamiHeightPick}
+              candidateHeightStations={candidateHeightStations}
+              onAddTsunamiHeightPick={addTsunamiHeightPick}
               stations={stations}
               searchQuake={searchQuake}
               onFoundSearchQuake={setSearchQuake}
