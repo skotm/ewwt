@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.4d";
+const APP_VERSION = "1.2.4e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -752,6 +752,13 @@ function tsunamiBarPxForHeight(heightM, geom) {
 // (丸の色, バーの色, 高さ, 太さ, 選択状態)の組み合わせごとにキャンバスへ描画し、
 // map.addImageで登録して使い回す。heightMがnull/undefinedの間はバー無し(丸だけ)。
 // 同じ組み合わせなら2回目以降は再描画せずキャッシュを返す。
+// アイコンの見た目を変える修正をするたびに、この値を上げる。map.addImageは
+// マップのインスタンスが生きている間ずっと使い回されるため、IDの構成が同じままだと
+// (ページを再読み込みしない限り)古い見た目のアイコンがキャッシュされたまま
+// 残ってしまうことがある。バージョンをキーに含めておくことで、コードを直しても
+// 必ず新しい見た目で再描画されるようにする。
+const TSUNAMI_ICON_VERSION = 3;
+
 function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, geom, selected) {
   const BORDER = 2; // 白縁の太さ(CSSピクセル)
   const DOT_D = Math.max(4, Math.round(dotDiameterPx));
@@ -768,7 +775,7 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
   // (0.47mを0.5m相当として点を打ってしまう、といった誤差を防ぐ)。
   const heightM10 = hasBar ? Math.floor(Math.min(heightM, geom.maxM) * 10 + 1e-6) : -1;
 
-  const id = `tsunami-station-icon-${fillColor.replace("#", "")}-${DOT_D}-${hasBar ? `${BAR_W}-${bucket}-${heightM10}` : "nobar"}`;
+  const id = `tsunami-station-icon-v${TSUNAMI_ICON_VERSION}-${fillColor.replace("#", "")}-${DOT_D}-${hasBar ? `${BAR_W}-${bucket}-${heightM10}` : "nobar"}`;
   if (map.hasImage(id)) return id;
 
   const pixelRatio = typeof window !== "undefined" && window.devicePixelRatio ? Math.min(window.devicePixelRatio, 3) : 1;
@@ -791,18 +798,22 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
     const barBottomY = dotTopY;
     const barTopY = barBottomY - bucket;
     // 上端は半円のキャップではなく、角が少し丸い四角に。下端は観測点の丸の縁に
-    // ぴったり繋がるよう、丸みを付けない(直角)。白い縁取りも下端はそのまま
-    // (BORDER分はみ出させない)にして、丸との境目に白いすき間が出ないようにする。
+    // ぴったり繋がるよう、丸みを付けない(直角)。
+    // ただし下端をぴったり同じ座標で塗ると、キャンバスのアンチエイリアシングにより
+    // 境目に細い隙間が見えてしまうことがある。丸(この後に描く)で確実に隠れる範囲
+    // (SEAM_OVERLAP)だけ、下端をわずかに丸へめり込ませて隙間を無くす
+    // (見た目の長さ・角の四角さには影響しない、ごく僅かな量)。
+    const SEAM_OVERLAP = 1.5;
     const TOP_CORNER_R = 3;
     roundRectPath(
       ctx,
       cx - BAR_W / 2 - BORDER, barTopY - BORDER,
-      BAR_W + BORDER * 2, bucket + BORDER,
+      BAR_W + BORDER * 2, bucket + BORDER + SEAM_OVERLAP,
       TOP_CORNER_R + BORDER, 0
     );
     ctx.fillStyle = "#ffffff";
     ctx.fill();
-    roundRectPath(ctx, cx - BAR_W / 2, barTopY, BAR_W, bucket, TOP_CORNER_R, 0);
+    roundRectPath(ctx, cx - BAR_W / 2, barTopY, BAR_W, bucket + SEAM_OVERLAP, TOP_CORNER_R, 0);
     ctx.fillStyle = fillColor;
     ctx.fill();
 
