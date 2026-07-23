@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.4b";
+const APP_VERSION = "1.2.4c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -782,11 +782,12 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
 
   const cx = totalW / 2;
   const dotCy = totalH - BORDER - DOT_D / 2; // 一番下 = 観測点そのものの位置
+  const dotTopY = dotCy - DOT_D / 2; // 観測点の丸の上端
 
   if (hasBar) {
-    // バー(丸に少し重ねて生やすことで、切れ目なく繋がって見えるようにする)。
-    const overlap = DOT_D * 0.4;
-    const barBottomY = dotCy + overlap;
+    // バーは観測点の丸に食い込ませず、丸の上端からちょうど数えた長さになるようにする
+    // (以前は少し丸に重ねていたため、重なった分だけ見た目の長さが短くなっていた)。
+    const barBottomY = dotTopY;
     const barTopY = barBottomY - bucket;
     roundRectPath(ctx, cx - BAR_W / 2 - BORDER, barTopY - BORDER, BAR_W + BORDER * 2, bucket + BORDER * 2, BAR_W / 2 + BORDER);
     ctx.fillStyle = "#ffffff";
@@ -795,7 +796,7 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
     ctx.fillStyle = fillColor;
     ctx.fill();
 
-    // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側)を基準に、実際の高さの
+    // 0.5m刻みの目盛り(白い点)。バーの根本(観測点の丸の上端)を基準に、実際の高さの
     // 0.5, 1.0, 1.5m…の位置へ、バー全体の長さと同じ式で点を打つ。観測された高さを
     // 超える位置には打たない。1.0mごと(1.0, 2.0, 3.0m…)は少し濃く、0.5m刻みの
     // 残り(0.5, 1.5, 2.5m…)は薄く描いて、読み取りやすくする。
