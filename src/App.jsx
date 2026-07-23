@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.3g";
+const APP_VERSION = "1.2.4";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -699,14 +699,18 @@ function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.d
 }
 
 /* ─────────────────────────────────────────────────────
-   観測された津波の高さバー用のアイコン生成。
+   観測点の丸+観測された津波の高さバーを、1枚のアイコンにまとめて描画する。
+   まとめる理由: バー(symbolレイヤー)と観測点の丸(circleレイヤー)を別々のレイヤーに
+   分けたままだと、MapLibreは「レイヤー単位」でしか重なり順を制御できない
+   (同じレイヤー内の重なり順はsymbol-sort-key等で調整できても、レイヤーをまたいだ
+   重なり順=どちらのレイヤーが手前かは常に固定になってしまう)。そのため、
+   「より南のバーが、より北の丸より手前に来る」ような、地物ごとに入り組んだ重なり順を
+   実現するには、丸とバーを同じレイヤーの同じ地物(=1枚のアイコン)として描く必要がある。
    地図の座標オフセットで長さを表現する線分だと、ズームするたびに実際の距離のまま
-   拡大縮小されて見た目の長さが変わってしまう。ピクセル上の見た目の「長さ」をズームに
-   関わらず一定に保つため、あらかじめキャンバスに「白縁+色付きの縦長バー」を
-   描いておき、MapLibreのsymbolレイヤー(icon-size固定)としてピン留めする方式にする。
-   一方で「太さ」は観測点の丸(circle-radius)と揃えたいので、丸の半径と全く同じ
-   ズーム連動の式(TSUNAMI_BAR_WIDTH_STOPS)で太さだけをズームごとに求め、その太さの
-   アイコンをズームが変わるたびに(ズーム段階が変わった時だけ)差し替える。
+   拡大縮小されて見た目の長さが変わってしまうため、キャンバスに描いた画像をアイコンと
+   して貼り付けるsymbolレイヤー(icon-size固定)にしている。丸の直径・バーの太さは
+   観測点の丸(circle-radius)と揃えたいので、丸の半径と全く同じズーム連動の式
+   (TSUNAMI_BAR_WIDTH_STOPS)を使い、ズーム段階が変わった時だけアイコンを差し替える。
    ───────────────────────────────────────────────────── */
 function roundRectPath(ctx, x, y, w, h, r) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -720,7 +724,7 @@ function roundRectPath(ctx, x, y, w, h, r) {
 }
 
 // 観測点の丸(tide-station-points-layerの非選択時circle-radius)と全く同じズーム段階・
-// 半径の組み合わせ(直径に換算済み)。バーの太さをこれに合わせて連動させる。
+// 半径の組み合わせ(直径に換算済み)。バーの太さ・アイコン内の丸の直径をこれに揃える。
 const TSUNAMI_BAR_WIDTH_STOPS = [[4, 9], [8, 11], [12, 14], [16, 19]]; // [zoom, 直径px]
 function tsunamiBarWidthForZoom(zoom) {
   const stops = TSUNAMI_BAR_WIDTH_STOPS;
@@ -743,51 +747,77 @@ function tsunamiBarPxForHeight(heightM, geom) {
   return minPx + t * (maxPx - minPx);
 }
 
-// (色, 高さ, 太さ)の組み合わせごとにキャンバスへ描画し、map.addImageで登録して
-// 使い回す。同じ組み合わせなら2回目以降は再描画せずキャッシュを返す。
-function tsunamiBarIconId(map, color, heightM, barWidthPx, geom) {
-  const BAR_W = Math.round(barWidthPx);
+// (丸の色, バーの色, 高さ, 太さ, 選択状態)の組み合わせごとにキャンバスへ描画し、
+// map.addImageで登録して使い回す。heightMがnull/undefinedの間はバー無し(丸だけ)。
+// 同じ組み合わせなら2回目以降は再描画せずキャッシュを返す。
+function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, geom, selected) {
   const BORDER = 2; // 白縁の太さ(CSSピクセル)
-  const heightPx = tsunamiBarPxForHeight(Math.min(heightM, geom.maxM), geom);
-  const bucket = Math.max(10, Math.round(heightPx / 4) * 4); // 矩形の高さは4px単位にまとめて種類を抑える
-  // 目盛りの位置計算にはheightMそのものを使うので、キャッシュキーにも含めておく
-  // (0.1m単位に丸めて、これ以上細かい違いは同じアイコンを使い回す)。
-  const heightM10 = Math.round(Math.min(heightM, geom.maxM) * 10);
-  const id = `tsunami-bar-icon-${color.replace("#", "")}-${BAR_W}-${bucket}-${heightM10}`;
+  const DOT_D = Math.max(4, Math.round(dotDiameterPx));
+  const BAR_W = Math.max(4, Math.round(barWidthPx));
+  const fillColor = selected ? "#FF9F0A" : color;
+  const hasBar = heightM != null;
+
+  const heightPx = hasBar ? tsunamiBarPxForHeight(Math.min(heightM, geom.maxM), geom) : 0;
+  // 矩形の高さ(=バーの長さ)は、見た目の変化を細かく反映できるよう1px単位で丸める
+  // (4px単位でまとめていると、0.1m刻みの入力では見た目が変わらないことがあったため)。
+  const bucket = hasBar ? Math.max(8, Math.round(heightPx)) : 0;
+  // 目盛りの位置計算にはheightMそのものを使うので、キャッシュキーにも含めておく。
+  // 切り上げてしまうと「まだ届いていない目盛り」が出てしまうため、必ず切り捨てる
+  // (0.47mを0.5m相当として点を打ってしまう、といった誤差を防ぐ)。
+  const heightM10 = hasBar ? Math.floor(Math.min(heightM, geom.maxM) * 10 + 1e-6) : -1;
+
+  const id = `tsunami-station-icon-${fillColor.replace("#", "")}-${DOT_D}-${hasBar ? `${BAR_W}-${bucket}-${heightM10}` : "nobar"}`;
   if (map.hasImage(id)) return id;
 
   const pixelRatio = typeof window !== "undefined" && window.devicePixelRatio ? Math.min(window.devicePixelRatio, 3) : 1;
-  const totalW = BAR_W + BORDER * 2;
-  const totalH = bucket + BORDER * 2;
+  const contentW = Math.max(DOT_D, BAR_W);
+  const totalW = contentW + BORDER * 2;
+  const totalH = DOT_D + bucket + BORDER * 2;
   const canvas = document.createElement("canvas");
   canvas.width = Math.ceil(totalW * pixelRatio);
   canvas.height = Math.ceil(totalH * pixelRatio);
   const ctx = canvas.getContext("2d");
   ctx.scale(pixelRatio, pixelRatio);
 
-  // 白い縁取り(外側)を先に塗り、その内側を本体色で塗ることでケーシング(縁取り)を作る。
-  roundRectPath(ctx, 0, 0, totalW, totalH, BAR_W / 2 + BORDER);
+  const cx = totalW / 2;
+  const dotCy = totalH - BORDER - DOT_D / 2; // 一番下 = 観測点そのものの位置
+
+  if (hasBar) {
+    // バー(丸に少し重ねて生やすことで、切れ目なく繋がって見えるようにする)。
+    const overlap = DOT_D * 0.4;
+    const barBottomY = dotCy + overlap;
+    const barTopY = barBottomY - bucket;
+    roundRectPath(ctx, cx - BAR_W / 2 - BORDER, barTopY - BORDER, BAR_W + BORDER * 2, bucket + BORDER * 2, BAR_W / 2 + BORDER);
+    ctx.fillStyle = "#ffffff";
+    ctx.fill();
+    roundRectPath(ctx, cx - BAR_W / 2, barTopY, BAR_W, bucket, BAR_W / 2);
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+
+    // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側)を基準に、実際の高さの
+    // 0.5, 1.0, 1.5m…の位置へ、バー全体の長さと同じ式で点を打つ。観測された高さを
+    // 超える位置には打たない。主張しすぎないよう、半透明の白で薄めに描く。
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    const exactHeightM = heightM10 / 10;
+    for (let h = 0.5; h <= exactHeightM + 1e-9; h += 0.5) {
+      const d = tsunamiBarPxForHeight(h, geom);
+      if (d > bucket - 2) break; // 先端付近(見切れそうな位置)には打たない
+      ctx.beginPath();
+      ctx.arc(cx, barBottomY - d, 1.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // 観測点の丸(白縁+本体色)。バーより後に描くことで、バーの根本に重なって
+  // 一体感のある土台に見える。
+  ctx.beginPath();
+  ctx.arc(cx, dotCy, DOT_D / 2 + 1.5, 0, Math.PI * 2);
   ctx.fillStyle = "#ffffff";
   ctx.fill();
-  roundRectPath(ctx, BORDER, BORDER, BAR_W, bucket, BAR_W / 2);
-  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(cx, dotCy, DOT_D / 2, 0, Math.PI * 2);
+  ctx.fillStyle = fillColor;
   ctx.fill();
-
-  // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側=下端)を基準に、実際の高さの
-  // 0.5, 1.0, 1.5m…の位置に、バー全体の長さと同じ式(tsunamiBarPxForHeight)で
-  // 点を打つ。観測された高さを超える位置には打たない。主張しすぎないよう、
-  // 不透明な白ではなく半透明の白で薄めに描く。
-  const cx = totalW / 2;
-  const bottomY = BORDER + bucket;
-  ctx.fillStyle = "rgba(255,255,255,0.4)";
-  const exactHeightM = heightM10 / 10;
-  for (let h = 0.5; h <= exactHeightM + 1e-9; h += 0.5) {
-    const d = tsunamiBarPxForHeight(h, geom);
-    if (d > bucket - 2) break; // 先端付近(見切れそうな位置)には打たない
-    ctx.beginPath();
-    ctx.arc(cx, bottomY - d, 1.3, 0, Math.PI * 2);
-    ctx.fill();
-  }
 
   map.addImage(id, ctx.getImageData(0, 0, canvas.width, canvas.height), { pixelRatio });
   return id;
@@ -807,7 +837,7 @@ function MapCanvas({
   tsunamiAreas = [],
   stationMarkersVisible = true,
   tideStationPoints = [], onSelectTideStation, selectedTideStationCode,
-  tsunamiHeightBars = [],
+  tsunamiHeightBars = [], tideStationBarsMode = false,
   tsunamiAreaPickActive = false, onPickTsunamiArea, pickedTsunamiAreas = [],
 }) {
   const containerRef = useRef(null);
@@ -1161,14 +1191,11 @@ function MapCanvas({
             },
           });
 
-          // 観測された津波の高さ(推定)を表すバー。潮位観測点の座標を起点に、上向きに
-          // 高さに応じた長さのバーを表示する(App側のtsunamiHeightBars参照。データが
-          // 空の間は何も描かれない)。地図の座標オフセットで長さを表現する線分だと
-          // ズームするたびに見た目の長さが伸び縮みしてしまうため、代わりにキャンバスで
-          // 描いた画像をアイコンとして貼り付けるsymbolレイヤーにしている
-          // (アイコンのicon-sizeは常に1固定なので、ピクセル上のサイズはズームに
-          // 左右されない)。白い縁取りも、この画像の中にあらかじめ描き込んである。
-          // 観測点ピンの「土台」に見えるよう、ピンのレイヤーより先(下)に追加しておく。
+          // 観測点の丸+観測された津波の高さ(推定)バーをまとめて表示するレイヤー
+          // (tideStationBarsModeがtrueの間だけ使う。App側のcombinedTideStations参照。
+          // データが空の間は何も描かれない)。tsunamiStationIconId参照のとおり、
+          // 丸とバーを1枚のアイコンにまとめているのは、レイヤーをまたいだ重なり順を
+          // MapLibreで制御できないため(同じレイヤー内でのみsymbol-sort-keyが効く)。
           map.addSource("tsunami-height-bars", {
             type: "geojson",
             data: { type: "FeatureCollection", features: [] },
@@ -1215,6 +1242,13 @@ function MapCanvas({
               ],
               "circle-stroke-width": ["case", ["get", "selected"], 2.5, 1.5],
               "circle-stroke-color": "#ffffff",
+              // tideStationBarsModeがtrueの間(observedTsunamiHeightバーを表示するモード)は、
+              // 丸とバーの重なり順を正しく揃えるため、代わりにtsunami-height-bars-layer
+              // (1枚のアイコンに丸+バーをまとめて描く)を使う。このレイヤーはその間、
+              // タップ判定(ヒットテスト)のためだけに透明のまま残しておく
+              // (circle-opacityを0にしても、クリック判定自体は引き続き機能する)。
+              "circle-opacity": 1,
+              "circle-stroke-opacity": 1,
             },
           });
           map.on("mouseenter", "tide-station-points-layer", () => {
@@ -1702,9 +1736,16 @@ function MapCanvas({
   // (MapLibreは描画順=配列順のため)他のピンより必ず前面に来るようにする。
   // 選択中でないもの同士は、より南(緯度が小さい)ものが前面に来るよう並べる
   // (津波の高さバーのレイヤーもsymbol-sort-keyで同じ考え方に揃えている。MapCanvas内)。
+  // tideStationBarsModeがtrueの間は、丸自体の見た目は下のtsunami-height-bars-layer
+  // (丸+バーをまとめて描くレイヤー)に任せ、このレイヤーは透明にしてタップ判定
+  // だけを担う(データそのものは変わらず入れておく=クリックは引き続き機能する)。
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
+    if (map.getLayer("tide-station-points-layer")) {
+      map.setPaintProperty("tide-station-points-layer", "circle-opacity", tideStationBarsMode ? 0 : 1);
+      map.setPaintProperty("tide-station-points-layer", "circle-stroke-opacity", tideStationBarsMode ? 0 : 1);
+    }
     const source = map.getSource("tide-station-points");
     if (!source) return;
     const points = [...(tideStationPoints || [])].sort((a, b) => {
@@ -1721,39 +1762,55 @@ function MapCanvas({
         properties: { code: p.code, name: p.name, selected: p.code === selectedTideStationCode, dotColor: p.dotColor || "#B9B9C0" },
       }));
     source.setData({ type: "FeatureCollection", features });
-  }, [tideStationPoints, selectedTideStationCode, status]);
+  }, [tideStationPoints, selectedTideStationCode, tideStationBarsMode, status]);
 
-  // 観測された津波の高さバーの更新。長さ(高さ方向)はズームで変わらない固定ピクセル
-  // だが、太さは観測点の丸に合わせてズームごとに変える必要があるため、
-  // tsunamiHeightBarsが変わった時だけでなく、ズーム段階が変わった時にも再描画する
-  // (ズーム段階が変わっていない間は何もしない=無駄な再生成をしない)。
-  const tsunamiHeightBarsRef = useRef(tsunamiHeightBars);
-  tsunamiHeightBarsRef.current = tsunamiHeightBars;
+  // 観測点の丸+観測された津波の高さバーをまとめて描画する(tsunamiStationIconId参照)。
+  // tideStationBarsModeがfalseの間は何もしない(通常の丸レイヤーがそのまま見える)。
+  // 長さ(高さ方向)はズームで変わらない固定ピクセルだが、太さは観測点の丸に合わせて
+  // ズームごとに変える必要があるため、データが変わった時だけでなく、ズーム段階が
+  // 変わった時にも再描画する(ズーム段階が変わっていない間は何もしない=無駄な
+  // 再生成をしない)。
+  const combinedTideDataRef = useRef({ points: tideStationPoints, bars: tsunamiHeightBars, selectedCode: selectedTideStationCode });
+  combinedTideDataRef.current = { points: tideStationPoints, bars: tsunamiHeightBars, selectedCode: selectedTideStationCode };
   const tsunamiBarZoomBucketRef = useRef(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!map || status !== "ready") return;
+    const source = map.getSource("tsunami-height-bars");
+    if (!source) return;
+
+    if (!tideStationBarsMode) {
+      source.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
 
     const MIN_PX = 22;   // 0.2m相当の最小の高さ(ピクセル)
     const MAX_PX = 170;  // 10m以上でこの高さで頭打ち(見やすさのため長めに)
     const geom = { minPx: MIN_PX, maxPx: MAX_PX, maxM: 10, negligibleM: 0.2 }; // 0.2m = 表示する最小の高さ(App側のTSUNAMI_HEIGHT_NEGLIGIBLE_Mと同じ値)
 
     function render() {
-      const source = map.getSource("tsunami-height-bars");
-      if (!source) return;
-      const barWidthPx = tsunamiBarWidthForZoom(map.getZoom());
-      const features = (tsunamiHeightBarsRef.current || []).map(bar => {
-        const iconId = tsunamiBarIconId(map, bar.color, Math.abs(bar.heightM), barWidthPx, geom);
-        return {
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [bar.lng, bar.lat] },
-          properties: { code: bar.code, iconId, sortKey: bar.sortKey || 0 },
-        };
-      });
+      const { points, bars, selectedCode } = combinedTideDataRef.current;
+      const heightByCode = new Map((bars || []).map(b => [b.code, b]));
+      const dotDiameterPx = tsunamiBarWidthForZoom(map.getZoom());
+      const barWidthPx = dotDiameterPx; // 太さは丸の直径と同じにする(ご要望どおり)
+      const features = (points || [])
+        .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
+        .map(p => {
+          const bar = heightByCode.get(p.code);
+          const heightM = bar ? Math.abs(bar.heightM) : null;
+          const selected = p.code === selectedCode;
+          const iconId = tsunamiStationIconId(map, p.dotColor || "#B9B9C0", heightM, dotDiameterPx, barWidthPx, geom, selected);
+          return {
+            type: "Feature",
+            geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+            // より南(緯度が小さい)ものほど前面に描く。選択中は無条件で最前面。
+            properties: { code: p.code, iconId, sortKey: selected ? 1e9 : -p.lat },
+          };
+        });
       source.setData({ type: "FeatureCollection", features });
     }
 
-    render(); // tsunamiHeightBars自体が変わった時は、ズーム段階に関わらず必ず再描画する
+    render(); // データ自体が変わった時は、ズーム段階に関わらず必ず再描画する
 
     // ズームは連続的に発火するので、太さの見た目が変わるバケット(0.25刻み程度)が
     // 実際に変わった時だけ再描画する。
@@ -1766,7 +1823,7 @@ function MapCanvas({
     tsunamiBarZoomBucketRef.current = Math.round(map.getZoom() * 4);
     map.on("zoom", handleZoom);
     return () => { map.off("zoom", handleZoom); };
-  }, [tsunamiHeightBars, status]);
+  }, [tideStationPoints, tsunamiHeightBars, selectedTideStationCode, tideStationBarsMode, status]);
 
   // 配色スキームが切り替わったら、震央分布の丸の色も塗り直す。
   // 縁取り色はライト/ダークでも変わりうるため(気象庁配色の震度1のみ)、modeも依存に含める。
@@ -11437,11 +11494,6 @@ export default function App() {
           color: tsunamiHeightBandColor(heightM),
           lng: st.lon,
           lat: st.lat,
-          // 地図上でより南(緯度が小さい)ものほど前面(=描画順で後)に来るようにする
-          // (観測点の丸のレイヤーも同じ考え方で並べ替えている。MapCanvas参照)。
-          // symbol-sort-keyは値が大きいほど後(前面)に描かれるため、緯度の符号を
-          // 反転させておく。
-          sortKey: -st.lat,
         };
       });
   }, [tideStationsWithGrade, tsunamiHeightByStation]);
@@ -11479,6 +11531,7 @@ export default function App() {
           onSelectTideStation={handleSelectTideStationOnMap}
           selectedTideStationCode={selectedTideStationCode}
           tsunamiHeightBars={showActiveTsunamiTideStations ? tsunamiHeightBars : EMPTY_EQDB_LIST}
+          tideStationBarsMode={showActiveTsunamiTideStations}
           hypocenters={showQuakeMapLayers ? (causingQuakeCard ? causingQuakeHypocenters : selectedHypocenters) : EMPTY_EQDB_LIST}
           isWide={isWide}
           quakeTimeStr={causingQuakeCard ? causingQuakeCard.time : selectedQuake?.time}
