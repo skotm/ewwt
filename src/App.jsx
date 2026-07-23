@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.4";
+const APP_VERSION = "1.2.4a";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -796,12 +796,16 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
 
     // 0.5m刻みの目盛り(白い点)。バーの根本(観測点側)を基準に、実際の高さの
     // 0.5, 1.0, 1.5m…の位置へ、バー全体の長さと同じ式で点を打つ。観測された高さを
-    // 超える位置には打たない。主張しすぎないよう、半透明の白で薄めに描く。
-    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    // 超える位置には打たない。1.0mごと(1.0, 2.0, 3.0m…)は少し濃く、0.5m刻みの
+    // 残り(0.5, 1.5, 2.5m…)は薄く描いて、読み取りやすくする。
     const exactHeightM = heightM10 / 10;
     for (let h = 0.5; h <= exactHeightM + 1e-9; h += 0.5) {
-      const d = tsunamiBarPxForHeight(h, geom);
-      if (d > bucket - 2) break; // 先端付近(見切れそうな位置)には打たない
+      // 先端(=観測点の高さちょうど)にほぼ一致する点まで、必ず描く。棒の外にはみ出さない
+      // よう、先端付近だけ位置をわずかにクランプする(以前は先端付近を丸ごと除外して
+      // いたため、ちょうど0.5m単位の高さの時に最後の点が消えてしまっていた)。
+      const d = Math.min(tsunamiBarPxForHeight(h, geom), bucket - 1);
+      const isWholeMeter = Math.round(h * 10) % 10 === 0;
+      ctx.fillStyle = isWholeMeter ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.35)";
       ctx.beginPath();
       ctx.arc(cx, barBottomY - d, 1.3, 0, Math.PI * 2);
       ctx.fill();
