@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, crea
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
-   APP VERSION
+   APP VERSION 
    バージョン表記のルール(vMAJOR.MINOR.PATCH):
    - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
    - PATCHが10になったらMINOR(2つ目)を1増やし、PATCHは0に戻す
