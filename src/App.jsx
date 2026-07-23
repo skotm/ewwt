@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.4a";
+const APP_VERSION = "1.2.4b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -738,13 +738,14 @@ function tsunamiBarWidthForZoom(zoom) {
 }
 
 // heightM(観測された津波の高さ、実測のm)から、バー本体の長さ(CSSピクセル)を
-// 求める式。MIN_PX〜MAX_PXの間はnegligibleM(=表示する最小の高さ)〜maxMに対して線形。
-// 目盛り(0.5m刻みの点)の位置も、この同じ式を使って求める(そうしないと、
-// 「バー全体の長さ」と「点の間隔」の基準がズレて点の数が合わなくなるため)。
+// 求める式。「高さと長さが比例する」という要件どおり、0mの時に0px・maxMの時に
+// maxPxになる単純な比例式にしている(以前は最小の高さ(negligibleM)の時に
+// minPxになる、原点を通らない式だったため、高さを2倍にしても長さが2倍にならない
+// 問題があった)。目盛りの位置も同じ式を使うので、自動的に等間隔になる。
 function tsunamiBarPxForHeight(heightM, geom) {
-  const { minPx, maxPx, maxM, negligibleM } = geom;
-  const t = Math.max(0, Math.min(1, (heightM - negligibleM) / (maxM - negligibleM)));
-  return minPx + t * (maxPx - minPx);
+  const { maxPx, maxM } = geom;
+  const h = Math.max(0, Math.min(heightM, maxM));
+  return (h / maxM) * maxPx;
 }
 
 // (丸の色, バーの色, 高さ, 太さ, 選択状態)の組み合わせごとにキャンバスへ描画し、
@@ -760,7 +761,7 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
   const heightPx = hasBar ? tsunamiBarPxForHeight(Math.min(heightM, geom.maxM), geom) : 0;
   // 矩形の高さ(=バーの長さ)は、見た目の変化を細かく反映できるよう1px単位で丸める
   // (4px単位でまとめていると、0.1m刻みの入力では見た目が変わらないことがあったため)。
-  const bucket = hasBar ? Math.max(8, Math.round(heightPx)) : 0;
+  const bucket = hasBar ? Math.max(4, Math.round(heightPx)) : 0; // 4px未満は描画上の下限(比例関係をなるべく保つため最小限に)
   // 目盛りの位置計算にはheightMそのものを使うので、キャッシュキーにも含めておく。
   // 切り上げてしまうと「まだ届いていない目盛り」が出てしまうため、必ず切り捨てる
   // (0.47mを0.5m相当として点を打ってしまう、といった誤差を防ぐ)。
@@ -1788,9 +1789,8 @@ function MapCanvas({
       return;
     }
 
-    const MIN_PX = 22;   // 0.2m相当の最小の高さ(ピクセル)
-    const MAX_PX = 170;  // 10m以上でこの高さで頭打ち(見やすさのため長めに)
-    const geom = { minPx: MIN_PX, maxPx: MAX_PX, maxM: 10, negligibleM: 0.2 }; // 0.2m = 表示する最小の高さ(App側のTSUNAMI_HEIGHT_NEGLIGIBLE_Mと同じ値)
+    const MAX_PX = 170;  // 10m でこの長さになる(比例式の基準点)
+    const geom = { maxPx: MAX_PX, maxM: 10 };
 
     function render() {
       const { points, bars, selectedCode } = combinedTideDataRef.current;
