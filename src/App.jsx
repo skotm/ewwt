@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.4c";
+const APP_VERSION = "1.2.4d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -712,14 +712,15 @@ function buildMapStyle({ world, prefectures, areas }, mapColors = THEME_TOKENS.d
    観測点の丸(circle-radius)と揃えたいので、丸の半径と全く同じズーム連動の式
    (TSUNAMI_BAR_WIDTH_STOPS)を使い、ズーム段階が変わった時だけアイコンを差し替える。
    ───────────────────────────────────────────────────── */
-function roundRectPath(ctx, x, y, w, h, r) {
-  const rr = Math.min(r, w / 2, h / 2);
+function roundRectPath(ctx, x, y, w, h, topR, bottomR = topR) {
+  const tr = Math.max(0, Math.min(topR, w / 2, h / 2));
+  const br = Math.max(0, Math.min(bottomR, w / 2, h / 2));
   ctx.beginPath();
-  ctx.moveTo(x + rr, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rr);
-  ctx.arcTo(x + w, y + h, x, y + h, rr);
-  ctx.arcTo(x, y + h, x, y, rr);
-  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.moveTo(x + tr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, tr);   // 右上
+  ctx.arcTo(x + w, y + h, x, y + h, br);   // 右下
+  ctx.arcTo(x, y + h, x, y, br);           // 左下
+  ctx.arcTo(x, y, x + w, y, tr);           // 左上
   ctx.closePath();
 }
 
@@ -789,10 +790,19 @@ function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, ge
     // (以前は少し丸に重ねていたため、重なった分だけ見た目の長さが短くなっていた)。
     const barBottomY = dotTopY;
     const barTopY = barBottomY - bucket;
-    roundRectPath(ctx, cx - BAR_W / 2 - BORDER, barTopY - BORDER, BAR_W + BORDER * 2, bucket + BORDER * 2, BAR_W / 2 + BORDER);
+    // 上端は半円のキャップではなく、角が少し丸い四角に。下端は観測点の丸の縁に
+    // ぴったり繋がるよう、丸みを付けない(直角)。白い縁取りも下端はそのまま
+    // (BORDER分はみ出させない)にして、丸との境目に白いすき間が出ないようにする。
+    const TOP_CORNER_R = 3;
+    roundRectPath(
+      ctx,
+      cx - BAR_W / 2 - BORDER, barTopY - BORDER,
+      BAR_W + BORDER * 2, bucket + BORDER,
+      TOP_CORNER_R + BORDER, 0
+    );
     ctx.fillStyle = "#ffffff";
     ctx.fill();
-    roundRectPath(ctx, cx - BAR_W / 2, barTopY, BAR_W, bucket, BAR_W / 2);
+    roundRectPath(ctx, cx - BAR_W / 2, barTopY, BAR_W, bucket, TOP_CORNER_R, 0);
     ctx.fillStyle = fillColor;
     ctx.fill();
 
