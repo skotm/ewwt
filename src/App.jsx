@@ -2,7 +2,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef, useContext, crea
 import { createPortal } from "react-dom";
 
 /* ─────────────────────────────────────────────────────
-   APP VERSION 
+   APP VERSION
    バージョン表記のルール(vMAJOR.MINOR.PATCH):
    - PATCH(3つ目の数字)を更新のたびに1ずつ増やす
    - PATCHが10になったらMINOR(2つ目)を1増やし、PATCHは0に戻す
@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.4f";
+const APP_VERSION = "1.2.5";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -757,10 +757,14 @@ function tsunamiBarPxForHeight(heightM, geom) {
 // (ページを再読み込みしない限り)古い見た目のアイコンがキャッシュされたまま
 // 残ってしまうことがある。バージョンをキーに含めておくことで、コードを直しても
 // 必ず新しい見た目で再描画されるようにする。
-const TSUNAMI_ICON_VERSION = 4;
+const TSUNAMI_ICON_VERSION = 5;
+
+// 白縁の太さ(CSSピクセル)。アイコン生成側だけでなく、呼び出し側(MapCanvasのrender)
+// でもicon-offsetの計算に同じ値が必要なため、モジュールスコープで共有する。
+const TSUNAMI_ICON_BORDER = 2;
 
 function tsunamiStationIconId(map, color, heightM, dotDiameterPx, barWidthPx, geom, selected) {
-  const BORDER = 2; // 白縁の太さ(CSSピクセル)
+  const BORDER = TSUNAMI_ICON_BORDER;
   const DOT_D = Math.max(4, Math.round(dotDiameterPx));
   const BAR_W = Math.max(4, Math.round(barWidthPx));
   const fillColor = selected ? "#FF9F0A" : color;
@@ -1237,6 +1241,10 @@ function MapCanvas({
               "icon-size": 1, // 固定(ズームに応じた拡大縮小をしない)
               "icon-allow-overlap": true,
               "icon-ignore-placement": true,
+              // 観測点の丸(アイコン画像内では一番下)の中心を、実際の座標にきちんと
+              // 合わせるためのズレ補正(render関数側で計算)。無いと、バーの分だけ
+              // 画像全体が高くなる影響で、丸が実際の位置より北へズレて見えてしまう。
+              "icon-offset": ["get", "offset"],
               // 観測点の丸のレイヤー(常に配列順=描画順)と重なり方を揃えるための
               // 明示的な並び順(symbolレイヤーは指定しないと重なり順が保証されないため)。
               "symbol-sort-key": ["get", "sortKey"],
@@ -1811,7 +1819,7 @@ function MapCanvas({
       return;
     }
 
-    const MAX_PX = 170;  // 10m でこの長さになる(比例式の基準点)
+    const MAX_PX = 210;  // 10m でこの長さになる(比例式の基準点。以前より少し急な傾きに)
     const geom = { maxPx: MAX_PX, maxM: 10 };
 
     function render() {
@@ -1819,6 +1827,13 @@ function MapCanvas({
       const heightByCode = new Map((bars || []).map(b => [b.code, b]));
       const dotDiameterPx = tsunamiBarWidthForZoom(map.getZoom());
       const barWidthPx = dotDiameterPx; // 太さは丸の直径と同じにする(ご要望どおり)
+      // icon-anchor: "bottom" は「アイコン画像の一番下」を地図上の座標に合わせるが、
+      // 実際の観測点(丸)の中心は画像の一番下からBORDER+丸の半径ぶん上にある
+      // (バーの分だけ画像全体の高さが観測点より高くなるため)。そのままだと丸が
+      // 実際の位置より北へズレて見えてしまうので、その分だけ画像を下にずらす
+      // (icon-offsetは画面ピクセル単位で、+yが下向き)。
+      const dotD = Math.max(4, Math.round(dotDiameterPx));
+      const offsetY = TSUNAMI_ICON_BORDER + dotD / 2;
       const features = (points || [])
         .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
         .map(p => {
@@ -1830,7 +1845,7 @@ function MapCanvas({
             type: "Feature",
             geometry: { type: "Point", coordinates: [p.lon, p.lat] },
             // より南(緯度が小さい)ものほど前面に描く。選択中は無条件で最前面。
-            properties: { code: p.code, iconId, sortKey: selected ? 1e9 : -p.lat },
+            properties: { code: p.code, iconId, sortKey: selected ? 1e9 : -p.lat, offset: [0, offsetY] },
           };
         });
       source.setData({ type: "FeatureCollection", features });
@@ -5573,7 +5588,7 @@ function BottomDock({
   onTsunamiViewModeChange,
   tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
   selectedTideStationCode, onSelectTideStation, tideObsByStation = {}, onLoadTideObs,
-  tideStationSelectSignal,
+  tideStationSelectSignal, tsunamiHeightByStation = {},
   stationMarkersVisible = true, onToggleStationMarkersVisible,
   tideStationMarkersVisible = true, onToggleTideStationMarkersVisible,
   onChangeQuakeColorScheme,
@@ -6886,6 +6901,7 @@ function BottomDock({
                   onSelectTideStation={onSelectTideStation}
                   tideObsByStation={tideObsByStation}
                   onLoadTideObs={onLoadTideObs}
+                  tsunamiHeightByStation={tsunamiHeightByStation}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -7574,7 +7590,7 @@ function tsunamiGradeShortLabel(grade) {
   return map[grade] || "情報";
 }
 
-function TsunamiAreaRow({ area, showDivider }) {
+function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
   const { tokens } = useContext(ThemeContext);
   const info = tsunamiGradeInfo(area.grade);
 
@@ -7611,6 +7627,26 @@ function TsunamiAreaRow({ area, showDivider }) {
           </span>
         )}
       </div>
+      {/* この予報区に属する観測点で、実際に観測された津波の高さ(微弱でないもの)を
+          全て並べる。観測が無い予報区では何も出さない。 */}
+      {observedStations.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 12px 8px 46px" }}>
+          {observedStations.map(st => {
+            const color = tsunamiHeightBandColor(st.heightM);
+            return (
+              <div key={st.name} style={{
+                display: "inline-flex", alignItems: "center", gap: 5,
+                padding: "3px 8px 3px 7px", borderRadius: 999,
+                background: `${color}26`,
+              }}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0 }}/>
+                <span style={{ fontSize: 11, fontWeight: 600, color: tokens.text }}>{st.name}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, color }}>{Math.abs(st.heightM).toFixed(1)}m</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -7635,6 +7671,10 @@ function TsunamiTabBody({
   // 「潮位計」モード関連。
   tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
   selectedTideStationCode, onSelectTideStation, tideObsByStation = {}, onLoadTideObs,
+  // 観測点ごとの「観測された津波の高さ」。予報区一覧の各行に、その予報区に属する
+  // 観測点の実測最大波を表示するために使う(未観測・微弱の間はnullなので、
+  // その観測点は表示対象から外す)。
+  tsunamiHeightByStation = {},
 }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -7747,9 +7787,17 @@ function TsunamiTabBody({
               background: `rgba(${tokens.ink},0.04)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
             }}>
-              {sortedAreas.map((area, i) => (
-                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0}/>
-              ))}
+              {sortedAreas.map((area, i) => {
+                // この予報区に実際に属していて、かつ観測された高さがある(=微弱でない)
+                // 観測点だけを対象にする。高い順に並べる。
+                const observedStations = tideStations
+                  .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
+                  .map(st => ({ name: st.name, heightM: tsunamiHeightByStation[st.code] }))
+                  .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM));
+                return (
+                  <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
+                );
+              })}
             </div>
           </div>
         ) : (
@@ -11749,6 +11797,7 @@ export default function App() {
                   selectedTideStationCode={selectedTideStationCode}
                   onSelectTideStation={setSelectedTideStationCode}
                   tideStationSelectSignal={tideStationSelectSignal}
+                  tsunamiHeightByStation={tsunamiHeightByStation}
                   tideObsByStation={tideObsByStation}
                   onLoadTideObs={loadTideObs}
                   onCausingQuakeChange={setCausingQuakeCard}
@@ -11826,6 +11875,7 @@ export default function App() {
               selectedTideStationCode={selectedTideStationCode}
               onSelectTideStation={setSelectedTideStationCode}
               tideStationSelectSignal={tideStationSelectSignal}
+              tsunamiHeightByStation={tsunamiHeightByStation}
               tideObsByStation={tideObsByStation}
               onLoadTideObs={loadTideObs}
               onCausingQuakeChange={setCausingQuakeCard}
