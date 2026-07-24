@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5b";
+const APP_VERSION = "1.2.5c";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7827,24 +7827,8 @@ function TsunamiTabBody({
           </div>
         ) : sortedAreas.length > 0 ? (
           <div style={{ margin: "2px 14px 8px" }}>
-            <div style={{
-              padding: "6px 2px",
-              fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
-            }}>
-              対象の予報区
-            </div>
-            <div style={{
-              borderRadius: 12,
-              overflow: "hidden",
-              background: `rgba(${tokens.ink},0.04)`,
-              boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
-            }}>
-              {areasWithObserved.map(({ area, observedStations }, i) => (
-                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
-              ))}
-            </div>
             {hasAnyObservedHeight && (
-              <div style={{ marginTop: 6 }}>
+              <div style={{ marginBottom: 6 }}>
                 <PressableButton
                   type="button"
                   onClick={() => setObsHeightNoteOpen(v => !v)}
@@ -7866,7 +7850,7 @@ function TsunamiTabBody({
                 </PressableButton>
                 {obsHeightNoteOpen && (
                   <div style={{
-                    margin: "2px 2px 0", padding: "10px 12px", borderRadius: 10,
+                    margin: "2px 2px 6px", padding: "10px 12px", borderRadius: 10,
                     background: `rgba(${tokens.ink},0.04)`,
                     fontSize: 11.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8,
                   }}>
@@ -7877,6 +7861,22 @@ function TsunamiTabBody({
                 )}
               </div>
             )}
+            <div style={{
+              padding: "6px 2px",
+              fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
+            }}>
+              対象の予報区
+            </div>
+            <div style={{
+              borderRadius: 12,
+              overflow: "hidden",
+              background: `rgba(${tokens.ink},0.04)`,
+              boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
+            }}>
+              {areasWithObserved.map(({ area, observedStations }, i) => (
+                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
+              ))}
+            </div>
           </div>
         ) : (
           <div style={{
