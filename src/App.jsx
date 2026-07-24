@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5";
+const APP_VERSION = "1.2.5b";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7664,7 +7664,7 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
               <div key={st.name} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "2px 0" }}>
                 <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0, alignSelf: "center" }}/>
                 <span style={{
-                  fontSize: 12, fontWeight: 600, color: tokens.text,
+                  fontSize: 13, fontWeight: 700, color: tokens.text,
                   flexShrink: 0, maxWidth: "38%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>
                   {st.name}
@@ -7672,7 +7672,12 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
                 <span style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.5)`, flexShrink: 0 }}>
                   最大波{timeText && `　${timeText}`}
                 </span>
-                <span style={{ fontSize: 12.5, fontWeight: 800, color, marginLeft: "auto", flexShrink: 0 }}>
+                <span style={{
+                  fontSize: 14, fontWeight: 800, color, marginLeft: "auto", flexShrink: 0,
+                  // ダークモードでグレードの色(特に薄い色)が背景に沈んで見づらいことが
+                  // あるため、白い縁取りを付けて視認性を確保する。
+                  textShadow: "-1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px rgba(255,255,255,0.8)",
+                }}>
                   {Math.abs(st.heightM).toFixed(1)}m
                 </span>
               </div>
@@ -7720,6 +7725,10 @@ function TsunamiTabBody({
     }
   }, [selectedTideStationCode, onLoadTideObs]);
 
+  // 「観測された津波の高さ」欄の注意書き(気象庁公式の値とは異なる旨)の開閉状態。
+  // 初期は閉じておく。
+  const [obsHeightNoteOpen, setObsHeightNoteOpen] = useState(false);
+
   // 潮位観測点が選ばれている間は、今見ているモード(直近一覧・過去一覧・潮位計の
   // いずれでも)に関わらず、その場で観測点の詳細を最優先で表示する。モードを
   // 切り替えないことで、見終わった後は元のモードへ自動的に戻る(「戻る」は
@@ -7741,6 +7750,16 @@ function TsunamiTabBody({
 
   if (selected) {
     const sortedAreas = [...selected.areas].sort((a, b) => tsunamiGradeInfo(b.grade).weight - tsunamiGradeInfo(a.grade).weight);
+    // この予報区に実際に属していて、かつ観測された高さがある(=微弱でない)観測点だけを
+    // 対象にする(高い順)。注意書きを出すかどうかの判定にも使う。
+    const areasWithObserved = sortedAreas.map(area => ({
+      area,
+      observedStations: tideStations
+        .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
+        .map(st => ({ name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
+        .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
+    }));
+    const hasAnyObservedHeight = areasWithObserved.some(x => x.observedStations.length > 0);
     const showingCausingQuake = showingCausingQuakeFor === selected.id;
     const causingState = causingQuakeState[selected.id];
 
@@ -7820,18 +7839,44 @@ function TsunamiTabBody({
               background: `rgba(${tokens.ink},0.04)`,
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
             }}>
-              {sortedAreas.map((area, i) => {
-                // この予報区に実際に属していて、かつ観測された高さがある(=微弱でない)
-                // 観測点だけを対象にする。高い順に並べる。
-                const observedStations = tideStations
-                  .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
-                  .map(st => ({ name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
-                  .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM));
-                return (
-                  <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
-                );
-              })}
+              {areasWithObserved.map(({ area, observedStations }, i) => (
+                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
+              ))}
             </div>
+            {hasAnyObservedHeight && (
+              <div style={{ marginTop: 6 }}>
+                <PressableButton
+                  type="button"
+                  onClick={() => setObsHeightNoteOpen(v => !v)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    width: "100%", padding: "6px 2px",
+                    background: "transparent", border: "none", cursor: "pointer",
+                    fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
+                    textAlign: "left",
+                  }}
+                >
+                  <span style={{
+                    display: "inline-block", transition: "transform 0.2s",
+                    transform: obsHeightNoteOpen ? "rotate(90deg)" : "rotate(0deg)",
+                  }}>
+                    ›
+                  </span>
+                  「最大波」の表示について
+                </PressableButton>
+                {obsHeightNoteOpen && (
+                  <div style={{
+                    margin: "2px 2px 0", padding: "10px 12px", borderRadius: 10,
+                    background: `rgba(${tokens.ink},0.04)`,
+                    fontSize: 11.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8,
+                  }}>
+                    ここに表示している観測点ごとの「最大波」は、気象庁が発表する津波情報とは別に、
+                    潮位観測データの潮位偏差(実測潮位−天文潮位)から、このアプリが独自に計算した
+                    参考値です。気象庁が発表する値とは算出方法が異なるため、一致しない場合があります。
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         ) : (
           <div style={{
