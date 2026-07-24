@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5d";
+const APP_VERSION = "1.2.5e";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7615,7 +7615,7 @@ function tsunamiGradeShortLabel(grade) {
   return map[grade] || "情報";
 }
 
-function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
+function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStation }) {
   const { tokens } = useContext(ThemeContext);
   const info = tsunamiGradeInfo(area.grade);
 
@@ -7654,14 +7654,25 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
       </div>
       {/* この予報区に属する観測点で、実際に観測された津波の高さ(微弱でないもの)を
           観測点ごとに1行ずつ、最大波を観測した日時と一緒に並べる。観測が無い
-          予報区では何も出さない。 */}
+          予報区では何も出さない。行自体をボタンにしていて、押すとその観測点の
+          潮位が(地図のピンをタップした時と同じく)その場で見られる。 */}
       {observedStations.length > 0 && (
         <div style={{ padding: "0 12px 8px 46px", display: "flex", flexDirection: "column", gap: 2 }}>
           {observedStations.map(st => {
             const color = tsunamiHeightBandColor(st.heightM);
             const timeText = formatTsunamiMaxWaveTime(st.timeMs);
             return (
-              <div key={st.name} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "2px 0" }}>
+              <PressableButton
+                key={st.name}
+                type="button"
+                onClick={() => onSelectStation?.(st.code)}
+                style={{
+                  display: "flex", alignItems: "baseline", gap: 6, padding: "5px 6px",
+                  margin: "0 -6px", borderRadius: 8,
+                  border: "none", background: "transparent", cursor: "pointer",
+                  textAlign: "left", width: "calc(100% + 12px)",
+                }}
+              >
                 <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0, alignSelf: "center" }}/>
                 <span style={{
                   fontSize: 13, fontWeight: 700, color: tokens.text,
@@ -7680,7 +7691,7 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
                 }}>
                   {Math.abs(st.heightM).toFixed(1)}m
                 </span>
-              </div>
+              </PressableButton>
             );
           })}
         </div>
@@ -7756,7 +7767,7 @@ function TsunamiTabBody({
       area,
       observedStations: tideStations
         .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
-        .map(st => ({ name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
+        .map(st => ({ code: st.code, name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
         .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
     }));
     const hasAnyObservedHeight = areasWithObserved.some(x => x.observedStations.length > 0);
@@ -7875,7 +7886,7 @@ function TsunamiTabBody({
               boxShadow: `inset 0 0 0 0.5px rgba(${tokens.ink},0.08)`,
             }}>
               {areasWithObserved.map(({ area, observedStations }, i) => (
-                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
+                <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations} onSelectStation={onSelectTideStation}/>
               ))}
             </div>
           </div>
