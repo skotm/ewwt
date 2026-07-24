@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5c";
+const APP_VERSION = "1.2.5d";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7829,34 +7829,35 @@ function TsunamiTabBody({
           <div style={{ margin: "2px 14px 8px" }}>
             {hasAnyObservedHeight && (
               <div style={{ marginBottom: 6 }}>
-                <PressableButton
-                  type="button"
-                  onClick={() => setObsHeightNoteOpen(v => !v)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 4,
-                    width: "100%", padding: "6px 2px",
-                    background: "transparent", border: "none", cursor: "pointer",
-                    fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
-                    textAlign: "left",
-                  }}
-                >
-                  <span style={{
-                    display: "inline-block", transition: "transform 0.2s",
-                    transform: obsHeightNoteOpen ? "rotate(90deg)" : "rotate(0deg)",
-                  }}>
-                    ›
-                  </span>
-                  「最大波」の表示について
-                </PressableButton>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <PressableButton
+                    type="button"
+                    onClick={() => setObsHeightNoteOpen(v => !v)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 4,
+                      padding: "6px 2px",
+                      background: "transparent", border: "none", cursor: "pointer",
+                      fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.45)`,
+                      textAlign: "right",
+                    }}
+                  >
+                    「最大波」の表示について
+                    <span style={{
+                      display: "inline-block", transition: "transform 0.2s",
+                      transform: obsHeightNoteOpen ? "rotate(90deg)" : "rotate(0deg)",
+                    }}>
+                      ›
+                    </span>
+                  </PressableButton>
+                </div>
                 {obsHeightNoteOpen && (
                   <div style={{
                     margin: "2px 2px 6px", padding: "10px 12px", borderRadius: 10,
                     background: `rgba(${tokens.ink},0.04)`,
                     fontSize: 11.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8,
                   }}>
-                    ここに表示している観測点ごとの「最大波」は、気象庁が発表する津波情報とは別に、
-                    潮位観測データの潮位偏差(実測潮位−天文潮位)から、このアプリが独自に計算した
-                    参考値です。気象庁が発表する値とは算出方法が異なるため、一致しない場合があります。
+                    「最大波」は、潮位観測データからMeteoQuakeが独自に算出した参考値です。
+                    気象庁が発表する津波情報・観測値ではなく、公表値と一致しない場合があります。
                   </div>
                 )}
               </div>
@@ -7865,7 +7866,7 @@ function TsunamiTabBody({
               padding: "6px 2px",
               fontSize: 11, fontWeight: 600, color: `rgba(${tokens.ink},0.5)`,
             }}>
-              対象の予報区
+              {hasAnyObservedHeight ? "対象の予報区と津波の最大波(参考値)" : "対象の予報区"}
             </div>
             <div style={{
               borderRadius: 12,
