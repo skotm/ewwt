@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5g";
+const APP_VERSION = "1.2.5h";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7764,8 +7764,9 @@ function TsunamiTabBody({
     const sortedAreas = [...selected.areas].sort((a, b) => tsunamiGradeInfo(b.grade).weight - tsunamiGradeInfo(a.grade).weight);
     // この予報区に実際に属していて、かつ観測された高さがある(=微弱でない)観測点だけを
     // 対象にする(高い順)。注意書きを出すかどうかの判定にも使う。
-    // 一覧の並び順は、より高い最大波が観測された予報区を優先して上に表示する
-    // (観測が無い予報区同士では、これまで通り予報区自体のグレードの高い順)。
+    // 一覧の並び順は、まず予報区自体の警報グレードの高い順(注意報より警報が上、など)。
+    // 同じグレードの予報区が複数ある場合だけ、その中でより高い最大波が観測された
+    // 予報区を上に表示する。
     const areasWithObserved = sortedAreas
       .map(area => ({
         area,
@@ -7774,8 +7775,8 @@ function TsunamiTabBody({
           .map(st => ({ code: st.code, name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
           .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
       }))
-      .map((x, i) => ({ ...x, maxObservedHeight: x.observedStations[0] ? Math.abs(x.observedStations[0].heightM) : -1, gradeOrderIndex: i }))
-      .sort((a, b) => (b.maxObservedHeight - a.maxObservedHeight) || (a.gradeOrderIndex - b.gradeOrderIndex));
+      .map(x => ({ ...x, gradeWeight: tsunamiGradeInfo(x.area.grade).weight, maxObservedHeight: x.observedStations[0] ? Math.abs(x.observedStations[0].heightM) : -1 }))
+      .sort((a, b) => (b.gradeWeight - a.gradeWeight) || (b.maxObservedHeight - a.maxObservedHeight));
     const hasAnyObservedHeight = areasWithObserved.some(x => x.observedStations.length > 0);
     const showingCausingQuake = showingCausingQuakeFor === selected.id;
     const causingState = causingQuakeState[selected.id];
@@ -7873,8 +7874,9 @@ function TsunamiTabBody({
                     background: `rgba(${tokens.ink},0.04)`,
                     fontSize: 11.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8,
                   }}>
-                    「最大波」は、潮位観測データからMeteoQuakeが独自に算出した参考値であり、
-                    気象庁が発表する津波情報・観測値ではありません。
+                    「最大波」は、潮位観測データの潮位偏差(実測潮位−天文潮位)からMeteoQuakeが
+                    独自に算出した参考値です。気象庁が発表する津波情報・観測値ではなく、公表値と
+                    一致しない場合があります。
                   </div>
                 )}
               </div>
