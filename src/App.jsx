@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5f";
+const APP_VERSION = "1.2.5g";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7764,13 +7764,18 @@ function TsunamiTabBody({
     const sortedAreas = [...selected.areas].sort((a, b) => tsunamiGradeInfo(b.grade).weight - tsunamiGradeInfo(a.grade).weight);
     // この予報区に実際に属していて、かつ観測された高さがある(=微弱でない)観測点だけを
     // 対象にする(高い順)。注意書きを出すかどうかの判定にも使う。
-    const areasWithObserved = sortedAreas.map(area => ({
-      area,
-      observedStations: tideStations
-        .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
-        .map(st => ({ code: st.code, name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
-        .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
-    }));
+    // 一覧の並び順は、より高い最大波が観測された予報区を優先して上に表示する
+    // (観測が無い予報区同士では、これまで通り予報区自体のグレードの高い順)。
+    const areasWithObserved = sortedAreas
+      .map(area => ({
+        area,
+        observedStations: tideStations
+          .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
+          .map(st => ({ code: st.code, name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
+          .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM)),
+      }))
+      .map((x, i) => ({ ...x, maxObservedHeight: x.observedStations[0] ? Math.abs(x.observedStations[0].heightM) : -1, gradeOrderIndex: i }))
+      .sort((a, b) => (b.maxObservedHeight - a.maxObservedHeight) || (a.gradeOrderIndex - b.gradeOrderIndex));
     const hasAnyObservedHeight = areasWithObserved.some(x => x.observedStations.length > 0);
     const showingCausingQuake = showingCausingQuakeFor === selected.id;
     const causingState = causingQuakeState[selected.id];
@@ -7853,7 +7858,7 @@ function TsunamiTabBody({
                       textAlign: "right",
                     }}
                   >
-                    「最大波」の表示について
+                    ⓘ「最大波」の表示について
                     <span style={{
                       display: "inline-block", transition: "transform 0.2s",
                       transform: obsHeightNoteOpen ? "rotate(90deg)" : "rotate(0deg)",
@@ -7868,8 +7873,8 @@ function TsunamiTabBody({
                     background: `rgba(${tokens.ink},0.04)`,
                     fontSize: 11.5, color: `rgba(${tokens.ink},0.55)`, lineHeight: 1.8,
                   }}>
-                    「最大波」は、潮位観測データからMeteoQuakeが独自に算出した参考値です。
-                    気象庁が発表する津波情報・観測値ではなく、公表値と一致しない場合があります。
+                    「最大波」は、潮位観測データからMeteoQuakeが独自に算出した参考値であり、
+                    気象庁が発表する津波情報・観測値ではありません。
                   </div>
                 )}
               </div>
