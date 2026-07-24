@@ -1296,6 +1296,20 @@ function MapCanvas({
             if (!e.features || !e.features.length) return;
             onSelectTideStationRef.current?.(e.features[0].properties.code);
           });
+          // 観測点の丸+バーをまとめて描くレイヤー(tideStationBarsModeの間、実際に
+          // 見えているのはこちら)。バーの部分をタップしても、丸をタップした時と
+          // 同じく観測点を選択できるようにする(アイコン全体が当たり判定になるため、
+          // 丸だけでなくバーの範囲もタップ可能)。
+          map.on("click", "tsunami-height-bars-layer", (e) => {
+            if (!e.features || !e.features.length) return;
+            onSelectTideStationRef.current?.(e.features[0].properties.code);
+          });
+          map.on("mouseenter", "tsunami-height-bars-layer", () => {
+            map.getCanvas().style.cursor = "pointer";
+          });
+          map.on("mouseleave", "tsunami-height-bars-layer", () => {
+            map.getCanvas().style.cursor = "";
+          });
 
           // 震央分布の丸のタップ選択・ホバー/タッチ時のツールチップ表示。
           map.on("mouseenter", "epicenter-points-layer", () => {
@@ -2757,6 +2771,14 @@ function formatQuakeTimeShort(raw) {
   return `${datePart} ${hh}:${mm}頃`;
 }
 
+// 「最大波を観測した時刻」の表示用(エポックms→「24日 15:30」のような形式)。
+function formatTsunamiMaxWaveTime(timeMs) {
+  if (timeMs == null || !Number.isFinite(timeMs)) return "";
+  const d = new Date(timeMs);
+  const pad2 = n => String(n).padStart(2, "0");
+  return `${d.getDate()}日 ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
 // 津波情報の発表時刻は(地震の発生時刻と違って)推定ではなく確定した時刻なので、
 // formatQuakeTimeShortの「頃」は付けない。
 function formatTsunamiTimeShort(raw) {
@@ -3953,13 +3975,15 @@ function computeMaxTsunamiHeightCm(obsData, startMs) {
   const intervalMs = (obsData.interval || 15) * 1000;
   let maxAbs = -1;
   let signedAtMax = null;
+  let timeMsAtMax = null;
   obsData.departure.forEach((v, i) => {
     if (v == null) return;
     const t = dayStartMs + i * intervalMs;
     if (t < startMs) return; // 警報発表より前の値は対象外
-    if (Math.abs(v) > maxAbs) { maxAbs = Math.abs(v); signedAtMax = v; }
+    if (Math.abs(v) > maxAbs) { maxAbs = Math.abs(v); signedAtMax = v; timeMsAtMax = t; }
   });
-  return signedAtMax; // cm(符号付き)。該当データが1件も無ければnull
+  if (signedAtMax == null) return null;
+  return { cm: signedAtMax, timeMs: timeMsAtMax }; // cm(符号付き)・観測時刻(エポックms)。該当データが1件も無ければnull
 }
 
 
@@ -5588,7 +5612,7 @@ function BottomDock({
   onTsunamiViewModeChange,
   tideStations = EMPTY_EQDB_LIST, tideStationsStatus = "idle",
   selectedTideStationCode, onSelectTideStation, tideObsByStation = {}, onLoadTideObs,
-  tideStationSelectSignal, tsunamiHeightByStation = {},
+  tideStationSelectSignal, tsunamiHeightByStation = {}, tsunamiHeightTimeByStation = {},
   stationMarkersVisible = true, onToggleStationMarkersVisible,
   tideStationMarkersVisible = true, onToggleTideStationMarkersVisible,
   onChangeQuakeColorScheme,
@@ -6902,6 +6926,7 @@ function BottomDock({
                   tideObsByStation={tideObsByStation}
                   onLoadTideObs={onLoadTideObs}
                   tsunamiHeightByStation={tsunamiHeightByStation}
+                  tsunamiHeightTimeByStation={tsunamiHeightTimeByStation}
                 />
 
                 {/* フローティング部分(津波情報一覧)とボタン類(ナビ行)の境界線 */}
@@ -7628,20 +7653,28 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [] }) {
         )}
       </div>
       {/* この予報区に属する観測点で、実際に観測された津波の高さ(微弱でないもの)を
-          全て並べる。観測が無い予報区では何も出さない。 */}
+          観測点ごとに1行ずつ、最大波を観測した日時と一緒に並べる。観測が無い
+          予報区では何も出さない。 */}
       {observedStations.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 12px 8px 46px" }}>
+        <div style={{ padding: "0 12px 8px 46px", display: "flex", flexDirection: "column", gap: 2 }}>
           {observedStations.map(st => {
             const color = tsunamiHeightBandColor(st.heightM);
+            const timeText = formatTsunamiMaxWaveTime(st.timeMs);
             return (
-              <div key={st.name} style={{
-                display: "inline-flex", alignItems: "center", gap: 5,
-                padding: "3px 8px 3px 7px", borderRadius: 999,
-                background: `${color}26`,
-              }}>
-                <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0 }}/>
-                <span style={{ fontSize: 11, fontWeight: 600, color: tokens.text }}>{st.name}</span>
-                <span style={{ fontSize: 11, fontWeight: 800, color }}>{Math.abs(st.heightM).toFixed(1)}m</span>
+              <div key={st.name} style={{ display: "flex", alignItems: "baseline", gap: 6, padding: "2px 0" }}>
+                <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0, alignSelf: "center" }}/>
+                <span style={{
+                  fontSize: 12, fontWeight: 600, color: tokens.text,
+                  flexShrink: 0, maxWidth: "38%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {st.name}
+                </span>
+                <span style={{ fontSize: 11.5, color: `rgba(${tokens.ink},0.5)`, flexShrink: 0 }}>
+                  最大波{timeText && `　${timeText}`}
+                </span>
+                <span style={{ fontSize: 12.5, fontWeight: 800, color, marginLeft: "auto", flexShrink: 0 }}>
+                  {Math.abs(st.heightM).toFixed(1)}m
+                </span>
               </div>
             );
           })}
@@ -7674,7 +7707,7 @@ function TsunamiTabBody({
   // 観測点ごとの「観測された津波の高さ」。予報区一覧の各行に、その予報区に属する
   // 観測点の実測最大波を表示するために使う(未観測・微弱の間はnullなので、
   // その観測点は表示対象から外す)。
-  tsunamiHeightByStation = {},
+  tsunamiHeightByStation = {}, tsunamiHeightTimeByStation = {},
 }) {
   const { tokens } = useContext(ThemeContext);
 
@@ -7792,7 +7825,7 @@ function TsunamiTabBody({
                 // 観測点だけを対象にする。高い順に並べる。
                 const observedStations = tideStations
                   .filter(st => st.tsunamiAreaName === area.name && tsunamiHeightByStation[st.code] != null)
-                  .map(st => ({ name: st.name, heightM: tsunamiHeightByStation[st.code] }))
+                  .map(st => ({ name: st.name, heightM: tsunamiHeightByStation[st.code], timeMs: tsunamiHeightTimeByStation[st.code] }))
                   .sort((a, b) => Math.abs(b.heightM) - Math.abs(a.heightM));
                 return (
                   <TsunamiAreaRow key={`${area.name}-${i}`} area={area} showDivider={i > 0} observedStations={observedStations}/>
@@ -11529,14 +11562,37 @@ export default function App() {
       }
       const obs = tideObsByStation[st.code];
       if (!obs || obs.status !== "ready" || !obs.data) return;
-      const cm = computeMaxTsunamiHeightCm(obs.data, startMs);
-      if (cm == null) return;
-      const m = cm / 100;
+      const max = computeMaxTsunamiHeightCm(obs.data, startMs);
+      if (max == null) return;
+      const m = max.cm / 100;
       if (Math.abs(m) < TSUNAMI_HEIGHT_NEGLIGIBLE_M) return; // 微弱
       result[st.code] = m;
     });
     return result;
   }, [activeTsunami, tideStationsWithGrade, tideObsByStation]);
+
+  // 観測点コードごとの、最大波を観測した時刻(エポックms)。テスト配信の手入力値には
+  // 実際の観測時刻が無いため、代わりに配信時刻(activeTsunami.time)を使う
+  // (近似だが、テスト用途としては十分)。
+  const tsunamiHeightTimeByStation = useMemo(() => {
+    if (!activeTsunami) return {};
+    const startMs = new Date(activeTsunami.time).getTime();
+    if (!Number.isFinite(startMs)) return {};
+    const overrides = activeTsunami.heightOverrides || null;
+    const result = {};
+    tideStationsWithGrade.forEach(st => {
+      if (!st.activeGrade || tsunamiHeightByStation[st.code] == null) return;
+      if (overrides && overrides[st.code] != null) {
+        result[st.code] = startMs; // テスト配信: 配信時刻を代わりに使う
+        return;
+      }
+      const obs = tideObsByStation[st.code];
+      if (!obs || obs.status !== "ready" || !obs.data) return;
+      const max = computeMaxTsunamiHeightCm(obs.data, startMs);
+      if (max?.timeMs != null) result[st.code] = max.timeMs;
+    });
+    return result;
+  }, [activeTsunami, tideStationsWithGrade, tideObsByStation, tsunamiHeightByStation]);
 
   // 地図に表示する観測点一覧。丸の色(dotColor)は、予報区の公式グレードではなく
   // 実際に観測された津波の高さ(tsunamiHeightByStation)から決める
@@ -11798,6 +11854,7 @@ export default function App() {
                   onSelectTideStation={setSelectedTideStationCode}
                   tideStationSelectSignal={tideStationSelectSignal}
                   tsunamiHeightByStation={tsunamiHeightByStation}
+                  tsunamiHeightTimeByStation={tsunamiHeightTimeByStation}
                   tideObsByStation={tideObsByStation}
                   onLoadTideObs={loadTideObs}
                   onCausingQuakeChange={setCausingQuakeCard}
@@ -11876,6 +11933,7 @@ export default function App() {
               onSelectTideStation={setSelectedTideStationCode}
               tideStationSelectSignal={tideStationSelectSignal}
               tsunamiHeightByStation={tsunamiHeightByStation}
+              tsunamiHeightTimeByStation={tsunamiHeightTimeByStation}
               tideObsByStation={tideObsByStation}
               onLoadTideObs={loadTideObs}
               onCausingQuakeChange={setCausingQuakeCard}
