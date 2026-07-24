@@ -10,7 +10,7 @@ import { createPortal } from "react-dom";
    - MAJORには繰り上げ先が無いので、10になってもそのまま11、12…と増え続ける
    (要するに10進の桁上がりと同じルールで、MAJORだけ上限が無い)
    ───────────────────────────────────────────────────── */
-const APP_VERSION = "1.2.5e";
+const APP_VERSION = "1.2.5f";
 
 /* ─────────────────────────────────────────────────────
    RESPONSIVE LAYOUT
@@ -7667,9 +7667,10 @@ function TsunamiAreaRow({ area, showDivider, observedStations = [], onSelectStat
                 type="button"
                 onClick={() => onSelectStation?.(st.code)}
                 style={{
-                  display: "flex", alignItems: "baseline", gap: 6, padding: "5px 6px",
+                  display: "flex", alignItems: "baseline", gap: 6, padding: "6px 8px",
                   margin: "0 -6px", borderRadius: 8,
-                  border: "none", background: "transparent", cursor: "pointer",
+                  border: `0.5px solid rgba(${tokens.ink},0.12)`,
+                  background: `rgba(${tokens.ink},0.035)`, cursor: "pointer",
                   textAlign: "left", width: "calc(100% + 12px)",
                 }}
               >
